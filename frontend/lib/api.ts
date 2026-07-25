@@ -15,6 +15,13 @@ import type {
   SupplierListResponse,
   Token,
   User,
+  WorkflowDefinition,
+  WorkflowDefinitionListResponse,
+  WorkflowInstance,
+  WorkflowInstanceListResponse,
+  WorkflowTask,
+  Notification,
+  NotificationListResponse,
 } from "@/lib/types";
 
 const API_BASE_URL =
@@ -224,6 +231,96 @@ export async function createSourcingEvent(payload: {
   const { data } = await api.post<SourcingEvent>(
     "/sourcing/events",
     payload
+  );
+  return data;
+}
+
+// ---- Workflow ----
+
+export async function listWorkflowDefinitions(params?: {
+  entity_type?: string;
+  is_active?: boolean;
+}): Promise<WorkflowDefinitionListResponse> {
+  const { data } = await api.get<WorkflowDefinitionListResponse>(
+    "/workflow/definitions",
+    { params }
+  );
+  return data;
+}
+
+export async function createWorkflowDefinition(payload: {
+  name: string;
+  entity_type: string;
+  description?: string;
+  steps: Array<Record<string, unknown>>;
+  is_active?: boolean;
+}): Promise<WorkflowDefinition> {
+  const { data } = await api.post<WorkflowDefinition>(
+    "/workflow/definitions",
+    payload
+  );
+  return data;
+}
+
+export async function getWorkflowDefinition(id: string): Promise<WorkflowDefinition> {
+  const { data } = await api.get<WorkflowDefinition>(`/workflow/definitions/${id}`);
+  return data;
+}
+
+export async function listWorkflowInstances(params?: {
+  entity_type?: string;
+  entity_id?: string;
+  status?: string;
+}): Promise<WorkflowInstanceListResponse> {
+  const { data } = await api.get<WorkflowInstanceListResponse>(
+    "/workflow/instances",
+    { params }
+  );
+  return data;
+}
+
+export async function getWorkflowInstance(id: string): Promise<WorkflowInstance> {
+  const { data } = await api.get<WorkflowInstance>(`/workflow/instances/${id}`);
+  return data;
+}
+
+export async function listMyWorkflowTasks(params?: {
+  status?: string;
+}): Promise<WorkflowTask[]> {
+  const { data } = await api.get<WorkflowTask[]>("/workflow/tasks/my", {
+    params,
+  });
+  return data;
+}
+
+export async function completeWorkflowTask(
+  id: string,
+  payload: { decision: "approve" | "reject"; comments?: string }
+): Promise<WorkflowTask> {
+  const { data } = await api.post<WorkflowTask>(
+    `/workflow/tasks/${id}/complete`,
+    payload
+  );
+  return data;
+}
+
+export async function listWorkflowNotifications(params?: {
+  unread_only?: boolean;
+  skip?: number;
+  limit?: number;
+}): Promise<NotificationListResponse> {
+  const { data } = await api.get<NotificationListResponse>(
+    "/workflow/notifications",
+    { params }
+  );
+  return data;
+}
+
+export async function markWorkflowNotificationRead(
+  id: string
+): Promise<Notification> {
+  const { data } = await api.post<Notification>(
+    `/workflow/notifications/${id}/read`
   );
   return data;
 }

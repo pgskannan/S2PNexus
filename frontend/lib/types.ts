@@ -219,3 +219,79 @@ export interface SavingsListResponse {
   limit: number;
   summary: SavingsSummaryResponse;
 }
+
+export interface WorkflowDefinition {
+  id: string;
+  name: string;
+  entity_type: string;
+  description?: string | null;
+  steps: Array<Record<string, unknown>>;
+  is_active: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowDefinitionListResponse {
+  items: WorkflowDefinition[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface WorkflowTask {
+  id: string;
+  instance_id: string;
+  step_index: number;
+  step_name: string;
+  assignee_id: string;
+  status: string;
+  due_at?: string | null;
+  escalate_to?: string | null;
+  escalated_at?: string | null;
+  comments?: string | null;
+  completed_by?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+}
+
+export interface WorkflowInstance {
+  id: string;
+  definition_id: string;
+  entity_type: string;
+  entity_id: string;
+  status: string;
+  current_step_index: number;
+  context: Record<string, unknown>;
+  started_by: string;
+  started_at: string;
+  completed_at?: string | null;
+  tasks: WorkflowTask[];
+}
+
+export interface WorkflowInstanceListResponse {
+  items: WorkflowInstance[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface Notification {
+  id: string;
+  recipient_id: string;
+  title: string;
+  message: string;
+  related_entity_type?: string | null;
+  related_entity_id?: string | null;
+  is_read: boolean;
+  created_at: string;
+  read_at?: string | null;
+}
+
+export interface NotificationListResponse {
+  items: Notification[];
+  total: number;
+  unread_count: number;
+  skip: number;
+  limit: number;
+}
