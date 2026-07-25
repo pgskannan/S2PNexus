@@ -30,7 +30,7 @@ class AIOrchestrator:
             tool_registry=self.tool_registry,
         )
 
-        agent = self.factory.build(request=request, context=context)
+        agent = await self.factory.build(request=request, context=context)
         if agent is None:
             return AgentResponse(agent_name="orchestrator", success=False, message="No suitable agent found", data={"request": request})
 
