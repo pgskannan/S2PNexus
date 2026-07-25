@@ -5,11 +5,31 @@ Uses Pydantic Settings for environment-based configuration with validation.
 All sensitive values must be provided via environment variables.
 """
 
+import json
 from functools import lru_cache
-from typing import Annotated, List, Optional
+from typing import List, Optional
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _parse_str_list(raw: str) -> List[str]:
+    """Parse a comma-separated string or a JSON array string into a list of strings.
+
+    Handles both "http://a.com,http://b.com" / "*" (plain) and
+    '["http://a.com", "http://b.com"]' (JSON, as used in local .env files).
+    """
+    raw = raw.strip()
+    if not raw:
+        return []
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed]
+        except json.JSONDecodeError:
+            pass
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 class Settings(BaseSettings):
@@ -42,17 +62,18 @@ class Settings(BaseSettings):
     BCRYPT_ROUNDS: int = Field(default=12, ge=10, le=15)
 
     # CORS
-    # NoDecode: pydantic-settings normally tries to JSON-decode env vars for
-    # List[str] fields before any field_validator runs, which blows up on
-    # plain comma-separated or "*" values (e.g. CORS_ORIGINS=*). NoDecode
-    # skips that and hands the raw string straight to parse_cors_origins below.
-    CORS_ORIGINS: Annotated[List[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000"])
+    # Stored as a raw string (validation_alias keeps reading the CORS_ORIGINS env
+    # var), then exposed as a List[str] via the CORS_ORIGINS property below.
+    # pydantic-settings otherwise tries to JSON-decode List[str] env vars before
+    # any field_validator runs, which blows up on plain values like "*" or
+    # "http://a.com,http://b.com" -- only valid JSON array strings survive that.
+    CORS_ORIGINS_RAW: str = Field(default="http://localhost:3000", validation_alias="CORS_ORIGINS")
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: List[str] = Field(default_factory=lambda: ["*"])
     CORS_ALLOW_HEADERS: List[str] = Field(default_factory=lambda: ["*"])
 
     # TrustedHostMiddleware (only enforced when ENVIRONMENT != development)
-    ALLOWED_HOSTS: Annotated[List[str], NoDecode] = Field(default_factory=lambda: ["*"])
+    ALLOWED_HOSTS_RAW: str = Field(default="*", validation_alias="ALLOWED_HOSTS")
 
     # Database
     DATABASE_URL: str = Field(..., description="PostgreSQL connection URL")
@@ -135,22 +156,6 @@ class Settings(BaseSettings):
     PROMETHEUS_ENABLED: bool = Field(default=True)
     PROMETHEUS_PORT: int = Field(default=9090, ge=1, le=65535)
 
-    @field_validator("CORS_ORIGINS", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v: str | List[str]) -> List[str]:
-        """Parse CORS origins from string or list."""
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
-
-    @field_validator("ALLOWED_HOSTS", mode="before")
-    @classmethod
-    def parse_allowed_hosts(cls, v: str | List[str]) -> List[str]:
-        """Parse allowed hosts from string or list."""
-        if isinstance(v, str):
-            return [host.strip() for host in v.split(",")]
-        return v
-
     @field_validator("OLLAMA_BASE_URL")
     @classmethod
     def validate_ollama_base_url(cls, value: str) -> str:
@@ -166,6 +171,16 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [ext.strip() for ext in v.split(",")]
         return v
+
+    @property
+    def CORS_ORIGINS(self) -> List[str]:
+        """CORS origins, parsed from CORS_ORIGINS_RAW (comma-separated or JSON array)."""
+        return _parse_str_list(self.CORS_ORIGINS_RAW)
+
+    @property
+    def ALLOWED_HOSTS(self) -> List[str]:
+        """Allowed hosts, parsed from ALLOWED_HOSTS_RAW (comma-separated or JSON array)."""
+        return _parse_str_list(self.ALLOWED_HOSTS_RAW)
 
     @property
     def is_development(self) -> bool:
