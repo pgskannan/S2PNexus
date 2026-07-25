@@ -2,8 +2,15 @@ import axios, { AxiosError } from "axios";
 import { useAuthStore } from "@/lib/auth-store";
 import type {
   AgentQueryResponse,
+  Contract,
+  ContractListResponse,
   Requisition,
   RequisitionListResponse,
+  SavingsListResponse,
+  SavingsSummaryResponse,
+  SourcingEvent,
+  SourcingEventListResponse,
+  SpendAnalyticsResponse,
   Supplier,
   SupplierListResponse,
   Token,
@@ -147,6 +154,101 @@ export async function createSupplier(payload: {
 }): Promise<Supplier> {
   const { data } = await api.post<Supplier>("/suppliers", payload);
   return data;
+}
+
+// ---- Contracts ----
+
+export async function listContracts(params?: {
+  search?: string;
+  status?: string;
+}): Promise<ContractListResponse> {
+  const { data } = await api.get<ContractListResponse>("/contracts", {
+    params,
+  });
+  return data;
+}
+
+export async function getContract(id: string): Promise<Contract> {
+  const { data } = await api.get<Contract>(`/contracts/${id}`);
+  return data;
+}
+
+export async function createContract(payload: Partial<Contract> & {
+  title: string;
+  contract_number: string;
+  supplier_id: string;
+  contract_type: string;
+  start_date: string;
+}): Promise<Contract> {
+  const { data } = await api.post<Contract>("/contracts", payload);
+  return data;
+}
+
+// ---- Sourcing ----
+
+export async function listSourcingEvents(params?: {
+  search?: string;
+  status?: string;
+  event_type?: string;
+}): Promise<SourcingEventListResponse> {
+  // Note: the sourcing router is mounted at the full "/sourcing" prefix in
+  // main.py (its own APIRouter declares prefix=""), unlike contracts/
+  // procurement/suppliers which declare their own prefix and only need the
+  // bare "/api/v1" supplied externally. Actual path: /api/v1/sourcing/events.
+  const { data } = await api.get<SourcingEventListResponse>(
+    "/sourcing/events",
+    { params }
+  );
+  return data;
+}
+
+export async function getSourcingEvent(id: string): Promise<SourcingEvent> {
+  const { data } = await api.get<SourcingEvent>(`/sourcing/events/${id}`);
+  return data;
+}
+
+export async function createSourcingEvent(payload: {
+  event_number: string;
+  title: string;
+  description?: string;
+  event_type: string;
+  category?: string;
+  owner_id: string;
+  currency?: string;
+  estimated_value?: string;
+  start_date?: string;
+  response_due_date?: string;
+  status?: string;
+  lifecycle_status?: string;
+}): Promise<SourcingEvent> {
+  const { data } = await api.post<SourcingEvent>(
+    "/sourcing/events",
+    payload
+  );
+  return data;
+}
+
+// ---- Analytics ----
+
+export async function getSpendAnalytics(params?: {
+  start_date?: string;
+  end_date?: string;
+  category?: string;
+  supplier_id?: string;
+}): Promise<SpendAnalyticsResponse> {
+  const { data } = await api.get<SpendAnalyticsResponse>("/analytics/spend", {
+    params,
+  });
+  return data;
+}
+
+export async function getSavingsSummary(): Promise<SavingsSummaryResponse> {
+  // GET /analytics/savings returns a full SavingsListResponse (items/total/
+  // skip/limit/summary), not a bare summary object -- the summary rollup is
+  // nested under `.summary`. Unwrap it here so callers keep getting just the
+  // summary shape.
+  const { data } = await api.get<SavingsListResponse>("/analytics/savings");
+  return data.summary;
 }
 
 // ---- AI Agents ----

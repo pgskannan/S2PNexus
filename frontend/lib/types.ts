@@ -84,3 +84,138 @@ export interface AgentQueryResponse {
   plan: string[];
   explanation: string;
 }
+
+export interface Contract {
+  id: string;
+  title: string;
+  description?: string | null;
+  contract_number: string;
+  supplier_id: string;
+  contract_type: string;
+  status: string;
+  lifecycle_status: string;
+  approval_status: string;
+  start_date: string;
+  end_date?: string | null;
+  value?: string | null;
+  currency: string;
+  auto_renew: boolean;
+  renewal_notice_days: number;
+  terms_and_conditions?: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContractListResponse {
+  items: Contract[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface SourcingEvent {
+  id: string;
+  event_number: string;
+  title: string;
+  description?: string | null;
+  event_type: string;
+  category?: string | null;
+  owner_id: string;
+  currency: string;
+  estimated_value?: string | null;
+  start_date?: string | null;
+  response_due_date?: string | null;
+  status: string;
+  lifecycle_status: string;
+  awarded_supplier_id?: string | null;
+  awarded_response_id?: string | null;
+  award_notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  published_at?: string | null;
+  closed_at?: string | null;
+  cancelled_at?: string | null;
+  line_items: Array<{
+    id: string;
+    event_id: string;
+    description: string;
+    quantity: string;
+    unit_of_measure?: string | null;
+    target_price?: string | null;
+    specifications?: string | null;
+    created_at: string;
+  }>;
+  invitations: Array<{
+    id: string;
+    event_id: string;
+    supplier_id: string;
+    status: string;
+    invited_by: string;
+    invited_at: string;
+    responded_at?: string | null;
+  }>;
+  responses: Array<{
+    id: string;
+    event_id: string;
+    supplier_id: string;
+    invitation_id?: string | null;
+    total_price?: string | null;
+    currency: string;
+    notes?: string | null;
+    status: string;
+    evaluation_score?: string | null;
+    evaluation_notes?: string | null;
+    rank?: number | null;
+    submitted_at: string;
+    evaluated_at?: string | null;
+  }>;
+}
+
+export interface SourcingEventListResponse {
+  items: SourcingEvent[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface SpendAnalyticsResponse {
+  total_spend: string;
+  currency: string;
+  spend_by_category: Array<{ category: string; amount: string }>;
+  spend_by_month: Array<{ month: string; amount: string }>;
+  top_suppliers: Array<{ supplier_name: string; total_spend: string }>;
+}
+
+export interface SavingsSummaryResponse {
+  total_savings: string;
+  total_baseline: string;
+  total_actual: string;
+  savings_by_category: Record<string, string>;
+  savings_by_type: Record<string, string>;
+}
+
+export interface SavingsRecord {
+  id: string;
+  description: string;
+  category?: string | null;
+  source_type: string;
+  source_id?: string | null;
+  savings_type: string;
+  baseline_amount: string;
+  actual_amount: string;
+  savings_amount: string;
+  currency: string;
+  realized_date: string;
+  notes?: string | null;
+  recorded_by: string;
+  created_at: string;
+}
+
+export interface SavingsListResponse {
+  items: SavingsRecord[];
+  total: number;
+  skip: number;
+  limit: number;
+  summary: SavingsSummaryResponse;
+}

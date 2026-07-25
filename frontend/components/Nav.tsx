@@ -7,6 +7,9 @@ import { useAuthStore } from "@/lib/auth-store";
 const links = [
   { href: "/dashboard", label: "Overview" },
   { href: "/dashboard/requisitions", label: "Requisitions" },
+  { href: "/dashboard/contracts", label: "Contracts" },
+  { href: "/dashboard/sourcing", label: "Sourcing" },
+  { href: "/dashboard/spend", label: "Spend & Savings" },
   { href: "/dashboard/suppliers", label: "Suppliers" },
   { href: "/dashboard/agent", label: "AI Agent" },
 ];
