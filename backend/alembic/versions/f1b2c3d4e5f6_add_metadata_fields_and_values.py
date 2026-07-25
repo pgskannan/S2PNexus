@@ -14,6 +14,11 @@ tried to run f2b3c4d5e6f7's `ALTER TABLE metadata_fields ...` and hit
 UndefinedTableError. This migration creates both tables as they existed
 right before f2b3c4d5e6f7 added the picklist_id/classification/visibility/
 localization/validation_rules/retention_policy columns to metadata_fields.
+
+NOTE: SQLAlchemy's Enum type binds/validates using the Python enum member
+NAME (e.g. "STRING"), not its .value ("string"), even for str-subclassed
+enums like MetadataFieldType -- confirmed via Enum(...).bind_processor().
+The Postgres enum type's valid values must be the uppercase member names.
 """
 from typing import Sequence, Union
 
@@ -38,7 +43,7 @@ def upgrade() -> None:
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column(
             "field_type",
-            sa.Enum("string", "number", "boolean", "date", "datetime", "json", name="metadata_field_type"),
+            sa.Enum("STRING", "NUMBER", "BOOLEAN", "DATE", "DATETIME", "JSON", name="metadata_field_type"),
             nullable=False,
         ),
         sa.Column("is_required", sa.Boolean(), nullable=False),

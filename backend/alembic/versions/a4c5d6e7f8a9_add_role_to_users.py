@@ -10,7 +10,13 @@ migration -- every environment got it for free from init_db()'s create_all()
 in dev mode. The from-scratch Postgres VM has no such column, so the
 metadata-registry bootstrap in app.main's lifespan (which SELECTs
 users.role) fails at startup. This adds the column and its backing enum
-type, matching the model's default of 'requester' for existing/legacy rows.
+type, matching the model's default of REQUESTER for existing/legacy rows.
+
+NOTE: SQLAlchemy's Enum type binds/validates using the Python enum member
+NAME (e.g. "ADMINISTRATOR"), not its .value ("administrator"), even for
+str-subclassed enums -- confirmed via Enum(...).bind_processor(). The
+Postgres enum type's valid values must therefore be the uppercase member
+names, not the lowercase .value strings.
 """
 from typing import Sequence, Union
 
@@ -24,14 +30,14 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 _USER_ROLE_VALUES = (
-    "administrator",
-    "procurement_manager",
-    "buyer",
-    "requester",
-    "supplier_manager",
-    "category_manager",
-    "ap_clerk",
-    "contract_manager",
+    "ADMINISTRATOR",
+    "PROCUREMENT_MANAGER",
+    "BUYER",
+    "REQUESTER",
+    "SUPPLIER_MANAGER",
+    "CATEGORY_MANAGER",
+    "AP_CLERK",
+    "CONTRACT_MANAGER",
 )
 
 
@@ -45,7 +51,7 @@ def upgrade() -> None:
             "role",
             user_role_enum,
             nullable=False,
-            server_default="requester",
+            server_default="REQUESTER",
             comment="Enterprise role for RBAC. Defaults to REQUESTER.",
         ),
     )
