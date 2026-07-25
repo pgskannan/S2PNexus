@@ -1,0 +1,104 @@
+<mxfile host="app.diagrams.net" modified="2026-07-23T22:00:00.000Z" agent="ChatGPT" version="28.0.0">
+  <diagram id="workflow-definition" name="Workflow Definition">
+    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1"
+                  connect="1" arrows="1" fold="1" page="1" pageScale="1"
+                  pageWidth="1920" pageHeight="1080" math="0" shadow="0">
+      <root>
+
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Workflow -->
+        <mxCell id="workflow"
+                value="Workflow&#10;(Business Process)"
+                style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;"
+                vertex="1"
+                parent="1">
+          <mxGeometry x="420" y="40" width="220" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- Version -->
+        <mxCell id="version"
+                value="Workflow Versions&#10;Draft / Published / Deprecated / Archived"
+                style="rounded=1;whiteSpace=wrap;html=1;"
+                vertex="1"
+                parent="1">
+          <mxGeometry x="420" y="150" width="220" height="80" as="geometry"/>
+        </mxCell>
+
+        <!-- Stage -->
+        <mxCell id="stage"
+                value="Stages"
+                style="rounded=1;whiteSpace=wrap;html=1;"
+                vertex="1"
+                parent="1">
+          <mxGeometry x="100" y="300" width="160" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Step -->
+        <mxCell id="step"
+                value="Workflow Steps"
+                style="rounded=1;whiteSpace=wrap;html=1;"
+                vertex="1"
+                parent="1">
+          <mxGeometry x="320" y="300" width="180" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Transition -->
+        <mxCell id="transition"
+                value="Transitions"
+                style="rounded=1;whiteSpace=wrap;html=1;"
+                vertex="1"
+                parent="1">
+          <mxGeometry x="560" y="300" width="170" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Variables -->
+        <mxCell id="variables"
+                value="Variables"
+                style="rounded=1;whiteSpace=wrap;html=1;"
+                vertex="1"
+                parent="1">
+          <mxGeometry x="800" y="300" width="160" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Step Types -->
+        <mxCell id="types"
+                value="Step Types&#10;&#10;• Start&#10;• Human Task&#10;• Approval&#10;• Decision&#10;• Timer&#10;• Service&#10;• AI&#10;• Notification&#10;• Webhook&#10;• Parallel&#10;• End"
+                style="rounded=1;whiteSpace=wrap;html=1;"
+                vertex="1"
+                parent="1">
+          <mxGeometry x="300" y="430" width="220" height="260" as="geometry"/>
+        </mxCell>
+
+        <!-- AI -->
+        <mxCell id="ai"
+                value="AI Nodes&#10;&#10;Classification&#10;Recommendation&#10;Routing&#10;Validation&#10;Risk Assessment"
+                style="rounded=1;whiteSpace=wrap;html=1;"
+                vertex="1"
+                parent="1">
+          <mxGeometry x="580" y="430" width="220" height="180" as="geometry"/>
+        </mxCell>
+
+        <!-- Metadata -->
+        <mxCell id="metadata"
+                value="Metadata Engine&#10;&#10;Forms&#10;Fields&#10;Picklists&#10;Validation&#10;Localization"
+                style="rounded=1;whiteSpace=wrap;html=1;"
+                vertex="1"
+                parent="1">
+          <mxGeometry x="850" y="430" width="220" height="180" as="geometry"/>
+        </mxCell>
+
+        <!-- Validation -->
+        <mxCell id="validation"
+                value="Validation&#10;&#10;No Orphans&#10;Valid Expressions&#10;Reachable End&#10;No Circular Paths"
+                style="rounded=1;whiteSpace=wrap;html=1;"
+                vertex="1"
+                parent="1">
+          <mxGeometry x="60" y="430" width="200" height="180" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

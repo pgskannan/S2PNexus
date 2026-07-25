@@ -1,0 +1,136 @@
+<mxfile host="app.diagrams.net" modified="2026-07-23T22:30:00.000Z" agent="ChatGPT" version="28.0.0">
+  <diagram id="workflow-runtime" name="Workflow Runtime">
+    <mxGraphModel dx="1800" dy="1000" grid="1" gridSize="10" guides="1"
+                  tooltips="1" connect="1" arrows="1" fold="1"
+                  page="1" pageScale="1" pageWidth="1920"
+                  pageHeight="1080">
+
+      <root>
+
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Definition -->
+        <mxCell id="definition"
+            value="Workflow Definition"
+            style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="420" y="40" width="220" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Instance -->
+        <mxCell id="instance"
+            value="Workflow Instance"
+            style="rounded=1;whiteSpace=wrap;html=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="420" y="140" width="220" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Execution Context -->
+        <mxCell id="context"
+            value="Execution Context"
+            style="rounded=1;whiteSpace=wrap;html=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="420" y="250" width="220" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Runtime -->
+        <mxCell id="runtime"
+            value="Workflow Runtime"
+            style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="420" y="360" width="220" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- Policy -->
+        <mxCell id="policy"
+            value="Policy Engine"
+            style="rounded=1;whiteSpace=wrap;html=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="40" y="520" width="170" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Assignment -->
+        <mxCell id="assignment"
+            value="Assignment Engine"
+            style="rounded=1;whiteSpace=wrap;html=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="240" y="520" width="170" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Action -->
+        <mxCell id="action"
+            value="Action Engine"
+            style="rounded=1;whiteSpace=wrap;html=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="440" y="520" width="170" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Escalation -->
+        <mxCell id="escalation"
+            value="Escalation Engine"
+            style="rounded=1;whiteSpace=wrap;html=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="640" y="520" width="180" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Notification -->
+        <mxCell id="notification"
+            value="Notification Engine"
+            style="rounded=1;whiteSpace=wrap;html=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="860" y="520" width="180" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Event Bus -->
+        <mxCell id="eventbus"
+            value="Platform Event Bus"
+            style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="420" y="670" width="220" height="70" as="geometry"/>
+        </mxCell>
+
+        <!-- ERP -->
+        <mxCell id="erp"
+            value="ERP Integration"
+            style="rounded=1;whiteSpace=wrap;html=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="40" y="820" width="180" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Metadata -->
+        <mxCell id="metadata"
+            value="Metadata Engine"
+            style="rounded=1;whiteSpace=wrap;html=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="260" y="820" width="180" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- AI -->
+        <mxCell id="ai"
+            value="AI Orchestration"
+            style="rounded=1;whiteSpace=wrap;html=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="480" y="820" width="180" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Audit -->
+        <mxCell id="audit"
+            value="Audit Service"
+            style="rounded=1;whiteSpace=wrap;html=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="700" y="820" width="180" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- Analytics -->
+        <mxCell id="analytics"
+            value="Analytics"
+            style="rounded=1;whiteSpace=wrap;html=1;"
+            vertex="1" parent="1">
+          <mxGeometry x="920" y="820" width="180" height="60" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

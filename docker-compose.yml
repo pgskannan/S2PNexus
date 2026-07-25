@@ -1,0 +1,111 @@
+# S2PNexus Docker Compose
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: s2pnexus-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-s2pnexus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-s2pnexus}
+      POSTGRES_DB: ${POSTGRES_DB:-s2pnexus}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-s2pnexus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: s2pnexus-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: s2pnexus-chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - chromadb_data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: s2pnexus-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # GPU reservation removed - runs CPU-only. Ollama is a local fallback provider
+    # here (AI_PROVIDER=gemini is primary); re-add an NVIDIA reservation later if
+    # this machine gets a working GPU passthrough and you want faster local inference.
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: s2pnexus-backend
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-s2pnexus}:${POSTGRES_PASSWORD:-s2pnexus}@postgres:5432/${POSTGRES_DB:-s2pnexus}
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - REFRESH_TOKEN_EXPIRE_DAYS=7
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+      - AI_PROVIDER=${AI_PROVIDER:-gemini}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-}
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-global}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.1-flash-lite}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # Only meaningful when ./secrets/gcp-service-account.json exists (see volume mount below).
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/gcp-service-account.json
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+      ollama:
+        condition: service_started
+    volumes:
+      - ./backend/app:/app/app
+      - ./secrets:/app/secrets:ro
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    container_name: s2pnexus-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  chromadb_data:
+  ollama_data:
