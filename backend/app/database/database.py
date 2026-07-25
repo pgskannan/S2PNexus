@@ -8,7 +8,7 @@ Provides async engine, session factory, and base model.
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional
 
-from sqlalchemy import MetaData, event
+from sqlalchemy import MetaData, event, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -150,7 +150,7 @@ class DatabaseManager:
         """Check database connectivity."""
         try:
             async with self.session_factory() as session:
-                await session.execute("SELECT 1")
+                await session.execute(text("SELECT 1"))
             return True
         except Exception:
             return False
