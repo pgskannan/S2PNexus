@@ -38,6 +38,7 @@ from app.models.workflow import (  # noqa: F401
     WorkflowTask,
     Notification,
 )
+from app.models.system_setting import SystemSetting  # noqa: F401
 from app.metadata_engine.models import (
     MetadataAuditEvent,
     MetadataField,

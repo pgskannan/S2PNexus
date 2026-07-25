@@ -22,6 +22,7 @@ import type {
   WorkflowTask,
   Notification,
   NotificationListResponse,
+  DashboardMetricsResponse,
 } from "@/lib/types";
 
 const API_BASE_URL =
@@ -326,6 +327,11 @@ export async function markWorkflowNotificationRead(
 }
 
 // ---- Analytics ----
+
+export async function getDashboardMetrics(): Promise<DashboardMetricsResponse> {
+  const { data } = await api.get<DashboardMetricsResponse>("/analytics/dashboard");
+  return data;
+}
 
 export async function getSpendAnalytics(params?: {
   start_date?: string;

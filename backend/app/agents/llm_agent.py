@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.agents.agent_context import AgentContext
 from app.agents.agent_response import AgentResponse
 from app.agents.base_agent import BaseAgent
@@ -45,9 +47,9 @@ class LLMBackedAgent(BaseAgent):
     def __init__(self, *, ai_service: AIGatewayService | None = None) -> None:
         self._ai_service = ai_service
 
-    def _get_ai_service(self) -> AIGatewayService:
+    async def _get_ai_service(self, *, db: AsyncSession | None = None) -> AIGatewayService:
         if self._ai_service is None:
-            self._ai_service = AIGatewayService()
+            self._ai_service = await AIGatewayService.create(db=db)
         return self._ai_service
 
     async def plan(self, *, request: str, context: AgentContext) -> list[str]:
@@ -99,7 +101,7 @@ class LLMBackedAgent(BaseAgent):
 
         if context.llm_enabled:
             try:
-                service = self._get_ai_service()
+                service = await self._get_ai_service(db=context.db)
                 completion = await service.chat(
                     [
                         {"role": "system", "content": self.role_prompt},

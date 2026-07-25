@@ -3,6 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.schemas import (
@@ -15,16 +16,21 @@ from app.ai.schemas import (
     HealthResponse,
 )
 from app.ai.service import AIGatewayService
+from app.crud.system_setting import set_setting
 from app.database.session import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.utils.dependencies import get_current_active_user
 
 router = APIRouter(tags=["AI"])
 
 
-def get_ai_service() -> AIGatewayService:
+class ProviderUpdateRequest(BaseModel):
+    provider: str = Field(..., min_length=1, description="AI provider name")
+
+
+async def get_ai_service(db: AsyncSession = Depends(get_db)) -> AIGatewayService:
     """Create an AI gateway service instance for dependency injection."""
-    return AIGatewayService()
+    return await AIGatewayService.create(db=db)
 
 
 @router.get(
@@ -95,6 +101,49 @@ async def generate(
         )
     except Exception as exc:  # pragma: no cover - defensive branch
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
+@router.get(
+    "/provider",
+    status_code=status.HTTP_200_OK,
+    summary="Get the active AI provider",
+)
+async def get_provider(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    """Return the current provider (override or env default) and the set of supported providers."""
+    provider_name = await AIGatewayService.resolve_provider_name(db=db)
+    return {
+        "current_provider": provider_name,
+        "available_providers": list(AIGatewayService.SUPPORTED_PROVIDERS),
+    }
+
+
+@router.put(
+    "/provider",
+    status_code=status.HTTP_200_OK,
+    summary="Override the active AI provider",
+)
+async def update_provider(
+    payload: ProviderUpdateRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    """Persist a runtime AI provider override for administrators."""
+    if current_user.role != UserRole.ADMINISTRATOR and not current_user.is_superuser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can change the AI provider")
+
+    try:
+        provider_name = AIGatewayService.normalize_provider(payload.provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    await set_setting(db, "ai_provider", provider_name, updated_by=current_user.id)
+    return {
+        "current_provider": provider_name,
+        "available_providers": list(AIGatewayService.SUPPORTED_PROVIDERS),
+    }
 
 
 @router.post(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.agents.base_agent import BaseAgent
 from app.agents.agent_registry import AgentRegistry
 from app.agents.agent_context import AgentContext
@@ -12,7 +14,7 @@ class AgentFactory:
     def __init__(self, registry: AgentRegistry) -> None:
         self.registry = registry
 
-    async def _classify_with_llm(self, *, request: str, agents: list[BaseAgent]) -> str | None:
+    async def _classify_with_llm(self, *, request: str, agents: list[BaseAgent], db: AsyncSession | None = None) -> str | None:
         if not agents:
             return None
 
@@ -28,7 +30,7 @@ class AgentFactory:
         )
 
         try:
-            service = AIGatewayService()
+            service = await AIGatewayService.create(db=db)
             completion = await service.chat(
                 [
                     {"role": "system", "content": "You are a deterministic router for S2PNexus agents."},
@@ -55,7 +57,7 @@ class AgentFactory:
     async def build(self, *, request: str, context: AgentContext) -> BaseAgent | None:
         agents = self.registry.list_agents()
 
-        llm_selection = await self._classify_with_llm(request=request, agents=agents)
+        llm_selection = await self._classify_with_llm(request=request, agents=agents, db=context.db)
         if llm_selection is not None:
             agent = self.registry.find_agent(llm_selection)
             if agent is not None:

@@ -179,6 +179,18 @@ export interface SourcingEventListResponse {
   limit: number;
 }
 
+export interface DashboardMetricsResponse {
+  total_spend: string;
+  total_suppliers: number;
+  total_contracts: number;
+  active_contracts: number;
+  expiring_contracts: number;
+  pending_approvals: number;
+  spend_by_category: Array<{ category: string; amount: string; percentage: number }>;
+  spend_by_month: Array<{ month: string; amount: string }>;
+  top_suppliers: Array<{ supplier_id: string; supplier_name: string; total_spend: string; contract_count: number }>;
+}
+
 export interface SpendAnalyticsResponse {
   total_spend: string;
   currency: string;

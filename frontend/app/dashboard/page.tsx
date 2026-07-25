@@ -2,18 +2,84 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { listRequisitions, listSuppliers } from "@/lib/api";
+import {
+  getDashboardMetrics,
+  getSavingsSummary,
+  listMyWorkflowTasks,
+  listRequisitions,
+  listSourcingEvents,
+} from "@/lib/api";
 import { useAuthStore } from "@/lib/auth-store";
+import type { DashboardMetricsResponse } from "@/lib/types";
+
+const currencyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
+});
+
+function formatCurrency(value: number | string | null | undefined) {
+  const numericValue = typeof value === "number" ? value : Number.parseFloat(`${value ?? 0}`);
+  return Number.isFinite(numericValue) ? currencyFormatter.format(numericValue) : "$0";
+}
 
 export default function DashboardPage() {
   const user = useAuthStore((s) => s.user);
+  const [metrics, setMetrics] = useState<DashboardMetricsResponse | null>(null);
   const [reqTotal, setReqTotal] = useState<number | null>(null);
-  const [supplierTotal, setSupplierTotal] = useState<number | null>(null);
+  const [sourcingTotal, setSourcingTotal] = useState<number | null>(null);
+  const [pendingTasks, setPendingTasks] = useState<number | null>(null);
+  const [savingsSummary, setSavingsSummary] = useState<string | null>(null);
 
   useEffect(() => {
-    listRequisitions().then((r) => setReqTotal(r.total)).catch(() => setReqTotal(0));
-    listSuppliers().then((r) => setSupplierTotal(r.total)).catch(() => setSupplierTotal(0));
+    let mounted = true;
+
+    const load = async () => {
+      const [metricsResult, requisitionsResult, sourcingResult, tasksResult, savingsResult] = await Promise.allSettled([
+        getDashboardMetrics(),
+        listRequisitions(),
+        listSourcingEvents(),
+        listMyWorkflowTasks({ status: "pending" }),
+        getSavingsSummary(),
+      ]);
+
+      if (!mounted) return;
+
+      if (metricsResult.status === "fulfilled") {
+        setMetrics(metricsResult.value);
+      }
+      if (requisitionsResult.status === "fulfilled") {
+        setReqTotal(requisitionsResult.value.total);
+      } else {
+        setReqTotal(0);
+      }
+      if (sourcingResult.status === "fulfilled") {
+        setSourcingTotal(sourcingResult.value.total);
+      } else {
+        setSourcingTotal(0);
+      }
+      if (tasksResult.status === "fulfilled") {
+        setPendingTasks(tasksResult.value.length);
+      } else {
+        setPendingTasks(0);
+      }
+      if (savingsResult.status === "fulfilled") {
+        setSavingsSummary(savingsResult.value.total_savings);
+      } else {
+        setSavingsSummary("0");
+      }
+    };
+
+    load();
+    return () => {
+      mounted = false;
+    };
   }, []);
+
+  const monthlySpend = metrics?.spend_by_month.slice(-6) ?? [];
+  const maxMonthlySpend = Math.max(1, ...monthlySpend.map((item) => Number(item.amount || 0)));
+  const topCategories = metrics?.spend_by_category.slice(0, 4) ?? [];
+  const topSuppliers = metrics?.top_suppliers.slice(0, 3) ?? [];
 
   return (
     <div className="space-y-8">
@@ -26,43 +92,137 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <div className="card">
-          <p className="text-sm text-slate-500">Requisitions</p>
+          <p className="text-sm text-slate-500">Total spend</p>
           <p className="mt-2 text-3xl font-semibold">
-            {reqTotal === null ? "..." : reqTotal}
+            {metrics ? formatCurrency(metrics.total_spend) : "..."}
           </p>
-          <Link
-            href="/dashboard/requisitions"
-            className="mt-3 inline-block text-sm text-brand-600 hover:underline"
-          >
-            View all
+          <p className="mt-2 text-sm text-slate-500">
+            Across {metrics?.total_contracts ?? "..."} contracts and active supplier relationships.
+          </p>
+        </div>
+        <div className="card">
+          <p className="text-sm text-slate-500">Pending approvals</p>
+          <p className="mt-2 text-3xl font-semibold">
+            {metrics ? metrics.pending_approvals : pendingTasks ?? "..."}
+          </p>
+          <Link href="/dashboard/workflow" className="mt-3 inline-block text-sm text-brand-600 hover:underline">
+            Review workflow tasks
           </Link>
         </div>
         <div className="card">
-          <p className="text-sm text-slate-500">Suppliers</p>
+          <p className="text-sm text-slate-500">Savings captured</p>
           <p className="mt-2 text-3xl font-semibold">
-            {supplierTotal === null ? "..." : supplierTotal}
+            {savingsSummary ? formatCurrency(savingsSummary) : "..."}
           </p>
-          <Link
-            href="/dashboard/suppliers"
-            className="mt-3 inline-block text-sm text-brand-600 hover:underline"
-          >
-            View all
+          <Link href="/dashboard/spend" className="mt-3 inline-block text-sm text-brand-600 hover:underline">
+            Open spend dashboard
           </Link>
         </div>
         <div className="card">
           <p className="text-sm text-slate-500">AI Agent</p>
           <p className="mt-2 text-sm text-slate-600">
-            Ask the orchestrator to look up or act on procurement, supplier,
-            contract, sourcing, or spend data.
+            Ask the orchestrator to look up or act on procurement, supplier, contract, sourcing, or spend data.
           </p>
-          <Link
-            href="/dashboard/agent"
-            className="mt-3 inline-block text-sm text-brand-600 hover:underline"
-          >
+          <Link href="/dashboard/agent" className="mt-3 inline-block text-sm text-brand-600 hover:underline">
             Try it
           </Link>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="card lg:col-span-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">Spend trend</p>
+              <p className="mt-1 text-lg font-semibold">Latest monthly activity</p>
+            </div>
+            <Link href="/dashboard/spend" className="text-sm text-brand-600 hover:underline">
+              View analytics
+            </Link>
+          </div>
+          <div className="mt-4 space-y-3">
+            {monthlySpend.length > 0 ? monthlySpend.map((item) => {
+              const amount = Number(item.amount || 0);
+              const width = Math.max(10, (amount / maxMonthlySpend) * 100);
+              return (
+                <div key={item.month} className="flex items-center gap-3 text-sm">
+                  <span className="w-14 text-slate-500">{item.month.slice(5)}</span>
+                  <div className="h-2 flex-1 rounded-full bg-slate-200">
+                    <div className="h-2 rounded-full bg-brand-600" style={{ width: `${width}%` }} />
+                  </div>
+                  <span className="w-24 text-right text-slate-700">{formatCurrency(amount)}</span>
+                </div>
+              );
+            }) : <p className="text-sm text-slate-500">No spend history yet.</p>}
+          </div>
+        </div>
+
+        <div className="card">
+          <p className="text-sm text-slate-500">Key areas</p>
+          <div className="mt-4 space-y-3">
+            <Link href="/dashboard/requisitions" className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 hover:border-brand-300">
+              <span className="text-sm font-medium text-slate-700">Requisitions</span>
+              <span className="text-sm text-slate-500">{reqTotal ?? "..."}</span>
+            </Link>
+            <Link href="/dashboard/contracts" className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 hover:border-brand-300">
+              <span className="text-sm font-medium text-slate-700">Contracts</span>
+              <span className="text-sm text-slate-500">{metrics?.total_contracts ?? "..."}</span>
+            </Link>
+            <Link href="/dashboard/sourcing" className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 hover:border-brand-300">
+              <span className="text-sm font-medium text-slate-700">Sourcing</span>
+              <span className="text-sm text-slate-500">{sourcingTotal ?? "..."}</span>
+            </Link>
+            <Link href="/dashboard/suppliers" className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 hover:border-brand-300">
+              <span className="text-sm font-medium text-slate-700">Suppliers</span>
+              <span className="text-sm text-slate-500">{metrics?.total_suppliers ?? "..."}</span>
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="card">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">Top categories</p>
+              <p className="mt-1 text-lg font-semibold">Spend mix</p>
+            </div>
+          </div>
+          <div className="mt-4 space-y-3">
+            {topCategories.length > 0 ? topCategories.map((item) => (
+              <div key={item.category} className="space-y-1">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-700">{item.category}</span>
+                  <span className="text-slate-500">{item.percentage.toFixed(1)}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-slate-200">
+                  <div className="h-2 rounded-full bg-slate-400" style={{ width: `${Math.max(8, item.percentage)}%` }} />
+                </div>
+              </div>
+            )) : <p className="text-sm text-slate-500">No category data yet.</p>}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">Top suppliers</p>
+              <p className="mt-1 text-lg font-semibold">Most spend</p>
+            </div>
+          </div>
+          <div className="mt-4 space-y-3">
+            {topSuppliers.length > 0 ? topSuppliers.map((supplier) => (
+              <div key={supplier.supplier_id} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-slate-700">{supplier.supplier_name}</p>
+                  <p className="text-xs text-slate-500">{supplier.contract_count} contract{supplier.contract_count === 1 ? "" : "s"}</p>
+                </div>
+                <p className="text-sm text-slate-700">{formatCurrency(supplier.total_spend)}</p>
+              </div>
+            )) : <p className="text-sm text-slate-500">No supplier data yet.</p>}
+          </div>
         </div>
       </div>
 
