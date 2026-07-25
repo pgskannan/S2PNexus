@@ -6,10 +6,10 @@ All sensitive values must be provided via environment variables.
 """
 
 from functools import lru_cache
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -42,10 +42,17 @@ class Settings(BaseSettings):
     BCRYPT_ROUNDS: int = Field(default=12, ge=10, le=15)
 
     # CORS
-    CORS_ORIGINS: List[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    # NoDecode: pydantic-settings normally tries to JSON-decode env vars for
+    # List[str] fields before any field_validator runs, which blows up on
+    # plain comma-separated or "*" values (e.g. CORS_ORIGINS=*). NoDecode
+    # skips that and hands the raw string straight to parse_cors_origins below.
+    CORS_ORIGINS: Annotated[List[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000"])
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: List[str] = Field(default_factory=lambda: ["*"])
     CORS_ALLOW_HEADERS: List[str] = Field(default_factory=lambda: ["*"])
+
+    # TrustedHostMiddleware (only enforced when ENVIRONMENT != development)
+    ALLOWED_HOSTS: Annotated[List[str], NoDecode] = Field(default_factory=lambda: ["*"])
 
     # Database
     DATABASE_URL: str = Field(..., description="PostgreSQL connection URL")
@@ -134,6 +141,14 @@ class Settings(BaseSettings):
         """Parse CORS origins from string or list."""
         if isinstance(v, str):
             return [origin.strip() for origin in v.split(",")]
+        return v
+
+    @field_validator("ALLOWED_HOSTS", mode="before")
+    @classmethod
+    def parse_allowed_hosts(cls, v: str | List[str]) -> List[str]:
+        """Parse allowed hosts from string or list."""
+        if isinstance(v, str):
+            return [host.strip() for host in v.split(",")]
         return v
 
     @field_validator("OLLAMA_BASE_URL")
