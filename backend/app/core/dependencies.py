@@ -53,7 +53,11 @@ async def get_current_user(
     if not payload or payload.get("type") != "access":
         raise credentials_exception
 
-    user_id = get_token_subject(token)
+    try:
+        user_id = get_token_subject(token)
+    except InvalidTokenError:
+        raise credentials_exception
+
     if not user_id:
         raise credentials_exception
 

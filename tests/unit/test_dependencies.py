@@ -1,6 +1,9 @@
 # Unit tests for dependencies
 
 import pytest
+from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
+from jwt import InvalidTokenError
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -68,6 +71,22 @@ class TestDependencies:
             # This would need a proper FastAPI test client setup
             # For now, just verify the token creation works
             assert token is not None
+
+    @pytest.mark.asyncio
+    async def test_get_current_user_invalid_token_subject(self, mock_user):
+        """Invalid token-subject decoding should surface as a 401, not a 500."""
+        token = create_access_token(subject=str(mock_user.id))
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        mock_db = AsyncMock()
+
+        with patch('app.core.dependencies.decode_token', return_value={"type": "access"}), \
+             patch('app.core.dependencies.get_token_subject', side_effect=InvalidTokenError('bad token')), \
+             patch('app.crud.user.get_user_by_id', new_callable=AsyncMock) as mock_get_user:
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(credentials=credentials, db=mock_db)
+
+        assert exc_info.value.status_code == 401
+        mock_get_user.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_current_active_user(self, mock_user):
