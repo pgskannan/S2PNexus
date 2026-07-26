@@ -18,24 +18,24 @@ from app.core.config import settings
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 # Create test engine
-test_engine = create_async_engine(
+_test_engine = create_async_engine(
     TEST_DATABASE_URL,
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
 )
 
 TestingSessionLocal = async_sessionmaker(
-    test_engine, class_=AsyncSession, expire_on_commit=False
+    _test_engine, class_=AsyncSession, expire_on_commit=False
 )
 
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
     """Create test database engine."""
-    async with test_engine.begin() as conn:
+    async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    yield test_engine
-    await test_engine.dispose()
+    yield _test_engine
+    await _test_engine.dispose()
 
 
 @pytest_asyncio.fixture(scope="function")

@@ -174,8 +174,20 @@ class Settings(BaseSettings):
 
     @property
     def CORS_ORIGINS(self) -> List[str]:
-        """CORS origins, parsed from CORS_ORIGINS_RAW (comma-separated or JSON array)."""
-        return _parse_str_list(self.CORS_ORIGINS_RAW)
+        """CORS origins, parsed from CORS_ORIGINS_RAW with safe defaults for local and deployed frontend origins."""
+        parsed = _parse_str_list(self.CORS_ORIGINS_RAW)
+        if "*" in parsed:
+            return ["*"]
+
+        default_origins = [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "https://s2pnexus-frontend-120737021520.us-central1.run.app",
+        ]
+        for origin in default_origins:
+            if origin not in parsed:
+                parsed.append(origin)
+        return parsed
 
     @property
     def ALLOWED_HOSTS(self) -> List[str]:
