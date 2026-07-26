@@ -11,6 +11,8 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jwt import InvalidTokenError
+
 from app.core.config import settings
 from app.core.security import decode_token, get_token_subject
 from app.crud.user import get_user_by_id
@@ -36,7 +38,17 @@ async def get_current_user(
         raise credentials_exception
 
     token = credentials.credentials
-    payload = decode_token(token)
+    try:
+        payload = decode_token(token)
+    except InvalidTokenError:
+        # Expired/invalid/mis-signed tokens are routine (e.g. a token signed
+        # under an old SECRET_KEY after a redeploy) -- surface them as a
+        # clean 401, not an unhandled 500. An unhandled exception here gets
+        # caught by main.py's global `except Exception` handler, which
+        # FastAPI/Starlette route through ServerErrorMiddleware -- outside
+        # CORSMiddleware -- so the response has no CORS headers and the
+        # browser reports "blocked by CORS policy" instead of a 401.
+        raise credentials_exception
 
     if not payload or payload.get("type") != "access":
         raise credentials_exception
