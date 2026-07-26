@@ -22,8 +22,8 @@ def upgrade() -> None:
         "system_settings",
         sa.Column("key", sa.String(length=100), nullable=False),
         sa.Column("value", sa.String(length=255), nullable=False),
-        sa.Column("updated_by", sa.UUID(as_uuid=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("NOW"), nullable=False),
+        sa.Column("updated_by", sa.UUID(as_uuid=True), nullable=True),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["updated_by"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("key"),
     )
