@@ -24,6 +24,11 @@ export interface Token {
   expires_in: number;
 }
 
+export interface AiProviderResponse {
+  current_provider: string;
+  available_providers: string[];
+}
+
 export interface Requisition {
   id: string;
   title: string;

@@ -15,6 +15,7 @@ const links = [
   { href: "/dashboard/spend", label: "Spend & Savings" },
   { href: "/dashboard/workflow", label: "Workflow" },
   { href: "/dashboard/suppliers", label: "Suppliers" },
+  { href: "/dashboard/settings", label: "Settings" },
   { href: "/dashboard/agent", label: "AI Agent" },
 ];
 

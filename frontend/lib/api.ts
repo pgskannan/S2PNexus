@@ -23,6 +23,7 @@ import type {
   Notification,
   NotificationListResponse,
   DashboardMetricsResponse,
+  AiProviderResponse,
 } from "@/lib/types";
 
 const API_BASE_URL =
@@ -352,6 +353,18 @@ export async function getSavingsSummary(): Promise<SavingsSummaryResponse> {
   // summary shape.
   const { data } = await api.get<SavingsListResponse>("/analytics/savings");
   return data.summary;
+}
+
+// ---- AI Provider ----
+
+export async function getAiProvider(): Promise<AiProviderResponse> {
+  const { data } = await api.get<AiProviderResponse>("/ai/provider");
+  return data;
+}
+
+export async function updateAiProvider(provider: string): Promise<AiProviderResponse> {
+  const { data } = await api.put<AiProviderResponse>("/ai/provider", { provider });
+  return data;
 }
 
 // ---- AI Agents ----
