@@ -139,6 +139,37 @@ export interface AgentQueryResponse {
   explanation: string;
 }
 
+export interface AgentActivityLogEntry {
+  id: string;
+  agent_name: string;
+  request_text: string;
+  success: boolean;
+  message: string;
+  plan: unknown[];
+  explanation?: string | null;
+  tools_used: string[];
+  llm_used: boolean;
+  data: Record<string, unknown>;
+  actor_id?: string | null;
+  latency_ms?: number | null;
+  created_at: string;
+}
+
+export interface AgentActivityLogListResponse {
+  items: AgentActivityLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AgentActivitySummaryResponse {
+  total_calls: number;
+  success_count: number;
+  failure_count: number;
+  llm_used_count: number;
+  by_agent: Record<string, number>;
+}
+
 export interface Contract {
   id: string;
   title: string;

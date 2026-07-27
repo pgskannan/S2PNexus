@@ -1,8 +1,10 @@
 """AI REST API routes for S2PNexus."""
 
+import time
+import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,10 +18,24 @@ from app.ai.schemas import (
     HealthResponse,
 )
 from app.ai.service import AIGatewayService
+from app.core.logging import get_logger
+from app.crud.agent_activity import (
+    create_agent_activity_log,
+    get_agent_activity_log,
+    get_agent_activity_summary,
+    list_agent_activity_logs,
+)
 from app.crud.system_setting import set_setting
 from app.database.session import get_db
 from app.models.user import User, UserRole
+from app.schemas.agent_activity import (
+    AgentActivityLogListResponse,
+    AgentActivityLogResponse,
+    AgentActivitySummaryResponse,
+)
 from app.utils.dependencies import get_current_active_user
+
+logger = get_logger(__name__)
 
 router = APIRouter(tags=["AI"])
 
@@ -168,7 +184,26 @@ async def query_agents(
     if orchestrator is None:  # pragma: no cover - only happens if lifespan startup was skipped
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent orchestrator is not available")
 
+    started_at = time.perf_counter()
     result = await orchestrator.handle_request(request=payload.request, metadata=payload.metadata, db=db)
+    latency_ms = int((time.perf_counter() - started_at) * 1000)
+
+    try:
+        await create_agent_activity_log(
+            db,
+            agent_name=result.agent_name,
+            request_text=payload.request,
+            success=result.success,
+            message=result.message,
+            plan=result.plan,
+            explanation=result.explanation,
+            data=result.data,
+            actor_id=current_user.id,
+            latency_ms=latency_ms,
+        )
+    except Exception as exc:  # pragma: no cover - defensive; logging must never break the agent response
+        logger.warning("agent_activity_log_failed", agent=result.agent_name, error=str(exc))
+
     return AgentQueryResponse(
         agent_name=result.agent_name,
         success=result.success,
@@ -177,3 +212,60 @@ async def query_agents(
         plan=result.plan,
         explanation=result.explanation,
     )
+
+
+@router.get(
+    "/agents/activity",
+    response_model=AgentActivityLogListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List agent activity log entries (read-only audit trail)",
+    description="Returns a paginated, newest-first log of every AI agent invocation, with the tools used, "
+    "whether the LLM produced the answer, and the full response payload -- the raw material for the "
+    "Agent Activity dashboard.",
+)
+async def list_activity(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+    agent_name: str | None = Query(default=None, description="Filter by agent name"),
+    success: bool | None = Query(default=None, description="Filter by success/failure"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> AgentActivityLogListResponse:
+    rows, total = await list_agent_activity_logs(db, agent_name=agent_name, success=success, limit=limit, offset=offset)
+    return AgentActivityLogListResponse(
+        items=[AgentActivityLogResponse.model_validate(row) for row in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/agents/activity/summary",
+    response_model=AgentActivitySummaryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Aggregate counters for the Agent Activity dashboard header",
+)
+async def activity_summary(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> AgentActivitySummaryResponse:
+    summary = await get_agent_activity_summary(db)
+    return AgentActivitySummaryResponse(**summary)
+
+
+@router.get(
+    "/agents/activity/{log_id}",
+    response_model=AgentActivityLogResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get a single agent activity log entry",
+)
+async def get_activity(
+    log_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> AgentActivityLogResponse:
+    log = await get_agent_activity_log(db, log_id)
+    if log is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent activity log not found")
+    return AgentActivityLogResponse.model_validate(log)

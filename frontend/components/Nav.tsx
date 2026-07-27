@@ -18,6 +18,7 @@ const links = [
   { href: "/dashboard/suppliers", label: "Suppliers" },
   { href: "/dashboard/settings", label: "Settings" },
   { href: "/dashboard/agent", label: "AI Agent" },
+  { href: "/dashboard/agent-activity", label: "Agent Activity" },
 ];
 
 export default function Nav() {

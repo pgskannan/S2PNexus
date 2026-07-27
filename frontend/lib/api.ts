@@ -2,6 +2,9 @@ import axios, { AxiosError } from "axios";
 import { useAuthStore } from "@/lib/auth-store";
 import type {
   AgentQueryResponse,
+  AgentActivityLogEntry,
+  AgentActivityLogListResponse,
+  AgentActivitySummaryResponse,
   Contract,
   ContractListResponse,
   Document,
@@ -487,5 +490,36 @@ export async function queryAgent(
     request,
     metadata: {},
   });
+  return data;
+}
+
+// ---- Agent Activity (read-only audit trail / dashboard) ----
+
+export async function listAgentActivity(params?: {
+  agent_name?: string;
+  success?: boolean;
+  limit?: number;
+  offset?: number;
+}): Promise<AgentActivityLogListResponse> {
+  const { data } = await api.get<AgentActivityLogListResponse>(
+    "/ai/agents/activity",
+    { params }
+  );
+  return data;
+}
+
+export async function getAgentActivitySummary(): Promise<AgentActivitySummaryResponse> {
+  const { data } = await api.get<AgentActivitySummaryResponse>(
+    "/ai/agents/activity/summary"
+  );
+  return data;
+}
+
+export async function getAgentActivityDetail(
+  id: string
+): Promise<AgentActivityLogEntry> {
+  const { data } = await api.get<AgentActivityLogEntry>(
+    `/ai/agents/activity/${id}`
+  );
   return data;
 }

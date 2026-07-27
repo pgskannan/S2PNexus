@@ -39,6 +39,7 @@ from app.models.workflow import (  # noqa: F401
     Notification,
 )
 from app.models.system_setting import SystemSetting  # noqa: F401
+from app.models.agent_activity import AgentActivityLog  # noqa: F401
 from app.metadata_engine.models import (
     MetadataAuditEvent,
     MetadataField,
@@ -76,4 +77,5 @@ __all__ = [
     "WorkflowInstance",
     "WorkflowTask",
     "Notification",
+    "AgentActivityLog",
 ]
