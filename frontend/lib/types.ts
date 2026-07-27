@@ -58,6 +58,17 @@ export interface RequisitionListResponse {
   limit: number;
 }
 
+export type SupplierLifecycleStatus =
+  | "active"
+  | "under_monitoring"
+  | "requalification_due"
+  | "requalification_in_progress"
+  | "offboarding"
+  | "offboarded"
+  | "merged";
+
+export type SupplierRelationshipType = "subsidiary" | "affiliate" | "branch" | "plant";
+
 export interface Supplier {
   id: string;
   name: string;
@@ -70,6 +81,14 @@ export interface Supplier {
   payment_terms?: string | null;
   currency: string;
   is_active: boolean;
+  lifecycle_status: SupplierLifecycleStatus;
+  last_qualified_at?: string | null;
+  next_requalification_due_at?: string | null;
+  offboarding_reason?: string | null;
+  offboarded_at?: string | null;
+  parent_supplier_id?: string | null;
+  relationship_type?: SupplierRelationshipType | null;
+  merged_into_supplier_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -79,6 +98,36 @@ export interface SupplierListResponse {
   total: number;
   skip: number;
   limit: number;
+}
+
+export interface SupplierHierarchyNode {
+  id: string;
+  name: string;
+  relationship_type?: SupplierRelationshipType | null;
+}
+
+export interface SupplierHierarchyResponse {
+  supplier_id: string;
+  parent: SupplierHierarchyNode | null;
+  children: SupplierHierarchyNode[];
+}
+
+export interface SupplierSpendRollupResponse {
+  supplier_id: string;
+  included_supplier_ids: string[];
+  total_spend: string;
+}
+
+export interface SupplierDuplicateCandidate {
+  supplier_id: string;
+  name: string;
+  match_score: number;
+  match_reasons: string[];
+}
+
+export interface SupplierDuplicatesResponse {
+  supplier_id: string;
+  candidates: SupplierDuplicateCandidate[];
 }
 
 export interface AgentQueryResponse {

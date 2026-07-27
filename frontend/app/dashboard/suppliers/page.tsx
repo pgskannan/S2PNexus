@@ -65,7 +65,7 @@ export default function SuppliersPage() {
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Contact</th>
               <th className="px-4 py-3">Payment terms</th>
-              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Lifecycle status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -85,20 +85,29 @@ export default function SuppliersPage() {
             )}
             {items.map((item) => (
               <tr key={item.id} className="hover:bg-slate-50">
-                <td className="px-4 py-3 font-medium">{item.name}</td>
+                <td className="px-4 py-3 font-medium">
+                  <Link
+                    href={`/dashboard/suppliers/${item.id}`}
+                    className="text-brand-700 hover:underline"
+                  >
+                    {item.name}
+                  </Link>
+                </td>
                 <td className="px-4 py-3 text-slate-500">
                   {item.contact_email || "—"}
                 </td>
                 <td className="px-4 py-3">{item.payment_terms || "—"}</td>
                 <td className="px-4 py-3">
                   <span
-                    className={`badge ${
-                      item.is_active
+                    className={`badge capitalize ${
+                      item.lifecycle_status === "active"
                         ? "bg-green-100 text-green-700"
-                        : "bg-slate-100 text-slate-500"
+                        : item.lifecycle_status === "offboarded" || item.lifecycle_status === "merged"
+                        ? "bg-slate-100 text-slate-500"
+                        : "bg-amber-100 text-amber-700"
                     }`}
                   >
-                    {item.is_active ? "Active" : "Inactive"}
+                    {(item.lifecycle_status ?? (item.is_active ? "active" : "inactive")).replace(/_/g, " ")}
                   </span>
                 </td>
               </tr>

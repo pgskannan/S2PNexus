@@ -15,6 +15,9 @@ import type {
   SpendAnalyticsResponse,
   Supplier,
   SupplierListResponse,
+  SupplierHierarchyResponse,
+  SupplierSpendRollupResponse,
+  SupplierDuplicatesResponse,
   Token,
   User,
   WorkflowDefinition,
@@ -164,6 +167,80 @@ export async function createSupplier(payload: {
   currency?: string;
 }): Promise<Supplier> {
   const { data } = await api.post<Supplier>("/suppliers", payload);
+  return data;
+}
+
+export async function getSupplier(id: string): Promise<Supplier> {
+  const { data } = await api.get<Supplier>(`/suppliers/${id}`);
+  return data;
+}
+
+// -- Supplier lifecycle (continuous monitoring / requalification / offboarding) --
+
+export async function transitionSupplierLifecycle(
+  id: string,
+  payload: {
+    action: string;
+    reason?: string;
+    next_requalification_due_at?: string;
+  }
+): Promise<Supplier> {
+  const { data } = await api.post<Supplier>(
+    `/suppliers/${id}/lifecycle/transition`,
+    payload
+  );
+  return data;
+}
+
+// -- Supplier hierarchy --
+
+export async function getSupplierHierarchy(
+  id: string
+): Promise<SupplierHierarchyResponse> {
+  const { data } = await api.get<SupplierHierarchyResponse>(
+    `/suppliers/${id}/hierarchy`
+  );
+  return data;
+}
+
+export async function updateSupplierHierarchy(
+  id: string,
+  payload: { parent_supplier_id: string | null; relationship_type?: string }
+): Promise<Supplier> {
+  const { data } = await api.patch<Supplier>(
+    `/suppliers/${id}/hierarchy`,
+    payload
+  );
+  return data;
+}
+
+export async function getSupplierSpendRollup(
+  id: string
+): Promise<SupplierSpendRollupResponse> {
+  const { data } = await api.get<SupplierSpendRollupResponse>(
+    `/suppliers/${id}/spend-rollup`
+  );
+  return data;
+}
+
+// -- Duplicate management --
+
+export async function getSupplierDuplicates(
+  id: string,
+  params?: { min_score?: number; limit?: number }
+): Promise<SupplierDuplicatesResponse> {
+  const { data } = await api.get<SupplierDuplicatesResponse>(
+    `/suppliers/${id}/duplicates`,
+    { params }
+  );
+  return data;
+}
+
+export async function mergeSuppliers(payload: {
+  source_supplier_id: string;
+  target_supplier_id: string;
+}): Promise<Supplier> {
+  const { data } = await api.post<Supplier>("/suppliers/merge", payload);
   return data;
 }
 
