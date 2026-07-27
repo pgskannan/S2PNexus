@@ -37,16 +37,35 @@ gcloud run deploy s2pnexus-backend --source . --region=us-central1 --project=s2p
 ```
 
 - First-ever source deploy asks to create an Artifact Registry repo (`cloud-run-source-deploy`) — say `y`, it's a one-time setup.
-- **Don't add `--set-env-vars`** unless you mean to replace the entire env var set — it silently wipes `CORS_ORIGINS`/`ALLOWED_HOSTS`/anything not listed. To change one var, use `--update-env-vars KEY=value` instead. To leave env vars untouched (the common case), omit env var flags entirely — Cloud Run carries over the previous revision's config.
-- `entrypoint.sh` runs `alembic upgrade head` automatically on container start, so DB migrations ship with the deploy — no separate migration step needed.
+- **Don't add `--set-env-vars`** unless you mean to replace the entire env var set — it silently wipes *any* var not listed, not just `CORS_ORIGINS`/`ALLOWED_HOSTS` (it hit `SECRET_KEY` and `DATABASE_URL` too on 2026-07-26, see incident below). To change one var, use `--update-env-vars KEY=value` instead. To leave env vars untouched (the common case), omit env var flags entirely — Cloud Run carries over the previous revision's config.
+- `entrypoint.sh` runs `alembic upgrade head` automatically on container start, so DB migrations ship with the deploy — no separate migration step needed. This also means a bad env var (missing `SECRET_KEY`, wrong `DATABASE_URL` password, etc.) crashes the container *before* `uvicorn` ever starts, which Cloud Run reports as a generic "container failed to start and listen on port 8080" — don't take that message literally as a port/config problem, it almost always means the process crashed on startup for an unrelated reason.
+
+### If a deploy fails with "container failed to start and listen on port 8080"
+
+Don't guess — pull the actual startup traceback for that specific revision (the generic health-check message hides it):
+```
+gcloud logging read "resource.type=cloud_run_revision AND resource.labels.revision_name=<REVISION_NAME>" --project=s2pnexus --limit=50 --format="value(textPayload)"
+```
+(Get `<REVISION_NAME>` from the failed deploy's own output, or `gcloud run revisions list --service=s2pnexus-backend --region=us-central1 --project=s2pnexus --sort-by=~metadata.creationTimestamp --limit=5` — the ✔/✘ column shows which ones actually went healthy.)
+
+If it turns out to be a corrupted/missing env var, compare variable *names* (not values — don't paste secret values into a chat/AI session) between the current service and the last known-good revision:
+```
+gcloud run revisions describe <LAST_GOOD_REVISION> --region=us-central1 --project=s2pnexus --format="value(spec.containers[0].env[].name)" | tr ';' '\n' | sort > /tmp/good_vars.txt
+gcloud run services describe s2pnexus-backend --region=us-central1 --project=s2pnexus --format="value(spec.template.spec.containers[0].env[].name)" | tr ';' '\n' | sort > /tmp/current_vars.txt
+diff /tmp/good_vars.txt /tmp/current_vars.txt
+```
+If names match but a value is still wrong (like the DB password incident), pull the correct value from the known-good revision directly in your terminal and reapply with `--update-env-vars` — don't relay full secret values through chat/AI tooling. If you do end up pasting a secret somewhere it shouldn't be, rotate it afterward (new `SECRET_KEY`, `ALTER USER ... WITH PASSWORD ...` on Postgres + update `DATABASE_URL`, etc.).
 
 ## 4. Deploy frontend (Cloud Shell, only when frontend changes)
 
 ```
 cd ~/S2PNexus/frontend
 gcloud builds submit --config=cloudbuild.yaml
+gcloud run deploy s2pnexus-frontend --image=us-central1-docker.pkg.dev/s2pnexus/s2pnexus-repo/frontend:latest --region=us-central1 --project=s2pnexus
 ```
 (Uses `cloudbuild.yaml` rather than a plain `gcloud builds submit --tag=...` because it needs to pass `NEXT_PUBLIC_API_URL` as a build arg at Next.js build time, which the plain command can't do.)
+
+**Both commands are required** — `cloudbuild.yaml` only builds the image and pushes it to Artifact Registry (`:latest` tag), it has no deploy step. Without the second command the Cloud Run service keeps serving the old revision even though the build says `STATUS: SUCCESS` (confirmed 2026-07-27: a Documents page build succeeded and pushed but never went live until this was run explicitly). Ignore `⨯ Failed to patch lockfile` / `TypeError: Cannot read properties of undefined (reading 'os')` during the build — it's a harmless Next.js SWC-lockfile-patching quirk that doesn't stop the build (look for `✓ Compiled successfully` right after it).
 
 ## 5. After deploying
 
@@ -68,3 +87,4 @@ gcloud builds submit --config=cloudbuild.yaml
 
 - **2026-07-26 — CORS errors on every authenticated endpoint.** Looked like a CORS misconfig; was actually `get_current_user` throwing an unhandled `jwt.InvalidTokenError` on stale/mis-signed tokens. FastAPI/Starlette route handlers registered for the bare `Exception` class through `ServerErrorMiddleware`, which sits *outside* `CORSMiddleware` — so any unhandled exception (not just this one) comes back with no CORS header and browsers report it as "blocked by CORS policy" instead of showing the real error. Fixed at the source in `app/core/dependencies.py` (catch `InvalidTokenError`, raise a proper 401). Worth remembering generally: an unexplained CORS error on a previously-working endpoint is worth checking backend logs for a real exception before assuming it's a CORS config problem.
 - **2026-07-25 — Cloud Run deploy lagged commits.** Backend commits sat on `main` for hours before being deployed, including a real CORS fix. If something's broken in prod, check `git log` vs. what's actually deployed before deep-diving — it might just need a redeploy.
+- **2026-07-26 — Three deploys in a row failed silently after an env var wipe.** Traffic stayed pinned on revision `00017` (04:39 UTC) while `00019`–`00022` all failed their health check and were auto-discarded — from the browser this looked identical to earlier CORS incidents (every authenticated call failing), which cost time before checking `gcloud run revisions list` and noticing the ✘ column. Root cause: `SECRET_KEY` had been wiped to an empty string at the service level (Pydantic rejected it, container exited before `uvicorn` bound to the port) and `DATABASE_URL`'s password no longer matched the DB (`asyncpg.exceptions.InvalidPasswordError`). Both fixed with `--update-env-vars` (new random `SECRET_KEY` via `openssl rand -hex 32`; `DATABASE_URL` restored from the last known-good revision, `00017`). **Lesson:** after any deploy attempt, check `gcloud run revisions list` for the ✔/✘ column and confirm traffic actually moved — "the push/pull/deploy commands all succeeded" doesn't mean the new revision is serving.

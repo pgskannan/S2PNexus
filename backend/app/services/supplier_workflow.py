@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from app.events.publisher import EventPublisher
 
@@ -82,6 +83,62 @@ async def apply_supplier_transition_workflow(
         )
 
     return decision
+
+
+async def trigger_supplier_requalification_workflow(
+    db: Any,
+    supplier: Any,
+    *,
+    started_by: UUID,
+    definition_id: UUID | str | None = None,
+) -> Any | None:
+    """Kick off a WorkflowInstance for a supplier's requalification, reusing the
+    generic Workflow Automation engine (WorkflowDefinition/Instance/Task) built
+    for contracts/requisitions/sourcing rather than a bespoke requalification
+    state machine.
+
+    Looks up a WorkflowDefinition with entity_type='supplier' -- either the one
+    named by definition_id, or (if not given) the most recently created active
+    one -- and starts an instance against it. Returns None (does not raise) if
+    no such definition has been configured yet, since requalification workflow
+    steps are operator-configured data, not something this code should assume
+    exists; callers can still fall back to the plain lifecycle_status flip in
+    crud.supplier.transition_supplier_lifecycle.
+    """
+    # Imported locally to avoid a hard import-time dependency between the
+    # supplier and workflow domains for callers that never trigger this path.
+    from app.crud.workflow import get_workflow_definitions, start_workflow_instance
+    from app.schemas.workflow import WorkflowInstanceStart
+
+    if definition_id is not None:
+        from app.crud.workflow import get_workflow_definition
+
+        definition = await get_workflow_definition(db, definition_id)
+        if definition is None or definition.entity_type != "supplier" or not definition.is_active:
+            return None
+    else:
+        candidates = await get_workflow_definitions(db, entity_type="supplier", is_active=True, limit=1)
+        if not candidates:
+            return None
+        definition = candidates[0]
+
+    context = {
+        "supplier_id": str(supplier.id),
+        "name": getattr(supplier, "name", None),
+        "lifecycle_status": getattr(supplier, "lifecycle_status", None),
+        "reason": "requalification",
+    }
+
+    return await start_workflow_instance(
+        db,
+        WorkflowInstanceStart(
+            definition_id=definition.id,
+            entity_type="supplier",
+            entity_id=supplier.id,
+            context=context,
+        ),
+        started_by=started_by,
+    )
 
 
 async def apply_supplier_registration_transition_workflow(

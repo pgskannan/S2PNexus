@@ -83,6 +83,35 @@ class Supplier(Base):
         nullable=False,
         comment="Active status",
     )
+    lifecycle_status: Mapped[str] = mapped_column(
+        String(50),
+        default="active",
+        nullable=False,
+        index=True,
+        comment="Post-onboarding lifecycle state: active, under_monitoring, "
+        "requalification_due, requalification_in_progress, offboarding, offboarded",
+    )
+    last_qualified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="When the supplier last passed qualification/requalification",
+    )
+    next_requalification_due_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+        comment="When the supplier is next due for requalification",
+    )
+    offboarding_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Reason recorded when offboarding was initiated",
+    )
+    offboarded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="When the supplier was fully offboarded",
+    )
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

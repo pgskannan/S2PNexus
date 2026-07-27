@@ -22,7 +22,16 @@ from app.commands.supplier import (
     TransitionSupplierRequestCommandHandler,
 )
 from app.core.config import get_settings
-from app.crud.supplier import create_supplier, delete_supplier, get_supplier, get_suppliers, get_suppliers_count, update_supplier
+from app.crud.supplier import (
+    create_supplier,
+    delete_supplier,
+    get_supplier,
+    get_suppliers,
+    get_suppliers_count,
+    get_suppliers_requalification_due,
+    transition_supplier_lifecycle,
+    update_supplier,
+)
 from app.crud.supplier_registration import (
     convert_registration_to_supplier,
     create_supplier_registration,
@@ -42,7 +51,13 @@ from app.crud.supplier_request import (
 )
 from app.database.session import get_db
 from app.models.user import User
-from app.schemas.supplier import SupplierCreate, SupplierListResponse, SupplierResponse, SupplierUpdate
+from app.schemas.supplier import (
+    SupplierCreate,
+    SupplierLifecycleTransitionRequest,
+    SupplierListResponse,
+    SupplierResponse,
+    SupplierUpdate,
+)
 from app.schemas.supplier_registration import (
     SupplierRegistrationCreate,
     SupplierRegistrationListResponse,
@@ -55,7 +70,11 @@ from app.schemas.supplier_request import (
     SupplierRequestResponse,
     SupplierRequestUpdate,
 )
-from app.services.supplier_workflow import apply_supplier_registration_transition_workflow, apply_supplier_transition_workflow
+from app.services.supplier_workflow import (
+    apply_supplier_registration_transition_workflow,
+    apply_supplier_transition_workflow,
+    trigger_supplier_requalification_workflow,
+)
 from app.utils.dependencies import get_current_active_user
 
 router = APIRouter(prefix="", tags=["Suppliers"])
@@ -403,11 +422,25 @@ async def convert_supplier_registration_endpoint(
     return SupplierRegistrationResponse.model_validate(registration)
 
 
+@router.get(
+    "/requalification-due",
+    response_model=list[SupplierResponse],
+    summary="List suppliers due for requalification",
+    description="Suppliers whose next_requalification_due_at has passed and aren't already mid-requalification or offboarding",
+)
+async def list_suppliers_requalification_due(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[SupplierResponse]:
+    suppliers = await get_suppliers_requalification_due(db)
+    return [SupplierResponse.model_validate(supplier) for supplier in suppliers]
+
+
 # NOTE: The generic "/{supplier_id}" routes below must stay registered *after* every
-# other literal-prefixed route on this router (e.g. "/requests", "/registrations").
-# FastAPI/Starlette match routes in registration order using the raw path shape, so a
-# "/{supplier_id}" route declared earlier would greedily match paths like "/requests"
-# or "/registrations" and fail UUID validation before those routes ever get a chance.
+# other literal-prefixed route on this router (e.g. "/requests", "/registrations",
+# "/requalification-due"). FastAPI/Starlette match routes in registration order using
+# the raw path shape, so a "/{supplier_id}" route declared earlier would greedily
+# match those literal paths and fail UUID validation before they ever get a chance.
 @router.get(
     "/{supplier_id}",
     response_model=SupplierResponse,
@@ -478,6 +511,40 @@ async def update_supplier_by_id(
 
     updated_supplier = await update_supplier(db, supplier_id, supplier_update)
     return SupplierResponse.model_validate(updated_supplier)
+
+
+@router.post(
+    "/{supplier_id}/lifecycle/transition",
+    response_model=SupplierResponse,
+    summary="Transition supplier lifecycle state",
+    description="Move a supplier through continuous monitoring, requalification, and offboarding states",
+)
+async def transition_supplier_lifecycle_endpoint(
+    supplier_id: UUID,
+    transition_data: SupplierLifecycleTransitionRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierResponse:
+    try:
+        supplier = await transition_supplier_lifecycle(
+            db,
+            supplier_id,
+            action=transition_data.action,
+            reason=transition_data.reason,
+            next_requalification_due_at=transition_data.next_requalification_due_at,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    # Starting requalification also kicks off the generic workflow engine, if an
+    # operator has configured a WorkflowDefinition for entity_type='supplier'.
+    # Best-effort: no configured definition yet is expected, not an error.
+    if transition_data.action.lower() == "start_requalification":
+        await trigger_supplier_requalification_workflow(db, supplier, started_by=current_user.id)
+
+    return SupplierResponse.model_validate(supplier)
 
 
 @router.delete(

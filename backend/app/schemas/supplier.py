@@ -26,6 +26,16 @@ class SupplierBase(BaseModel):
     is_active: bool = Field(default=True, description="Active status")
 
 
+LIFECYCLE_STATUSES = (
+    "active",
+    "under_monitoring",
+    "requalification_due",
+    "requalification_in_progress",
+    "offboarding",
+    "offboarded",
+)
+
+
 class SupplierCreate(SupplierBase):
     """Supplier creation schema."""
 
@@ -53,8 +63,27 @@ class SupplierResponse(SupplierBase):
     """Supplier response schema."""
 
     id: UUID
+    lifecycle_status: str = "active"
+    last_qualified_at: Optional[datetime] = None
+    next_requalification_due_at: Optional[datetime] = None
+    offboarding_reason: Optional[str] = None
+    offboarded_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+
+
+class SupplierLifecycleTransitionRequest(BaseModel):
+    """Request to transition a supplier's post-onboarding lifecycle state."""
+
+    action: str = Field(
+        ...,
+        description="One of: begin_monitoring, flag_requalification, start_requalification, "
+        "complete_requalification, start_offboarding, complete_offboarding, reactivate",
+    )
+    reason: Optional[str] = Field(None, description="Reason, required for start_offboarding")
+    next_requalification_due_at: Optional[datetime] = Field(
+        None, description="Optional override for the next requalification due date"
+    )
 
 
 class SupplierListResponse(BaseModel):
