@@ -4,6 +4,8 @@ import type {
   AgentQueryResponse,
   Contract,
   ContractListResponse,
+  Document,
+  DocumentListResponse,
   Requisition,
   RequisitionListResponse,
   SavingsListResponse,
@@ -180,6 +182,38 @@ export async function listContracts(params?: {
 export async function getContract(id: string): Promise<Contract> {
   const { data } = await api.get<Contract>(`/contracts/${id}`);
   return data;
+}
+
+export async function listDocuments(params?: {
+  search?: string;
+  document_type?: string;
+}): Promise<DocumentListResponse> {
+  const { data } = await api.get<DocumentListResponse>("/documents", {
+    params,
+  });
+  return data;
+}
+
+export async function uploadDocument(
+  file: File,
+  document_type?: string
+): Promise<Document> {
+  // The backend endpoint declares `document_type` as a plain parameter
+  // alongside `file: UploadFile = File(...)` with no `Form(...)` annotation,
+  // so FastAPI parses it as a query parameter, not a multipart form field --
+  // sending it in the FormData body gets silently ignored (always falls
+  // back to the "general" default).
+  const formData = new FormData();
+  formData.append("file", file);
+  const { data } = await api.post<Document>("/documents/upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    params: document_type ? { document_type } : undefined,
+  });
+  return data;
+}
+
+export async function deleteDocument(id: string): Promise<void> {
+  await api.delete(`/documents/${id}`);
 }
 
 export async function createContract(payload: Partial<Contract> & {

@@ -119,6 +119,26 @@ export interface ContractListResponse {
   limit: number;
 }
 
+export interface Document {
+  id: string;
+  filename: string;
+  content_type: string;
+  file_size: number;
+  document_type: string;
+  storage_path: string;
+  content?: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DocumentListResponse {
+  items: Document[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
 export interface SourcingEvent {
   id: string;
   event_number: string;
