@@ -25,10 +25,15 @@ from app.core.config import get_settings
 from app.crud.supplier import (
     create_supplier,
     delete_supplier,
+    find_potential_duplicate_suppliers,
     get_supplier,
+    get_supplier_hierarchy,
+    get_supplier_spend_rollup,
     get_suppliers,
     get_suppliers_count,
     get_suppliers_requalification_due,
+    merge_suppliers,
+    set_supplier_parent,
     transition_supplier_lifecycle,
     update_supplier,
 )
@@ -53,9 +58,14 @@ from app.database.session import get_db
 from app.models.user import User
 from app.schemas.supplier import (
     SupplierCreate,
+    SupplierDuplicatesResponse,
+    SupplierHierarchyResponse,
+    SupplierHierarchyUpdate,
     SupplierLifecycleTransitionRequest,
     SupplierListResponse,
+    SupplierMergeRequest,
     SupplierResponse,
+    SupplierSpendRollupResponse,
     SupplierUpdate,
 )
 from app.schemas.supplier_registration import (
@@ -436,11 +446,39 @@ async def list_suppliers_requalification_due(
     return [SupplierResponse.model_validate(supplier) for supplier in suppliers]
 
 
+@router.post(
+    "/merge",
+    response_model=SupplierResponse,
+    summary="Merge a duplicate supplier into a surviving golden record",
+    description="Reassigns live contracts from the source supplier to the target, marks the source as merged",
+)
+async def merge_suppliers_endpoint(
+    merge_data: SupplierMergeRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierResponse:
+    try:
+        merged = await merge_suppliers(
+            db,
+            source_supplier_id=merge_data.source_supplier_id,
+            target_supplier_id=merge_data.target_supplier_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return SupplierResponse.model_validate(merged)
+
+
 # NOTE: The generic "/{supplier_id}" routes below must stay registered *after* every
 # other literal-prefixed route on this router (e.g. "/requests", "/registrations",
-# "/requalification-due"). FastAPI/Starlette match routes in registration order using
-# the raw path shape, so a "/{supplier_id}" route declared earlier would greedily
-# match those literal paths and fail UUID validation before they ever get a chance.
+# "/requalification-due", "/merge"). FastAPI/Starlette match routes in registration
+# order using the raw path shape, so a "/{supplier_id}" route declared earlier would
+# greedily match those literal paths and fail UUID validation before they ever get a
+# chance. Routes shaped "/{supplier_id}/<literal-suffix>" (e.g. hierarchy,
+# spend-rollup, duplicates, lifecycle/transition below) don't have this problem since
+# their shape never collides with a bare "/{supplier_id}", so they can go anywhere.
 @router.get(
     "/{supplier_id}",
     response_model=SupplierResponse,
@@ -545,6 +583,98 @@ async def transition_supplier_lifecycle_endpoint(
         await trigger_supplier_requalification_workflow(db, supplier, started_by=current_user.id)
 
     return SupplierResponse.model_validate(supplier)
+
+
+@router.get(
+    "/{supplier_id}/hierarchy",
+    response_model=SupplierHierarchyResponse,
+    summary="Get a supplier's hierarchy context",
+    description="Returns the supplier's parent (if any) and direct children",
+)
+async def get_supplier_hierarchy_endpoint(
+    supplier_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierHierarchyResponse:
+    try:
+        hierarchy = await get_supplier_hierarchy(db, supplier_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return SupplierHierarchyResponse.model_validate(hierarchy)
+
+
+@router.patch(
+    "/{supplier_id}/hierarchy",
+    response_model=SupplierResponse,
+    summary="Set or clear a supplier's parent in the corporate hierarchy",
+    description="Pass parent_supplier_id=null to detach; otherwise parent_supplier_id + relationship_type are both required",
+)
+async def update_supplier_hierarchy_endpoint(
+    supplier_id: UUID,
+    hierarchy_update: SupplierHierarchyUpdate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierResponse:
+    try:
+        supplier = await set_supplier_parent(
+            db,
+            supplier_id,
+            parent_supplier_id=hierarchy_update.parent_supplier_id,
+            relationship_type=hierarchy_update.relationship_type,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return SupplierResponse.model_validate(supplier)
+
+
+@router.get(
+    "/{supplier_id}/spend-rollup",
+    response_model=SupplierSpendRollupResponse,
+    summary="Aggregated spend across a supplier and its hierarchy",
+    description="Sums invoice spend for the supplier plus every descendant in its hierarchy",
+)
+async def get_supplier_spend_rollup_endpoint(
+    supplier_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierSpendRollupResponse:
+    try:
+        rollup = await get_supplier_spend_rollup(db, supplier_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return SupplierSpendRollupResponse.model_validate(rollup)
+
+
+@router.get(
+    "/{supplier_id}/duplicates",
+    response_model=SupplierDuplicatesResponse,
+    summary="Find potential duplicate suppliers",
+    description="Multi-factor duplicate detection: exact tax ID / website domain match plus fuzzy name similarity",
+)
+async def get_supplier_duplicates_endpoint(
+    supplier_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+    min_score: float = Query(0.5, ge=0.0, le=1.0, description="Minimum combined match score to include a candidate"),
+    limit: int = Query(10, ge=1, le=100),
+) -> SupplierDuplicatesResponse:
+    try:
+        scored = await find_potential_duplicate_suppliers(db, supplier_id, min_score=min_score, limit=limit)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return SupplierDuplicatesResponse(
+        supplier_id=supplier_id,
+        candidates=[
+            {"supplier_id": candidate.id, "name": candidate.name, "match_score": score, "match_reasons": reasons}
+            for candidate, score, reasons in scored
+        ],
+    )
 
 
 @router.delete(

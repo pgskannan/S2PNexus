@@ -112,6 +112,25 @@ class Supplier(Base):
         nullable=True,
         comment="When the supplier was fully offboarded",
     )
+    parent_supplier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("suppliers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Parent supplier in the corporate hierarchy (self-referential)",
+    )
+    relationship_type: Mapped[str | None] = mapped_column(
+        String(30),
+        nullable=True,
+        comment="Relationship to parent_supplier_id: subsidiary, affiliate, branch, plant",
+    )
+    merged_into_supplier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("suppliers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Set when this supplier record was merged into a golden/surviving record as a duplicate",
+    )
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -149,6 +168,28 @@ class Supplier(Base):
         foreign_keys="[SupplierRegistration.supplier_id]",
         uselist=False,
         lazy="selectin",
+    )
+    # Self-referential hierarchy/merge relationships deliberately use the default
+    # lazy ("select") loading rather than "selectin" like the relationships above:
+    # selectin is a mapper-wide strategy, so eager-loading "children" here would
+    # cascade recursively through every level of the tree on any supplier query.
+    # CRUD functions in crud/supplier.py issue explicit, depth-bounded queries
+    # for hierarchy/duplicate work instead of walking these relationships.
+    parent: Mapped["Supplier | None"] = relationship(
+        "Supplier",
+        remote_side=[id],
+        foreign_keys=[parent_supplier_id],
+        back_populates="children",
+    )
+    children: Mapped[list["Supplier"]] = relationship(
+        "Supplier",
+        foreign_keys=[parent_supplier_id],
+        back_populates="parent",
+    )
+    merged_into: Mapped["Supplier | None"] = relationship(
+        "Supplier",
+        remote_side=[id],
+        foreign_keys=[merged_into_supplier_id],
     )
 
     def __repr__(self) -> str:

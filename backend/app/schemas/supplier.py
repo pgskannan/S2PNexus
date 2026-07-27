@@ -3,6 +3,7 @@ Supplier schemas for S2PNexus.
 """
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
@@ -33,7 +34,10 @@ LIFECYCLE_STATUSES = (
     "requalification_in_progress",
     "offboarding",
     "offboarded",
+    "merged",
 )
+
+RELATIONSHIP_TYPES = ("subsidiary", "affiliate", "branch", "plant")
 
 
 class SupplierCreate(SupplierBase):
@@ -68,6 +72,9 @@ class SupplierResponse(SupplierBase):
     next_requalification_due_at: Optional[datetime] = None
     offboarding_reason: Optional[str] = None
     offboarded_at: Optional[datetime] = None
+    parent_supplier_id: Optional[UUID] = None
+    relationship_type: Optional[str] = None
+    merged_into_supplier_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
 
@@ -95,3 +102,69 @@ class SupplierListResponse(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+# --- Supplier Hierarchy -----------------------------------------------------
+
+
+class SupplierHierarchyUpdate(BaseModel):
+    """Set (or clear) a supplier's position in the corporate hierarchy."""
+
+    parent_supplier_id: Optional[UUID] = Field(
+        None, description="Parent supplier ID, or null to detach this supplier from any parent"
+    )
+    relationship_type: Optional[str] = Field(
+        None, description=f"One of: {', '.join(RELATIONSHIP_TYPES)} (required when parent_supplier_id is set)"
+    )
+
+
+class SupplierHierarchyNode(BaseModel):
+    """One node in a hierarchy listing (a parent or a child)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    relationship_type: Optional[str] = None
+
+
+class SupplierHierarchyResponse(BaseModel):
+    """A supplier's immediate hierarchy context: its parent and direct children."""
+
+    supplier_id: UUID
+    parent: Optional[SupplierHierarchyNode] = None
+    children: list[SupplierHierarchyNode] = Field(default_factory=list)
+
+
+class SupplierSpendRollupResponse(BaseModel):
+    """Aggregated spend for a supplier plus every descendant in its hierarchy."""
+
+    supplier_id: UUID
+    included_supplier_ids: list[UUID]
+    total_spend: Decimal
+
+
+# --- Duplicate Management -----------------------------------------------------
+
+
+class SupplierDuplicateCandidate(BaseModel):
+    """A candidate duplicate of a given supplier, with the reasons it matched."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    supplier_id: UUID
+    name: str
+    match_score: float = Field(..., ge=0.0, le=1.0)
+    match_reasons: list[str]
+
+
+class SupplierDuplicatesResponse(BaseModel):
+    supplier_id: UUID
+    candidates: list[SupplierDuplicateCandidate]
+
+
+class SupplierMergeRequest(BaseModel):
+    """Merge a duplicate supplier record into the surviving 'golden' record."""
+
+    source_supplier_id: UUID = Field(..., description="The duplicate record being merged away")
+    target_supplier_id: UUID = Field(..., description="The surviving 'golden' record")
