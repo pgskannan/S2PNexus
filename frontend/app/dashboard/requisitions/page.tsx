@@ -69,6 +69,7 @@ export default function RequisitionsPage() {
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
             <tr>
+              <th className="px-4 py-3">Number</th>
               <th className="px-4 py-3">Title</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Priority</th>
@@ -79,20 +80,23 @@ export default function RequisitionsPage() {
           <tbody className="divide-y divide-slate-100">
             {loading && (
               <tr>
-                <td className="px-4 py-4 text-slate-400" colSpan={5}>
+                <td className="px-4 py-4 text-slate-400" colSpan={6}>
                   Loading...
                 </td>
               </tr>
             )}
             {!loading && items.length === 0 && (
               <tr>
-                <td className="px-4 py-4 text-slate-400" colSpan={5}>
+                <td className="px-4 py-4 text-slate-400" colSpan={6}>
                   No requisitions yet.
                 </td>
               </tr>
             )}
             {items.map((item) => (
               <tr key={item.id} className="hover:bg-slate-50">
+                <td className="px-4 py-3 font-mono text-xs text-slate-500">
+                  {item.requisition_number || "—"}
+                </td>
                 <td className="px-4 py-3">
                   <Link
                     href={`/dashboard/requisitions/${item.id}`}

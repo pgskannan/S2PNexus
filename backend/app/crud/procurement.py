@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.crud.document_numbering import generate_document_number
 from app.models.procurement import (
     GoodsReceipt,
     ProcurementAttachment,
@@ -94,6 +95,9 @@ async def create_requisition(
     requisition = ProcurementRequisition(**data)
     if tenant_id is not None:
         requisition.tenant_id = tenant_id
+    requisition.requisition_number = await generate_document_number(
+        db, tenant_id=tenant_id, document_type="procurement_requisition"
+    )
     requisition.search_text = _build_search_text(requisition)
     db.add(requisition)
     await db.commit()
@@ -212,11 +216,13 @@ async def create_purchase_order(
     requisition_id: UUID,
     purchase_order_in: PurchaseOrderCreate,
     created_by: UUID,
+    tenant_id: Optional[UUID] = None,
 ) -> PurchaseOrder:
+    order_number = await generate_document_number(db, tenant_id=tenant_id, document_type="purchase_order")
     purchase_order = PurchaseOrder(
         requisition_id=requisition_id,
         supplier_id=purchase_order_in.supplier_id,
-        order_number=purchase_order_in.order_number,
+        order_number=order_number,
         status=purchase_order_in.status,
         currency=purchase_order_in.currency,
         total_amount=purchase_order_in.total_amount,
@@ -267,10 +273,12 @@ async def create_goods_receipt(
     purchase_order_id: UUID,
     goods_receipt_in: GoodsReceiptCreate,
     created_by: UUID,
+    tenant_id: Optional[UUID] = None,
 ) -> GoodsReceipt:
+    receipt_number = await generate_document_number(db, tenant_id=tenant_id, document_type="goods_receipt")
     goods_receipt = GoodsReceipt(
         purchase_order_id=purchase_order_id,
-        receipt_number=goods_receipt_in.receipt_number,
+        receipt_number=receipt_number,
         status=goods_receipt_in.status,
         receipt_type=goods_receipt_in.receipt_type,
         received_quantity=goods_receipt_in.received_quantity,
@@ -300,9 +308,15 @@ async def get_recent_invoices(db: AsyncSession, *, limit: int = 5) -> list[Procu
     return list(result.scalars().all())
 
 
-async def create_invoice(db: AsyncSession, invoice_in: ProcurementInvoiceCreate, created_by: UUID) -> ProcurementInvoice:
+async def create_invoice(
+    db: AsyncSession,
+    invoice_in: ProcurementInvoiceCreate,
+    created_by: UUID,
+    tenant_id: Optional[UUID] = None,
+) -> ProcurementInvoice:
+    invoice_number = await generate_document_number(db, tenant_id=tenant_id, document_type="procurement_invoice")
     invoice = ProcurementInvoice(
-        invoice_number=invoice_in.invoice_number,
+        invoice_number=invoice_number,
         supplier_id=invoice_in.supplier_id,
         purchase_order_id=invoice_in.purchase_order_id,
         goods_receipt_id=invoice_in.goods_receipt_id,

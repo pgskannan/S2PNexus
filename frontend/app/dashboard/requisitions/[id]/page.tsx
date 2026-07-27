@@ -79,6 +79,9 @@ export default function RequisitionDetailPage() {
       <div className="card space-y-4">
         <div className="flex items-start justify-between">
           <div>
+            {requisition.requisition_number && (
+              <p className="font-mono text-xs text-slate-400">{requisition.requisition_number}</p>
+            )}
             <h1 className="text-xl font-semibold">{requisition.title}</h1>
             <p className="mt-1 text-sm text-slate-500">
               {requisition.description || "No description"}

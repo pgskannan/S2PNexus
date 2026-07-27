@@ -19,7 +19,10 @@ from app.core.config import get_settings, Settings
 from app.database.database import close_db, db_manager, init_db
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
-from app.routers import health, auth, users, suppliers, contracts, documents, analytics, ai, procurement, sourcing, workflow
+from app.routers import health, auth, users, suppliers, contracts, documents, analytics, ai, procurement, sourcing, workflow, document_numbering
+from app.routers.commodity import router as commodity_router
+from app.routers.address import router as address_router
+from app.routers.budget import router as budget_router
 from app.metadata_engine.bootstrap import bootstrap_metadata_registry
 from app.metadata_engine.exceptions.metadata_errors import MetadataConflictError, MetadataNotFoundError, MetadataValidationError
 from app.metadata_engine.router import router as metadata_router
@@ -216,6 +219,10 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
     app.include_router(procurement.router, prefix="/api/v1", tags=["Procurement"])
     app.include_router(sourcing.router, prefix="/api/v1/sourcing", tags=["Sourcing"])
     app.include_router(workflow.router, prefix="/api/v1/workflow", tags=["Workflow"])
+    app.include_router(document_numbering.router, prefix="/api/v1", tags=["Document Numbering"])
+    app.include_router(commodity_router, prefix="/api/v1", tags=["Commodity Codes"])
+    app.include_router(address_router, prefix="/api/v1", tags=["Addresses"])
+    app.include_router(budget_router, prefix="/api/v1", tags=["Budgets"])
     app.include_router(metadata_router, prefix="/api/v1", tags=["Metadata"])
 
     return app

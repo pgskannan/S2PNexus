@@ -6,6 +6,11 @@ import type {
   AgentActivityLogListResponse,
   AgentActivitySummaryResponse,
   Contract,
+  DocumentNumberingFormat,
+  DocumentNumberingFormatListResponse,
+  DocumentNumberingPreviewResponse,
+  DocumentType,
+  ResetCadence,
   ContractListResponse,
   Document,
   DocumentListResponse,
@@ -520,6 +525,45 @@ export async function getAgentActivityDetail(
 ): Promise<AgentActivityLogEntry> {
   const { data } = await api.get<AgentActivityLogEntry>(
     `/ai/agents/activity/${id}`
+  );
+  return data;
+}
+
+// ---- Document Numbering (tenant-admin configurable PR/PO/Receipt/Invoice numbers) ----
+
+export async function listDocumentNumberingFormats(): Promise<DocumentNumberingFormatListResponse> {
+  const { data } = await api.get<DocumentNumberingFormatListResponse>(
+    "/document-numbering"
+  );
+  return data;
+}
+
+export async function updateDocumentNumberingFormat(
+  documentType: DocumentType,
+  payload: {
+    prefix: string;
+    pattern: string;
+    sequence_padding: number;
+    reset_cadence: ResetCadence;
+  }
+): Promise<DocumentNumberingFormat> {
+  const { data } = await api.put<DocumentNumberingFormat>(
+    `/document-numbering/${documentType}`,
+    payload
+  );
+  return data;
+}
+
+export async function previewDocumentNumberingFormat(payload: {
+  document_type: DocumentType;
+  prefix: string;
+  pattern: string;
+  sequence_padding: number;
+  reset_cadence: ResetCadence;
+}): Promise<DocumentNumberingPreviewResponse> {
+  const { data } = await api.post<DocumentNumberingPreviewResponse>(
+    "/document-numbering/preview",
+    payload
   );
   return data;
 }

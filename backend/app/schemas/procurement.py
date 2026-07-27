@@ -57,6 +57,9 @@ class ProcurementRequisitionUpdate(BaseModel):
 
 class ProcurementRequisitionResponse(ProcurementRequisitionBase):
     id: UUID
+    requisition_number: Optional[str] = Field(
+        None, description="Auto-generated human-readable number, e.g. PR2026-07-001. Null for requisitions created before this feature shipped."
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -125,12 +128,18 @@ class ProcurementAttachmentResponse(BaseModel):
 
 
 class PurchaseOrderCreate(BaseModel):
+    # order_number is server-generated (see app.crud.document_numbering) --
+    # not accepted from the client, so the tenant's configured format is
+    # always honored.
     supplier_id: UUID
-    order_number: str = Field(..., min_length=1, max_length=100)
     status: str = Field(default="draft", max_length=50)
     currency: str = Field(default="USD", max_length=3)
-    total_amount: Optional[Decimal] = Field(None, ge=0)
     notes: Optional[str] = None
+    line_items: Optional[list[dict]] = None
+    shipping_amount: Optional[Decimal] = Field(None, ge=0)
+    shipping_allocation_method: Optional[str] = Field(None, max_length=50)
+    ship_to_address_id: Optional[UUID] = None
+    bill_to_address_id: Optional[UUID] = None
 
 
 class PurchaseOrderResponse(BaseModel):
@@ -145,6 +154,10 @@ class PurchaseOrderResponse(BaseModel):
     amendment_status: str = "original"
     change_order_reference: Optional[str] = None
     currency: str
+    subtotal: Optional[Decimal]
+    tax_total: Optional[Decimal]
+    shipping_amount: Optional[Decimal]
+    grand_total: Optional[Decimal]
     total_amount: Optional[Decimal]
     notes: Optional[str]
     created_by: UUID
@@ -152,15 +165,61 @@ class PurchaseOrderResponse(BaseModel):
     updated_at: datetime
 
 
+class PurchaseOrderLineItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    purchase_order_id: UUID
+    line_number: int
+    description: str
+    quantity: Decimal
+    unit_price: Optional[Decimal] = None
+    line_total: Optional[Decimal] = None
+    account_code: Optional[str] = None
+    account_code_is_override: bool = False
+    allocated_shipping_amount: Optional[Decimal] = None
+    weight: Optional[Decimal] = None
+    created_at: datetime
+
+
+class GoodsReceiptLineItemCreate(BaseModel):
+    purchase_order_line_item_id: UUID
+    quantity_received: Decimal = Field(default=0, ge=0)
+    quantity_rejected: Decimal = Field(default=0, ge=0)
+    rejection_reason: Optional[str] = None
+    lot_number: Optional[str] = None
+    condition_status: str = Field(default="good", max_length=20)
+    notes: Optional[str] = None
+
+
 class GoodsReceiptCreate(BaseModel):
-    receipt_number: str = Field(..., min_length=1, max_length=100)
+    # receipt_number is server-generated (see app.crud.document_numbering).
     status: str = Field(default="draft", max_length=50)
     receipt_type: str = Field(default="standard", max_length=50)
-    received_quantity: int = Field(default=0, ge=0)
-    returned_quantity: int = Field(default=0, ge=0)
-    tolerance_percent: Optional[Decimal] = Field(None, ge=0, le=100)
-    tolerance_amount: Optional[Decimal] = Field(None, ge=0)
+    received_by: Optional[UUID] = None
+    inspected_by: Optional[UUID] = None
+    inspection_status: str = Field(default="pending", max_length=20)
+    carrier: Optional[str] = Field(None, max_length=100)
+    tracking_number: Optional[str] = Field(None, max_length=100)
+    delivery_note_reference: Optional[str] = Field(None, max_length=100)
+    line_items: list[GoodsReceiptLineItemCreate]
     notes: Optional[str] = None
+
+
+class GoodsReceiptLineItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    goods_receipt_id: UUID
+    purchase_order_line_item_id: UUID
+    quantity_received: Decimal
+    quantity_rejected: Decimal
+    quantity_accepted: Decimal
+    rejection_reason: Optional[str] = None
+    lot_number: Optional[str] = None
+    condition_status: str
+    notes: Optional[str] = None
+    created_at: datetime
 
 
 class GoodsReceiptResponse(BaseModel):
@@ -176,13 +235,67 @@ class GoodsReceiptResponse(BaseModel):
     tolerance_percent: Optional[Decimal] = None
     tolerance_amount: Optional[Decimal] = None
     notes: Optional[str]
+    received_by: Optional[UUID] = None
+    inspected_by: Optional[UUID] = None
+    inspection_status: str = "pending"
+    carrier: Optional[str] = None
+    tracking_number: Optional[str] = None
+    delivery_note_reference: Optional[str] = None
+    has_exceptions: bool = False
+    line_items: list[GoodsReceiptLineItemResponse] = []
     created_by: UUID
     created_at: datetime
     updated_at: datetime
 
 
+class ProcurementInvoiceLineItemCreate(BaseModel):
+    purchase_order_line_item_id: Optional[UUID] = None
+    description: str = Field(..., min_length=1, max_length=255)
+    quantity: Decimal = Field(default=1, ge=0)
+    unit_price: Optional[Decimal] = Field(None, ge=0)
+    line_total: Optional[Decimal] = Field(None, ge=0)
+    tax_amount: Optional[Decimal] = Field(None, ge=0)
+
+
+class ProcurementInvoiceLineItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    invoice_id: UUID
+    purchase_order_line_item_id: Optional[UUID] = None
+    description: str
+    quantity: Decimal
+    unit_price: Optional[Decimal] = None
+    line_total: Optional[Decimal] = None
+    tax_amount: Optional[Decimal] = None
+    created_at: datetime
+
+
+class InvoiceMatchExceptionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    invoice_id: UUID
+    invoice_line_item_id: Optional[UUID] = None
+    exception_type: str
+    expected_value: Optional[Decimal] = None
+    actual_value: Optional[Decimal] = None
+    variance_amount: Optional[Decimal] = None
+    variance_percent: Optional[Decimal] = None
+    resolution_status: str
+    resolved_by: Optional[UUID] = None
+    resolved_at: Optional[datetime] = None
+    resolution_notes: Optional[str] = None
+    created_at: datetime
+
+
+class InvoiceMatchExceptionResolveRequest(BaseModel):
+    resolution_status: str = Field(..., max_length=50)
+    resolution_notes: Optional[str] = None
+
+
 class ProcurementInvoiceCreate(BaseModel):
-    invoice_number: str = Field(..., min_length=1, max_length=100)
+    # invoice_number is server-generated (see app.crud.document_numbering).
     supplier_id: Optional[UUID] = None
     purchase_order_id: Optional[UUID] = None
     goods_receipt_id: Optional[UUID] = None
@@ -191,6 +304,7 @@ class ProcurementInvoiceCreate(BaseModel):
     total_amount: Optional[Decimal] = Field(None, ge=0)
     currency: str = Field(default="USD", max_length=3)
     description: Optional[str] = None
+    line_items: Optional[list[ProcurementInvoiceLineItemCreate]] = None
     memo_type: Optional[str] = Field(None, max_length=20)
     reference_invoice_id: Optional[UUID] = None
     matching_tolerance_amount: Optional[Decimal] = Field(None, ge=0)
@@ -219,6 +333,8 @@ class ProcurementInvoiceResponse(BaseModel):
     reference_invoice_id: Optional[UUID] = None
     matching_tolerance_amount: Optional[Decimal] = None
     matching_tolerance_percent: Optional[Decimal] = None
+    line_items: list[ProcurementInvoiceLineItemResponse] = []
+    exceptions: list[InvoiceMatchExceptionResponse] = []
     created_by: UUID
     created_at: datetime
     updated_at: datetime

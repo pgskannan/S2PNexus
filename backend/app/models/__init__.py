@@ -17,6 +17,7 @@ from app.models.procurement import (  # noqa: F401
     ProcurementRequisition,
     PurchaseOrder,
     GoodsReceipt,
+    PurchaseOrderLineItem,
 )
 from app.models.sourcing import (  # noqa: F401
     SourcingEvent,
@@ -40,6 +41,10 @@ from app.models.workflow import (  # noqa: F401
 )
 from app.models.system_setting import SystemSetting  # noqa: F401
 from app.models.agent_activity import AgentActivityLog  # noqa: F401
+from app.models.document_numbering import DocumentNumberingFormat, DocumentNumberingSequence  # noqa: F401
+from app.models.commodity import CommodityCode, CommodityAccountMapping, CommodityMatchingPolicy  # noqa: F401
+from app.models.address import Address  # noqa: F401
+from app.models.accounting_split import LineItemAccountingSplit, Budget  # noqa: F401
 from app.metadata_engine.models import (
     MetadataAuditEvent,
     MetadataField,
@@ -78,4 +83,13 @@ __all__ = [
     "WorkflowTask",
     "Notification",
     "AgentActivityLog",
+    "DocumentNumberingFormat",
+    "DocumentNumberingSequence",
+    "CommodityCode",
+    "CommodityAccountMapping",
+    "CommodityMatchingPolicy",
+    "Address",
+    "PurchaseOrderLineItem",
+    "LineItemAccountingSplit",
+    "Budget",
 ]

@@ -11,16 +11,23 @@ from app.crud.procurement import (
     add_requisition_comment,
     add_requisition_line_item,
     amend_purchase_order,
+    add_purchase_order_line_item,
+    transition_purchase_order_lifecycle,
+    acknowledge_purchase_order,
     create_goods_receipt,
     create_invoice,
     create_purchase_order,
     create_requisition,
     get_invoice,
+    get_invoice_exception,
+    get_invoice_exceptions,
+    get_invoices_with_open_exceptions,
     get_purchase_order,
     get_requisition,
     get_requisitions,
     get_requisitions_count,
     match_invoice,
+    resolve_invoice_match_exception,
     transition_requisition,
     update_requisition,
 )
@@ -29,6 +36,8 @@ from app.models.user import User
 from app.schemas.procurement import (
     GoodsReceiptCreate,
     GoodsReceiptResponse,
+    InvoiceMatchExceptionResolveRequest,
+    InvoiceMatchExceptionResponse,
     MatchInvoiceRequest,
     ProcurementAttachmentCreate,
     ProcurementAttachmentResponse,
@@ -45,6 +54,7 @@ from app.schemas.procurement import (
     ProcurementRequisitionUpdate,
     PurchaseOrderCreate,
     PurchaseOrderResponse,
+    PurchaseOrderLineItemResponse,
 )
 from app.commands.procurement import (
     CreateRequisitionCommand,
@@ -227,7 +237,9 @@ async def convert_requisition_to_purchase_order(
     requisition = await get_requisition(db, requisition_id, tenant_id=current_user.tenant_id)
     if not requisition:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-    purchase_order = await create_purchase_order(db, requisition_id, purchase_order_data, created_by=current_user.id)
+    purchase_order = await create_purchase_order(
+        db, requisition_id, purchase_order_data, created_by=current_user.id, tenant_id=current_user.tenant_id
+    )
     return PurchaseOrderResponse.model_validate(purchase_order)
 
 
@@ -244,10 +256,79 @@ async def amend_purchase_order_endpoint(
         actor_id=current_user.id,
         change_type=str(change_data.get("change_type", "amendment")),
         changes=change_data.get("changes", {}),
+        tenant_id=current_user.tenant_id,
     )
     if not purchase_order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
     return PurchaseOrderResponse.model_validate(purchase_order)
+
+
+@router.post("/purchase-orders/{purchase_order_id}/line-items", response_model=PurchaseOrderLineItemResponse, status_code=status.HTTP_201_CREATED)
+async def add_po_line_item_endpoint(
+    purchase_order_id: UUID,
+    line_item_data: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> PurchaseOrderLineItemResponse:
+    po = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
+    if not po:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
+    li = await add_purchase_order_line_item(db, purchase_order_id, line_item_data, tenant_id=current_user.tenant_id)
+    return PurchaseOrderLineItemResponse.model_validate(li)
+
+
+@router.post("/purchase-orders/{purchase_order_id}/lifecycle/transition", response_model=PurchaseOrderResponse)
+async def transition_po_lifecycle_endpoint(
+    purchase_order_id: UUID,
+    request: Request,
+    new_status: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> PurchaseOrderResponse:
+    po = await transition_purchase_order_lifecycle(
+        db,
+        purchase_order_id,
+        actor_id=current_user.id,
+        new_lifecycle_status=new_status.get("lifecycle_status"),
+        tenant_id=current_user.tenant_id,
+    )
+    if not po:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
+    await apply_procurement_transition_workflow(
+        po,
+        "PurchaseOrderLifecycleTransition",
+        payload={"purchase_order_id": str(po.id), "lifecycle_status": po.lifecycle_status},
+        state=po,
+        event_bus=getattr(request.app.state, "event_bus", None),
+        actor_id=current_user.id,
+        tenant_id=current_user.tenant_id,
+    )
+    return PurchaseOrderResponse.model_validate(po)
+
+
+@router.post("/purchase-orders/{purchase_order_id}/acknowledge", response_model=PurchaseOrderResponse)
+async def acknowledge_po_endpoint(
+    purchase_order_id: UUID,
+    payload: dict,
+    request: Request,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> PurchaseOrderResponse:
+    po = await acknowledge_purchase_order(
+        db, purchase_order_id, actor_id=current_user.id, notes=payload.get("notes"), tenant_id=current_user.tenant_id
+    )
+    if not po:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
+    await apply_procurement_transition_workflow(
+        po,
+        "PurchaseOrderAcknowledged",
+        payload={"purchase_order_id": str(po.id)},
+        state=po,
+        event_bus=getattr(request.app.state, "event_bus", None),
+        actor_id=current_user.id,
+        tenant_id=current_user.tenant_id,
+    )
+    return PurchaseOrderResponse.model_validate(po)
 
 
 @router.post("/purchase-orders/{purchase_order_id}/receipts", response_model=GoodsReceiptResponse, status_code=status.HTTP_201_CREATED)
@@ -257,10 +338,15 @@ async def create_receipt_endpoint(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> GoodsReceiptResponse:
-    purchase_order = await get_purchase_order(db, purchase_order_id)
+    purchase_order = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
     if not purchase_order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
-    receipt = await create_goods_receipt(db, purchase_order_id, receipt_data, created_by=current_user.id)
+    try:
+        receipt = await create_goods_receipt(
+            db, purchase_order_id, receipt_data, created_by=current_user.id, tenant_id=current_user.tenant_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return GoodsReceiptResponse.model_validate(receipt)
 
 
@@ -270,8 +356,23 @@ async def create_invoice_endpoint(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> ProcurementInvoiceResponse:
-    invoice = await create_invoice(db, invoice_data, created_by=current_user.id)
+    try:
+        invoice = await create_invoice(db, invoice_data, created_by=current_user.id, tenant_id=current_user.tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     return ProcurementInvoiceResponse.model_validate(invoice)
+
+
+@router.get("/invoices/matching-exceptions", response_model=list[ProcurementInvoiceResponse])
+async def list_invoices_with_matching_exceptions(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[ProcurementInvoiceResponse]:
+    """AP clerk worklist. Registered before the /invoices/{invoice_id}/... routes
+    below on purpose -- a literal route must precede a {param}-shaped route of the
+    same shape, or the literal segment gets swallowed as the param value instead."""
+    invoices = await get_invoices_with_open_exceptions(db, tenant_id=current_user.tenant_id)
+    return [ProcurementInvoiceResponse.model_validate(inv) for inv in invoices]
 
 
 @router.post("/invoices/{invoice_id}/match", response_model=ProcurementInvoiceResponse)
@@ -281,7 +382,7 @@ async def match_invoice_endpoint(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> ProcurementInvoiceResponse:
-    invoice = await get_invoice(db, invoice_id)
+    invoice = await get_invoice(db, invoice_id, tenant_id=current_user.tenant_id)
     if not invoice:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
     matched_invoice = await match_invoice(
@@ -290,5 +391,39 @@ async def match_invoice_endpoint(
         match_data.match_type,
         matching_tolerance_amount=match_data.matching_tolerance_amount,
         matching_tolerance_percent=match_data.matching_tolerance_percent,
+        tenant_id=current_user.tenant_id,
     )
     return ProcurementInvoiceResponse.model_validate(matched_invoice)
+
+
+@router.get("/invoices/{invoice_id}/exceptions", response_model=list[InvoiceMatchExceptionResponse])
+async def list_invoice_exceptions(
+    invoice_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[InvoiceMatchExceptionResponse]:
+    exceptions = await get_invoice_exceptions(db, invoice_id, tenant_id=current_user.tenant_id)
+    return [InvoiceMatchExceptionResponse.model_validate(exc) for exc in exceptions]
+
+
+@router.post("/invoices/exceptions/{exception_id}/resolve", response_model=InvoiceMatchExceptionResponse)
+async def resolve_invoice_exception_endpoint(
+    exception_id: UUID,
+    resolution_data: InvoiceMatchExceptionResolveRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> InvoiceMatchExceptionResponse:
+    try:
+        exception = await resolve_invoice_match_exception(
+            db,
+            exception_id,
+            resolution_data.resolution_status,
+            resolution_data.resolution_notes,
+            resolved_by=current_user.id,
+            tenant_id=current_user.tenant_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not exception:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice exception not found")
+    return InvoiceMatchExceptionResponse.model_validate(exception)
