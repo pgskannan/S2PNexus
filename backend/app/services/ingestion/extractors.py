@@ -10,10 +10,21 @@ from app.services.ingestion.base import DocumentExtractor
 
 
 class TextExtractor(DocumentExtractor):
-    """Simple extractor for plain text documents."""
+    """Simple extractor for plain text documents.
+
+    Also used as the CompositeExtractor fallback for any extension without a
+    dedicated extractor (currently .xlsx, .xls, .png, .jpg, .jpeg, which are
+    all in ALLOWED_EXTENSIONS but have no real parser here). Decoding
+    arbitrary binary content as UTF-8 with errors="ignore" still lets raw
+    NUL bytes (0x00) through -- Postgres rejects any NUL byte in a text
+    column outright, which crashed uploads of binary formats with an
+    unhandled DBAPIError. Stripping them here keeps uploads working for
+    binary formats (with meaningless extracted "content", since this isn't a
+    real spreadsheet/image parser) rather than crashing.
+    """
 
     def extract(self, content: bytes, filename: str) -> str:
-        return content.decode("utf-8", errors="ignore")
+        return content.decode("utf-8", errors="ignore").replace("\x00", "")
 
 
 class PdfExtractor(DocumentExtractor):
