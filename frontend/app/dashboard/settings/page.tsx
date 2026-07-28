@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuthStore } from "@/lib/auth-store";
 import {
   extractErrorMessage,
@@ -9,6 +9,15 @@ import {
   listDocumentNumberingFormats,
   updateDocumentNumberingFormat,
   previewDocumentNumberingFormat,
+  getCommodityCodeCount,
+  uploadCommodityCodes,
+  deleteAllCommodityCodes,
+  getGlAccountCount,
+  uploadGlAccounts,
+  deleteAllGlAccounts,
+  getCommodityGlMappingCount,
+  uploadCommodityGlMapping,
+  deleteAllCommodityGlMapping,
 } from "@/lib/api";
 import type { DocumentNumberingFormat, DocumentType, ResetCadence } from "@/lib/types";
 
@@ -234,6 +243,188 @@ function DocumentNumberingSettings({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
+interface MasterDataCardProps {
+  title: string;
+  description: string;
+  columnsHint: string;
+  isAdmin: boolean;
+  getCount: () => Promise<number>;
+  upload: (file: File) => Promise<{ loaded: number; errors?: string[] }>;
+  deleteAll: () => Promise<{ deleted: number }>;
+}
+
+function MasterDataCard({ title, description, columnsHint, isAdmin, getCount, upload, deleteAll }: MasterDataCardProps) {
+  const [count, setCount] = useState<number | null>(null);
+  const [loadingCount, setLoadingCount] = useState(true);
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
+  const [success, setSuccess] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function refreshCount() {
+    setLoadingCount(true);
+    try {
+      setCount(await getCount());
+    } catch (err) {
+      setError(extractErrorMessage(err));
+    } finally {
+      setLoadingCount(false);
+    }
+  }
+
+  useEffect(() => {
+    refreshCount();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleUpload() {
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    setSuccess(null);
+    setUploadErrors([]);
+    try {
+      const result = await upload(file);
+      setSuccess(`Loaded ${result.loaded} row(s).`);
+      if (result.errors && result.errors.length > 0) {
+        setUploadErrors(result.errors);
+      }
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      await refreshCount();
+    } catch (err) {
+      setError(extractErrorMessage(err));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleDeleteAll() {
+    if (!window.confirm(`Delete all ${title} data? This clears the table so you can re-upload cleanly. This can't be undone.`)) {
+      return;
+    }
+    setDeleting(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const result = await deleteAll();
+      setSuccess(`Deleted ${result.deleted} row(s).`);
+      await refreshCount();
+    } catch (err) {
+      setError(extractErrorMessage(err));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-base font-semibold">{title}</h3>
+          <p className="mt-1 text-sm text-slate-500">{description}</p>
+          <p className="mt-1 text-xs text-slate-400">Expected CSV columns: {columnsHint}</p>
+        </div>
+        <div className="whitespace-nowrap text-sm text-slate-500">
+          {loadingCount ? "Loading..." : `${count ?? 0} row(s)`}
+        </div>
+      </div>
+
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      {success && <p className="mt-3 text-sm text-green-600">{success}</p>}
+      {uploadErrors.length > 0 && (
+        <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          <p className="font-medium">{uploadErrors.length} row(s) skipped:</p>
+          <ul className="mt-1 list-disc pl-4">
+            {uploadErrors.slice(0, 10).map((e, i) => (
+              <li key={i}>{e}</li>
+            ))}
+          </ul>
+          {uploadErrors.length > 10 && <p className="mt-1">...and {uploadErrors.length - 10} more.</p>}
+        </div>
+      )}
+
+      {isAdmin ? (
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            className="text-sm text-slate-600 file:mr-3 file:rounded file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
+          />
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={!file || uploading}
+            onClick={handleUpload}
+          >
+            {uploading ? "Uploading..." : "Upload"}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={deleting}
+            onClick={handleDeleteAll}
+          >
+            {deleting ? "Deleting..." : "Delete all"}
+          </button>
+        </div>
+      ) : (
+        <p className="mt-4 text-sm text-slate-500">Only administrators can upload or delete master data.</p>
+      )}
+    </div>
+  );
+}
+
+function MasterDataSettings({ isAdmin }: { isAdmin: boolean }) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold">Master Data</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Load or reset the commodity code taxonomy, GL account chart of accounts, and the mapping
+          between them. Load GL Accounts before Commodity-to-GL Mapping -- the mapping upload
+          validates each row&apos;s GL account code against accounts already loaded.
+        </p>
+      </div>
+
+      <MasterDataCard
+        title="Commodity Codes"
+        description="The commodity/UNSPSC-style taxonomy used for requisition line items and the commodity picker."
+        columnsHint="Segment, Segment Title, Family, Family Title, Class, Class Title, Commodity, Commodity Title"
+        isAdmin={isAdmin}
+        getCount={async () => (await getCommodityCodeCount()).count}
+        upload={uploadCommodityCodes}
+        deleteAll={deleteAllCommodityCodes}
+      />
+
+      <MasterDataCard
+        title="GL Accounts"
+        description="Your chart of accounts. Commodity-to-GL mappings reference these by code."
+        columnsHint="code, description, account_type"
+        isAdmin={isAdmin}
+        getCount={async () => (await getGlAccountCount()).count}
+        upload={uploadGlAccounts}
+        deleteAll={deleteAllGlAccounts}
+      />
+
+      <MasterDataCard
+        title="Commodity-to-GL Mapping"
+        description="Default GL account (and optional cost center) per commodity segment/family/class/code."
+        columnsHint="scope_level (segment|family|class|commodity), scope_code, gl_account_code, cost_center"
+        isAdmin={isAdmin}
+        getCount={getCommodityGlMappingCount}
+        upload={uploadCommodityGlMapping}
+        deleteAll={deleteAllCommodityGlMapping}
+      />
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const user = useAuthStore((state) => state.user);
   const [provider, setProvider] = useState<string>("");
@@ -352,6 +543,7 @@ export default function SettingsPage() {
       </div>
 
       <DocumentNumberingSettings isAdmin={isAdmin} />
+      <MasterDataSettings isAdmin={isAdmin} />
     </div>
   );
 }

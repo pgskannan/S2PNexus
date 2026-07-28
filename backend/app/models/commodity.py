@@ -21,6 +21,7 @@ from app.models.document_numbering import NO_TENANT_ID
 
 if TYPE_CHECKING:
     from app.models.user import User
+    from app.models.gl_account import GLAccount
 
 
 class CommodityCode(Base):
@@ -48,14 +49,21 @@ class CommodityAccountMapping(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True, default=NO_TENANT_ID)
     scope_level: Mapped[str] = mapped_column(String(20), nullable=False)  # segment|family|class|commodity
     scope_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Denormalized for backward compatibility -- app.crud.procurement's PO/requisition
+    # auto-populate-GL-from-commodity-code path reads mapping.gl_account_code directly
+    # and predates gl_account_id. Kept in sync with gl_account.code/description on
+    # upsert whenever gl_account_id is set; still nullable/settable directly for a
+    # mapping that hasn't been pointed at a master GL account row yet.
     gl_account_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     gl_account_description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    gl_account_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("gl_accounts.id", ondelete="SET NULL"), nullable=True)
     cost_center: Mapped[str | None] = mapped_column(String(100), nullable=True)
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    updated_by_user: Mapped["User | None"] = relationship("User", lazy="selectin")
+    updated_by_user: Mapped["User | None"] = relationship("User", foreign_keys=[updated_by], lazy="selectin")
+    gl_account: Mapped["GLAccount | None"] = relationship("GLAccount", lazy="selectin")
 
 
 class CommodityMatchingPolicy(Base):

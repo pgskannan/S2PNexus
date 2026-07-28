@@ -709,3 +709,59 @@ export async function previewDocumentNumberingFormat(payload: {
   );
   return data;
 }
+
+// ---- Master data: commodity codes, GL accounts, commodity-to-GL mapping ----
+// Three independent datasets, same shape of admin-only upload/delete-all/count
+// endpoints. GL accounts should be loaded before mapping (mapping upload
+// validates gl_account_code against the GL accounts already loaded).
+
+async function uploadCsv<T = { loaded: number }>(path: string, file: File): Promise<T> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const { data } = await api.post<T>(path, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
+export async function getCommodityCodeCount(): Promise<{ count: number }> {
+  const { data } = await api.get<{ count: number }>("/commodity-codes/master-data/count");
+  return data;
+}
+
+export async function uploadCommodityCodes(file: File): Promise<{ loaded: number }> {
+  return uploadCsv("/commodity-codes/master-data/upload", file);
+}
+
+export async function deleteAllCommodityCodes(): Promise<{ deleted: number }> {
+  const { data } = await api.delete<{ deleted: number }>("/commodity-codes/master-data");
+  return data;
+}
+
+export async function getGlAccountCount(): Promise<{ count: number }> {
+  const { data } = await api.get<{ count: number }>("/gl-accounts/count");
+  return data;
+}
+
+export async function uploadGlAccounts(file: File): Promise<{ loaded: number }> {
+  return uploadCsv("/gl-accounts/upload", file);
+}
+
+export async function deleteAllGlAccounts(): Promise<{ deleted: number }> {
+  const { data } = await api.delete<{ deleted: number }>("/gl-accounts");
+  return data;
+}
+
+export async function getCommodityGlMappingCount(): Promise<number> {
+  const { data } = await api.get<unknown[]>("/commodity-codes/mappings");
+  return data.length;
+}
+
+export async function uploadCommodityGlMapping(file: File): Promise<{ loaded: number; errors: string[] }> {
+  return uploadCsv<{ loaded: number; errors: string[] }>("/commodity-codes/mappings/upload", file);
+}
+
+export async function deleteAllCommodityGlMapping(): Promise<{ deleted: number }> {
+  const { data } = await api.delete<{ deleted: number }>("/commodity-codes/mappings");
+  return data;
+}
