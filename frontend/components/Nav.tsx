@@ -10,6 +10,7 @@ import type { Notification } from "@/lib/types";
 const links = [
   { href: "/dashboard", label: "Overview" },
   { href: "/dashboard/requisitions", label: "Requisitions" },
+  { href: "/dashboard/purchase-orders", label: "Purchase Orders" },
   { href: "/dashboard/contracts", label: "Contracts" },
   { href: "/dashboard/documents", label: "Documents" },
   { href: "/dashboard/sourcing", label: "Sourcing" },

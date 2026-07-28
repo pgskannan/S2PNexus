@@ -146,6 +146,8 @@ class PurchaseOrderCreate(BaseModel):
     shipping_allocation_method: Optional[str] = Field(None, max_length=50)
     ship_to_address_id: Optional[UUID] = None
     bill_to_address_id: Optional[UUID] = None
+    incoterms: Optional[str] = Field(None, max_length=50)
+    payment_terms: Optional[str] = Field(None, max_length=100)
 
 
 class PurchaseOrderResponse(BaseModel):
@@ -156,6 +158,7 @@ class PurchaseOrderResponse(BaseModel):
     supplier_id: Optional[UUID]
     order_number: str
     status: str
+    lifecycle_status: str = "draft"
     version_number: int = 1
     amendment_status: str = "original"
     change_order_reference: Optional[str] = None
@@ -163,12 +166,45 @@ class PurchaseOrderResponse(BaseModel):
     subtotal: Optional[Decimal]
     tax_total: Optional[Decimal]
     shipping_amount: Optional[Decimal]
+    shipping_allocation_method: str = "prorate_by_value"
     grand_total: Optional[Decimal]
     total_amount: Optional[Decimal]
+    incoterms: Optional[str] = None
+    payment_terms: Optional[str] = None
+    ship_to_address_id: Optional[UUID] = None
+    ship_to_name: Optional[str] = None
+    ship_to_address_line1: Optional[str] = None
+    ship_to_city: Optional[str] = None
+    bill_to_address_id: Optional[UUID] = None
+    bill_to_name: Optional[str] = None
+    bill_to_address_line1: Optional[str] = None
+    bill_to_city: Optional[str] = None
+    acknowledgment_status: str = "pending"
+    acknowledged_at: Optional[datetime] = None
+    acknowledged_notes: Optional[str] = None
     notes: Optional[str]
+    # Nested line items -- PurchaseOrder.line_items is lazy="selectin" on the
+    # model, same free eager-load as ProcurementRequisitionResponse.line_items.
+    line_items: list[PurchaseOrderLineItemResponse] = Field(default_factory=list)
+    # Transient, non-persisted: only populated right after a lifecycle
+    # transition to "approved" that had soft-enforcement budget overages (see
+    # transition_purchase_order_lifecycle / _check_po_budget_on_approval in
+    # app.crud.procurement). None on every other fetch, not an empty list --
+    # that distinguishes "no warnings on this transition" from "not applicable,
+    # this wasn't just approved."
+    budget_warnings: Optional[list[dict]] = None
     created_by: UUID
     created_at: datetime
     updated_at: datetime
+
+
+class PurchaseOrderListResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    items: list[PurchaseOrderResponse]
+    total: int
+    skip: int
+    limit: int
 
 
 class PurchaseOrderLineItemResponse(BaseModel):

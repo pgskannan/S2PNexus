@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   getRequisition,
+  listPurchaseOrders,
   transitionRequisition,
   extractErrorMessage,
 } from "@/lib/api";
-import type { Requisition } from "@/lib/types";
+import type { PurchaseOrder, Requisition } from "@/lib/types";
 
 const nextSteps: Record<string, { new_status: string; lifecycle_status: string; label: string }[]> = {
   draft: [
@@ -23,6 +25,7 @@ export default function RequisitionDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [requisition, setRequisition] = useState<Requisition | null>(null);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -30,6 +33,8 @@ export default function RequisitionDetailPage() {
     try {
       const data = await getRequisition(params.id);
       setRequisition(data);
+      const poRes = await listPurchaseOrders({ requisition_id: params.id });
+      setPurchaseOrders(poRes.items);
     } catch (err) {
       setError(extractErrorMessage(err));
     }
@@ -160,6 +165,51 @@ export default function RequisitionDetailPage() {
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+
+      <div className="card space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Purchase orders</h2>
+          {requisition.lifecycle_status === "approved" && (
+            <button
+              className="btn-primary"
+              onClick={() =>
+                router.push(`/dashboard/requisitions/${params.id}/convert-to-po`)
+              }
+            >
+              Convert to PO
+            </button>
+          )}
+        </div>
+        {purchaseOrders.length === 0 && (
+          <p className="text-sm text-slate-400">
+            {requisition.lifecycle_status === "approved"
+              ? "No purchase orders yet — use Convert to PO to create one."
+              : "No purchase orders. A requisition must be approved before it can be converted."}
+          </p>
+        )}
+        {purchaseOrders.length > 0 && (
+          <ul className="divide-y divide-slate-100">
+            {purchaseOrders.map((po) => (
+              <li key={po.id} className="flex items-center justify-between py-2 text-sm">
+                <div>
+                  <Link
+                    href={`/dashboard/purchase-orders/${po.id}`}
+                    className="font-medium text-brand-600 hover:underline"
+                  >
+                    {po.order_number}
+                  </Link>
+                  <span className="ml-2 text-slate-400">
+                    {po.currency} {po.grand_total ?? po.total_amount ?? "—"}
+                  </span>
+                </div>
+                <span className="badge bg-slate-100 text-slate-700 capitalize">
+                  {po.lifecycle_status}
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 

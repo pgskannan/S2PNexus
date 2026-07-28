@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.crud.document_numbering import generate_document_number
 from app.crud.commodity import resolve_gl_account, resolve_matching_policy
 from app.crud.accounting_split import copy_splits, ensure_default_split
+from app.crud.address import get_address_for_lookup
 from app.crud.budget import check_budget_availability, resolve_split_amount
 from app.models.accounting_split import LineItemAccountingSplit
 from app.models.commodity import CommodityCode
@@ -248,7 +249,37 @@ async def create_purchase_order(
         created_by=created_by,
         shipping_amount=data.get("shipping_amount"),
         shipping_allocation_method=data.get("shipping_allocation_method") or "prorate_by_value",
+        incoterms=data.get("incoterms"),
+        payment_terms=data.get("payment_terms"),
     )
+
+    # Resolve ship-to/bill-to address_ids against the address book and snapshot
+    # their display fields onto the PO -- addresses are mutable and a PO should
+    # keep the address as it was at order time, not silently change if someone
+    # edits the address book entry later. Validated against the same
+    # visibility rule as the address book itself (own address, or the caller's
+    # tenant's shared addresses) so a client can't point a PO at another
+    # tenant's or another user's private address by guessing an id.
+    ship_to_address_id = data.get("ship_to_address_id")
+    if ship_to_address_id is not None:
+        ship_addr = await get_address_for_lookup(db, ship_to_address_id, user_id=created_by, tenant_id=tenant_id)
+        if ship_addr is None:
+            raise ValueError("ship_to_address_id not found for this tenant")
+        purchase_order.ship_to_address_id = ship_addr.id
+        purchase_order.ship_to_name = ship_addr.label
+        purchase_order.ship_to_address_line1 = ship_addr.address_line1
+        purchase_order.ship_to_city = ship_addr.city
+
+    bill_to_address_id = data.get("bill_to_address_id")
+    if bill_to_address_id is not None:
+        bill_addr = await get_address_for_lookup(db, bill_to_address_id, user_id=created_by, tenant_id=tenant_id)
+        if bill_addr is None:
+            raise ValueError("bill_to_address_id not found for this tenant")
+        purchase_order.bill_to_address_id = bill_addr.id
+        purchase_order.bill_to_name = bill_addr.label
+        purchase_order.bill_to_address_line1 = bill_addr.address_line1
+        purchase_order.bill_to_city = bill_addr.city
+
     db.add(purchase_order)
     await db.flush()
 
@@ -554,6 +585,38 @@ async def get_purchase_order(
         )
     result = await db.execute(query)
     return result.scalar_one_or_none()
+
+
+async def get_purchase_orders(
+    db: AsyncSession,
+    tenant_id: Optional[UUID] = None,
+    requisition_id: Optional[UUID] = None,
+    status_filter: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[PurchaseOrder], int]:
+    # Same tenant-scoping-via-join caveat as get_purchase_order: PurchaseOrder
+    # has no tenant_id column of its own.
+    query = select(PurchaseOrder)
+    count_query = select(func.count(PurchaseOrder.id))
+    if tenant_id is not None:
+        query = query.join(ProcurementRequisition, PurchaseOrder.requisition_id == ProcurementRequisition.id).where(
+            ProcurementRequisition.tenant_id == tenant_id
+        )
+        count_query = count_query.join(
+            ProcurementRequisition, PurchaseOrder.requisition_id == ProcurementRequisition.id
+        ).where(ProcurementRequisition.tenant_id == tenant_id)
+    if requisition_id is not None:
+        query = query.where(PurchaseOrder.requisition_id == requisition_id)
+        count_query = count_query.where(PurchaseOrder.requisition_id == requisition_id)
+    if status_filter is not None:
+        query = query.where(PurchaseOrder.status == status_filter)
+        count_query = count_query.where(PurchaseOrder.status == status_filter)
+
+    total = (await db.execute(count_query)).scalar_one()
+    query = query.order_by(desc(PurchaseOrder.created_at)).offset(skip).limit(limit)
+    result = await db.execute(query)
+    return list(result.scalars().all()), total
 
 
 async def get_po_line_receipt_status(db: AsyncSession, purchase_order_line_item_id: UUID) -> dict[str, Decimal | int]:

@@ -36,6 +36,24 @@ async def get_default_address_for_user(db: AsyncSession, user_id: UUID) -> Optio
     return result.scalar_one_or_none()
 
 
+async def get_address_for_lookup(
+    db: AsyncSession, address_id: UUID, user_id: UUID, tenant_id: Optional[UUID]
+) -> Optional[Address]:
+    """Fetch a single address, applying the same visibility rule as
+    list_addresses_for_user (own personal addresses, or the caller's tenant's
+    shared addresses). Used when another domain (e.g. purchase orders) needs to
+    resolve a client-supplied address_id -- returns None rather than raising so
+    callers can turn that into their own domain-appropriate error."""
+    eff = _effective_tenant_id(tenant_id)
+    stmt = select(Address).where(
+        Address.id == address_id,
+        ((Address.owner_type == "tenant") & (Address.tenant_id == eff))
+        | ((Address.owner_type == "user") & (Address.owner_id == user_id)),
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 _NOT_CLIENT_ASSIGNABLE = {"id", "tenant_id", "owner_type", "owner_id"}
 
 

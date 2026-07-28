@@ -1,6 +1,8 @@
 import axios, { AxiosError } from "axios";
 import { useAuthStore } from "@/lib/auth-store";
 import type {
+  AccountingSplit,
+  AddressResult,
   AgentQueryResponse,
   AgentActivityLogEntry,
   AgentActivityLogListResponse,
@@ -15,6 +17,8 @@ import type {
   ContractListResponse,
   Document,
   DocumentListResponse,
+  PurchaseOrder,
+  PurchaseOrderListResponse,
   Requisition,
   RequisitionListResponse,
   RequisitionLineItem,
@@ -183,6 +187,112 @@ export async function searchCommodityCodes(
   const { data } = await api.get<CommodityCodeResult[]>("/commodity-codes", {
     params: search ? { search } : undefined,
   });
+  return data;
+}
+
+// ---- Addresses (ship-to / bill-to picker) ----
+
+export async function listMyAddresses(): Promise<AddressResult[]> {
+  // /addresses/mine already returns both the caller's own addresses and their
+  // tenant's shared addresses (see app/routers/address.py) -- one call covers
+  // the full picker list.
+  const { data } = await api.get<AddressResult[]>("/addresses/mine");
+  return data;
+}
+
+// ---- Purchase Orders ----
+
+export async function listPurchaseOrders(params?: {
+  requisition_id?: string;
+  status?: string;
+  skip?: number;
+  limit?: number;
+}): Promise<PurchaseOrderListResponse> {
+  const { data } = await api.get<PurchaseOrderListResponse>(
+    "/procurement/purchase-orders",
+    { params }
+  );
+  return data;
+}
+
+export async function getPurchaseOrder(id: string): Promise<PurchaseOrder> {
+  const { data } = await api.get<PurchaseOrder>(
+    `/procurement/purchase-orders/${id}`
+  );
+  return data;
+}
+
+export async function convertRequisitionToPurchaseOrder(
+  requisitionId: string,
+  payload: {
+    supplier_id: string;
+    currency?: string;
+    notes?: string;
+    line_items?: Array<Record<string, unknown>>;
+    shipping_amount?: string;
+    shipping_allocation_method?: string;
+    ship_to_address_id?: string;
+    bill_to_address_id?: string;
+    incoterms?: string;
+    payment_terms?: string;
+  }
+): Promise<PurchaseOrder> {
+  const { data } = await api.post<PurchaseOrder>(
+    `/procurement/requisitions/${requisitionId}/convert-to-po`,
+    payload
+  );
+  return data;
+}
+
+export async function transitionPurchaseOrderLifecycle(
+  id: string,
+  lifecycleStatus: string
+): Promise<PurchaseOrder> {
+  const { data } = await api.post<PurchaseOrder>(
+    `/procurement/purchase-orders/${id}/lifecycle/transition`,
+    { lifecycle_status: lifecycleStatus }
+  );
+  return data;
+}
+
+export async function acknowledgePurchaseOrder(
+  id: string,
+  notes?: string
+): Promise<PurchaseOrder> {
+  const { data } = await api.post<PurchaseOrder>(
+    `/procurement/purchase-orders/${id}/acknowledge`,
+    { notes }
+  );
+  return data;
+}
+
+export async function getPurchaseOrderLineItemSplits(
+  purchaseOrderId: string,
+  lineItemId: string
+): Promise<AccountingSplit[]> {
+  const { data } = await api.get<AccountingSplit[]>(
+    `/procurement/purchase-orders/${purchaseOrderId}/line-items/${lineItemId}/splits`
+  );
+  return data;
+}
+
+export async function setPurchaseOrderLineItemSplits(
+  purchaseOrderId: string,
+  lineItemId: string,
+  splits: Array<{
+    split_method: "percentage" | "amount";
+    percentage?: string;
+    amount?: string;
+    gl_account_code: string;
+    cost_center?: string;
+    department?: string;
+    project_code?: string;
+  }>
+): Promise<AccountingSplit[]> {
+  const { data } = await api.put<AccountingSplit[]>(
+    `/procurement/purchase-orders/${purchaseOrderId}/line-items/${lineItemId}/splits`,
+    { splits }
+  );
   return data;
 }
 

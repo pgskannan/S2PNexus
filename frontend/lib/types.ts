@@ -82,6 +82,106 @@ export interface RequisitionListResponse {
   limit: number;
 }
 
+export interface AddressResult {
+  id: string;
+  label: string;
+  owner_type?: string;
+  owner_id?: string | null;
+  address_line1?: string | null;
+  city?: string | null;
+  is_default?: boolean;
+}
+
+export interface AccountingSplit {
+  id: string;
+  split_method: "percentage" | "amount";
+  percentage?: string | null;
+  amount?: string | null;
+  gl_account_code: string;
+  cost_center?: string | null;
+  department?: string | null;
+  project_code?: string | null;
+}
+
+export interface PurchaseOrderLineItem {
+  id: string;
+  purchase_order_id: string;
+  line_number: number;
+  description: string;
+  quantity: string;
+  unit_price?: string | null;
+  line_total?: string | null;
+  account_code?: string | null;
+  account_code_is_override: boolean;
+  allocated_shipping_amount?: string | null;
+  weight?: string | null;
+  created_at: string;
+}
+
+export type PurchaseOrderLifecycleStatus =
+  | "draft"
+  | "pending_approval"
+  | "approved"
+  | "sent_to_supplier"
+  | "acknowledged"
+  | "partially_received"
+  | "fully_received"
+  | "closed"
+  | "cancelled";
+
+export interface BudgetWarning {
+  scope_level: string;
+  scope_code: string;
+  requested_amount: string;
+  available: string;
+  enforcement: string;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  requisition_id: string;
+  supplier_id?: string | null;
+  order_number: string;
+  status: string;
+  lifecycle_status: PurchaseOrderLifecycleStatus;
+  version_number: number;
+  amendment_status: string;
+  change_order_reference?: string | null;
+  currency: string;
+  subtotal?: string | null;
+  tax_total?: string | null;
+  shipping_amount?: string | null;
+  shipping_allocation_method: string;
+  grand_total?: string | null;
+  total_amount?: string | null;
+  incoterms?: string | null;
+  payment_terms?: string | null;
+  ship_to_address_id?: string | null;
+  ship_to_name?: string | null;
+  ship_to_address_line1?: string | null;
+  ship_to_city?: string | null;
+  bill_to_address_id?: string | null;
+  bill_to_name?: string | null;
+  bill_to_address_line1?: string | null;
+  bill_to_city?: string | null;
+  acknowledgment_status: string;
+  acknowledged_at?: string | null;
+  acknowledged_notes?: string | null;
+  notes?: string | null;
+  line_items: PurchaseOrderLineItem[];
+  budget_warnings?: BudgetWarning[] | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PurchaseOrderListResponse {
+  items: PurchaseOrder[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
 export type SupplierLifecycleStatus =
   | "active"
   | "under_monitoring"

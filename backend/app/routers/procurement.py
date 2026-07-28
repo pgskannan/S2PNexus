@@ -23,6 +23,7 @@ from app.crud.procurement import (
     get_invoice_exceptions,
     get_invoices_with_open_exceptions,
     get_purchase_order,
+    get_purchase_orders,
     get_requisition,
     get_requisitions,
     get_requisitions_count,
@@ -31,6 +32,7 @@ from app.crud.procurement import (
     transition_requisition,
     update_requisition,
 )
+from app.crud.accounting_split import get_line_item_splits, set_line_item_splits
 from app.database.session import get_db
 from app.models.user import User
 from app.schemas.procurement import (
@@ -54,6 +56,7 @@ from app.schemas.procurement import (
     ProcurementRequisitionUpdate,
     PurchaseOrderCreate,
     PurchaseOrderResponse,
+    PurchaseOrderListResponse,
     PurchaseOrderLineItemResponse,
 )
 from app.commands.procurement import (
@@ -237,9 +240,53 @@ async def convert_requisition_to_purchase_order(
     requisition = await get_requisition(db, requisition_id, tenant_id=current_user.tenant_id)
     if not requisition:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-    purchase_order = await create_purchase_order(
-        db, requisition_id, purchase_order_data, created_by=current_user.id, tenant_id=current_user.tenant_id
+    try:
+        purchase_order = await create_purchase_order(
+            db, requisition_id, purchase_order_data, created_by=current_user.id, tenant_id=current_user.tenant_id
+        )
+    except ValueError as exc:
+        # e.g. a ship_to_address_id/bill_to_address_id that doesn't exist or
+        # isn't visible to this tenant -- a client input problem, not a server
+        # error, so this must not be allowed to fall through as an unhandled
+        # 500 (which would show up in the browser as a misleading CORS error).
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return PurchaseOrderResponse.model_validate(purchase_order)
+
+
+@router.get("/purchase-orders", response_model=PurchaseOrderListResponse, summary="List purchase orders")
+async def list_purchase_orders_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    requisition_id: UUID | None = Query(None),
+    status_filter: str | None = Query(None, alias="status"),
+) -> PurchaseOrderListResponse:
+    purchase_orders, total = await get_purchase_orders(
+        db,
+        tenant_id=current_user.tenant_id,
+        requisition_id=requisition_id,
+        status_filter=status_filter,
+        skip=skip,
+        limit=limit,
     )
+    return PurchaseOrderListResponse(
+        items=[PurchaseOrderResponse.model_validate(po) for po in purchase_orders],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
+
+
+@router.get("/purchase-orders/{purchase_order_id}", response_model=PurchaseOrderResponse)
+async def get_purchase_order_endpoint(
+    purchase_order_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> PurchaseOrderResponse:
+    purchase_order = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
+    if not purchase_order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
     return PurchaseOrderResponse.model_validate(purchase_order)
 
 
@@ -277,6 +324,70 @@ async def add_po_line_item_endpoint(
     return PurchaseOrderLineItemResponse.model_validate(li)
 
 
+def _serialize_split(s) -> dict:
+    return {
+        "id": str(s.id),
+        "split_method": s.split_method,
+        "percentage": str(s.percentage) if s.percentage is not None else None,
+        "amount": str(s.amount) if s.amount is not None else None,
+        "gl_account_code": s.gl_account_code,
+        "cost_center": s.cost_center,
+        "department": s.department,
+        "project_code": s.project_code,
+    }
+
+
+@router.get(
+    "/purchase-orders/{purchase_order_id}/line-items/{line_item_id}/splits",
+    summary="Get accounting splits for a PO line item",
+)
+async def get_po_line_item_splits_endpoint(
+    purchase_order_id: UUID,
+    line_item_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    po = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
+    if not po:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
+    # Verify the line item actually belongs to *this* PO (not just that it
+    # exists somewhere) via the already tenant-checked `po.line_items`
+    # relationship, rather than querying PurchaseOrderLineItem directly --
+    # otherwise a caller could read another tenant's split data by pairing a
+    # valid purchase_order_id they own with an arbitrary line_item_id guess.
+    if not any(li.id == line_item_id for li in po.line_items):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Line item not found on this purchase order")
+    splits = await get_line_item_splits(db, "po_line", line_item_id)
+    return [_serialize_split(s) for s in splits]
+
+
+@router.put(
+    "/purchase-orders/{purchase_order_id}/line-items/{line_item_id}/splits",
+    summary="Replace accounting splits for a PO line item",
+)
+async def set_po_line_item_splits_endpoint(
+    purchase_order_id: UUID,
+    line_item_id: UUID,
+    payload: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    po = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
+    if not po:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
+    line_item = next((li for li in po.line_items if li.id == line_item_id), None)
+    if line_item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Line item not found on this purchase order")
+    splits = payload.get("splits")
+    if not isinstance(splits, list):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Request body must include a 'splits' list")
+    try:
+        rows = await set_line_item_splits(db, "po_line", line_item_id, splits, line_item.line_total)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return [_serialize_split(s) for s in rows]
+
+
 @router.post("/purchase-orders/{purchase_order_id}/lifecycle/transition", response_model=PurchaseOrderResponse)
 async def transition_po_lifecycle_endpoint(
     purchase_order_id: UUID,
@@ -285,13 +396,19 @@ async def transition_po_lifecycle_endpoint(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> PurchaseOrderResponse:
-    po = await transition_purchase_order_lifecycle(
-        db,
-        purchase_order_id,
-        actor_id=current_user.id,
-        new_lifecycle_status=new_status.get("lifecycle_status"),
-        tenant_id=current_user.tenant_id,
-    )
+    try:
+        po = await transition_purchase_order_lifecycle(
+            db,
+            purchase_order_id,
+            actor_id=current_user.id,
+            new_lifecycle_status=new_status.get("lifecycle_status"),
+            tenant_id=current_user.tenant_id,
+        )
+    except ValueError as exc:
+        # Covers both an invalid state-machine transition and a hard-enforcement
+        # budget overage -- both are client-actionable ("pick a valid next
+        # status" / "this exceeds budget"), not server errors.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if not po:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
     await apply_procurement_transition_workflow(
