@@ -8,6 +8,20 @@ from app.ai.schemas import ChatCompletionResponse, GenerationResponse, ProviderH
 from app.core.config import settings
 from app.crud.system_setting import get_setting
 
+# Default grounding for the raw /chat and /generate gateway endpoints, used only when
+# the caller doesn't supply their own system prompt (e.g. domain agents in
+# app.agents.domain_agents already pass a more specific role_prompt and are unaffected).
+# Without this, an ungrounded prompt like "explain the PO approval workflow" is genuinely
+# ambiguous to a general-purpose model -- confirmed 2026-07-28, where the same prompt sent
+# straight to Ollama with no system message was answered once as Purchase Order and once as
+# Agile Product Owner across two otherwise-identical runs.
+DEFAULT_SYSTEM_PROMPT = (
+    "You are an AI assistant for S2PNexus, an AI-powered Source-to-Pay procurement platform. "
+    "Interpret ambiguous terms in the procurement/supply-chain sense unless the user clearly "
+    "means otherwise -- for example, 'PO' means Purchase Order (not Product Owner), and "
+    "'PR' means Purchase Requisition (not Pull Request)."
+)
+
 
 class AIGatewayService:
     """High-level service that exposes provider-backed AI operations."""
@@ -52,7 +66,11 @@ class AIGatewayService:
         return await self.provider.health()
 
     async def generate(self, prompt: str, *, system_prompt: str | None = None, temperature: float = 0.7, max_tokens: int | None = None) -> GenerationResponse:
-        return await self.provider.generate(prompt, system_prompt=system_prompt, temperature=temperature, max_tokens=max_tokens)
+        resolved_system_prompt = system_prompt if system_prompt else DEFAULT_SYSTEM_PROMPT
+        return await self.provider.generate(prompt, system_prompt=resolved_system_prompt, temperature=temperature, max_tokens=max_tokens)
 
     async def chat(self, messages: list[dict[str, str]], *, temperature: float = 0.7, max_tokens: int | None = None) -> ChatCompletionResponse:
-        return await self.provider.chat(messages, temperature=temperature, max_tokens=max_tokens)
+        resolved_messages = messages
+        if not any(msg.get("role") == "system" for msg in messages):
+            resolved_messages = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT}, *messages]
+        return await self.provider.chat(resolved_messages, temperature=temperature, max_tokens=max_tokens)
