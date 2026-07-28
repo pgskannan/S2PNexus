@@ -29,6 +29,19 @@ export interface AiProviderResponse {
   available_providers: string[];
 }
 
+export interface RequisitionLineItem {
+  id: string;
+  requisition_id: string;
+  description: string;
+  quantity: string;
+  unit_price?: string | null;
+  line_total?: string | null;
+  commodity?: string | null;
+  category?: string | null;
+  account_code?: string | null;
+  created_at: string;
+}
+
 export interface Requisition {
   id: string;
   requisition_number?: string | null;
@@ -48,8 +61,18 @@ export interface Requisition {
   account_code?: string | null;
   need_by_date?: string | null;
   notes?: string | null;
+  line_items: RequisitionLineItem[];
   created_at: string;
   updated_at: string;
+}
+
+export interface CommodityCodeResult {
+  code: string;
+  commodity_title?: string | null;
+  class_title?: string | null;
+  family_title?: string | null;
+  segment_title?: string | null;
+  is_active: boolean;
 }
 
 export interface RequisitionListResponse {

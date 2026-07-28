@@ -62,6 +62,12 @@ class ProcurementRequisitionResponse(ProcurementRequisitionBase):
     )
     created_at: datetime
     updated_at: datetime
+    # ProcurementRequisition.line_items is lazy="selectin" on the model, so this
+    # is already eagerly loaded on every fetch -- no crud/router changes needed
+    # to expose it here, just the schema field. Forward reference to a class
+    # defined later in this module resolves fine because of the
+    # `from __future__ import annotations` import at the top of the file.
+    line_items: list[ProcurementRequisitionLineItemResponse] = Field(default_factory=list)
 
 
 class ProcurementRequisitionTransitionRequest(BaseModel):

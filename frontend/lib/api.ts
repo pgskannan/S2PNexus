@@ -5,6 +5,7 @@ import type {
   AgentActivityLogEntry,
   AgentActivityLogListResponse,
   AgentActivitySummaryResponse,
+  CommodityCodeResult,
   Contract,
   DocumentNumberingFormat,
   DocumentNumberingFormatListResponse,
@@ -16,6 +17,7 @@ import type {
   DocumentListResponse,
   Requisition,
   RequisitionListResponse,
+  RequisitionLineItem,
   SavingsListResponse,
   SavingsSummaryResponse,
   SourcingEvent,
@@ -151,6 +153,36 @@ export async function transitionRequisition(
     `/procurement/requisitions/${id}/transition`,
     { new_status: newStatus, lifecycle_status: lifecycleStatus }
   );
+  return data;
+}
+
+export async function addRequisitionLineItem(
+  requisitionId: string,
+  payload: {
+    description: string;
+    quantity: string;
+    unit_price?: string;
+    line_total?: string;
+    commodity?: string;
+    category?: string;
+    account_code?: string;
+  }
+): Promise<RequisitionLineItem> {
+  const { data } = await api.post<RequisitionLineItem>(
+    `/procurement/requisitions/${requisitionId}/line-items`,
+    payload
+  );
+  return data;
+}
+
+// ---- Commodity codes (autocomplete) ----
+
+export async function searchCommodityCodes(
+  search?: string
+): Promise<CommodityCodeResult[]> {
+  const { data } = await api.get<CommodityCodeResult[]>("/commodity-codes", {
+    params: search ? { search } : undefined,
+  });
   return data;
 }
 

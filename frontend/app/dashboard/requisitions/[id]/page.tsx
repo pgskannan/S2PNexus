@@ -68,7 +68,7 @@ export default function RequisitionDetailPage() {
   const actions = nextSteps[requisition.lifecycle_status] ?? [];
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-4xl space-y-6">
       <button
         onClick={() => router.push("/dashboard/requisitions")}
         className="text-sm text-brand-600 hover:underline"
@@ -124,7 +124,46 @@ export default function RequisitionDetailPage() {
         </dl>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
+      </div>
 
+      <div className="card space-y-3">
+        <h2 className="text-lg font-semibold">Line items</h2>
+        {(!requisition.line_items || requisition.line_items.length === 0) && (
+          <p className="text-sm text-slate-400">No line items on this requisition.</p>
+        )}
+        {requisition.line_items && requisition.line_items.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-slate-500">
+                  <th className="py-2 pr-4">Description</th>
+                  <th className="py-2 pr-4">Qty</th>
+                  <th className="py-2 pr-4">Unit price</th>
+                  <th className="py-2 pr-4">Line total</th>
+                  <th className="py-2 pr-4">Commodity</th>
+                  <th className="py-2 pr-4">Category</th>
+                  <th className="py-2 pr-4">Account code</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requisition.line_items.map((li) => (
+                  <tr key={li.id} className="border-b border-slate-50 last:border-0">
+                    <td className="py-2 pr-4">{li.description}</td>
+                    <td className="py-2 pr-4">{li.quantity}</td>
+                    <td className="py-2 pr-4">{li.unit_price ?? "—"}</td>
+                    <td className="py-2 pr-4">{li.line_total ?? "—"}</td>
+                    <td className="py-2 pr-4 font-mono text-xs">{li.commodity ?? "—"}</td>
+                    <td className="py-2 pr-4">{li.category ?? "—"}</td>
+                    <td className="py-2 pr-4">{li.account_code ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card space-y-4">
         {actions.length > 0 && (
           <div className="flex gap-3 border-t border-slate-100 pt-4">
             {actions.map((action) => (
