@@ -10,7 +10,7 @@ export default function DashboardLayout({
     <AuthGuard>
       <div className="min-h-screen bg-slate-50">
         <Nav />
-        <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+        <main className="ml-60 max-w-6xl px-6 py-8">{children}</main>
       </div>
     </AuthGuard>
   );

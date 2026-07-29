@@ -63,6 +63,23 @@ export default function CommodityCodeInput({
     }, 250);
   }
 
+  // "Browse" lists whatever commodity codes exist (up to the backend's
+  // default limit) with no search term -- useful when the user doesn't know
+  // a code/title to type yet, or just wants to see what's loaded.
+  async function browseAll() {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setLoading(true);
+    setOpen(true);
+    try {
+      const items = await searchCommodityCodes();
+      setResults(items);
+    } catch {
+      setResults([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function pick(item: CommodityCodeResult) {
     onChange(item.code);
     setOpen(false);
@@ -70,15 +87,25 @@ export default function CommodityCodeInput({
 
   return (
     <div ref={containerRef} className="relative">
-      <input
-        id={id}
-        className="input-field"
-        value={value}
-        placeholder={placeholder}
-        autoComplete="off"
-        onChange={(e) => handleInputChange(e.target.value)}
-        onFocus={() => results.length > 0 && setOpen(true)}
-      />
+      <div className="flex gap-1">
+        <input
+          id={id}
+          className="input-field"
+          value={value}
+          placeholder={placeholder}
+          autoComplete="off"
+          onChange={(e) => handleInputChange(e.target.value)}
+          onFocus={() => results.length > 0 && setOpen(true)}
+        />
+        <button
+          type="button"
+          onClick={browseAll}
+          className="btn-secondary shrink-0 px-2 text-xs"
+          title="Browse all commodity codes"
+        >
+          Browse
+        </button>
+      </div>
       {open && (
         <div className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
           {loading && (
