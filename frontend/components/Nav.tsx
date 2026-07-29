@@ -8,18 +8,18 @@ import { extractErrorMessage, listWorkflowNotifications, markWorkflowNotificatio
 import type { Notification } from "@/lib/types";
 
 const links = [
-  { href: "/dashboard", label: "Overview" },
-  { href: "/dashboard/requisitions", label: "Requisitions" },
-  { href: "/dashboard/purchase-orders", label: "Purchase Orders" },
-  { href: "/dashboard/contracts", label: "Contracts" },
-  { href: "/dashboard/documents", label: "Documents" },
-  { href: "/dashboard/sourcing", label: "Sourcing" },
-  { href: "/dashboard/spend", label: "Spend & Savings" },
-  { href: "/dashboard/workflow", label: "Workflow" },
-  { href: "/dashboard/suppliers", label: "Suppliers" },
-  { href: "/dashboard/settings", label: "Settings" },
-  { href: "/dashboard/agent", label: "AI Agent" },
-  { href: "/dashboard/agent-activity", label: "Agent Activity" },
+  { href: "/dashboard", label: "Overview", icon: "overview" },
+  { href: "/dashboard/requisitions", label: "Requisitions", icon: "requisitions" },
+  { href: "/dashboard/purchase-orders", label: "Purchase Orders", icon: "purchase-orders" },
+  { href: "/dashboard/contracts", label: "Contracts", icon: "contracts" },
+  { href: "/dashboard/documents", label: "Documents", icon: "documents" },
+  { href: "/dashboard/sourcing", label: "Sourcing", icon: "sourcing" },
+  { href: "/dashboard/spend", label: "Spend & Savings", icon: "spend-savings" },
+  { href: "/dashboard/workflow", label: "Workflow", icon: "workflow" },
+  { href: "/dashboard/suppliers", label: "Suppliers", icon: "suppliers" },
+  { href: "/dashboard/settings", label: "Settings", icon: "settings" },
+  { href: "/dashboard/agent", label: "AI Agent", icon: "ai-agent" },
+  { href: "/dashboard/agent-activity", label: "Agent Activity", icon: "agent-activity" },
 ];
 
 // Vertical left sidebar nav -- replaces the old horizontal header, which no
@@ -66,8 +66,10 @@ export default function Nav() {
 
   return (
     <aside className="fixed inset-y-0 left-0 z-20 flex w-60 flex-col border-r border-slate-200 bg-white">
-      <div className="border-b border-slate-200 px-5 py-4">
-        <span className="text-lg font-semibold text-brand-700">S2PNexus</span>
+      <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo.svg" alt="" className="h-6 w-6" />
+        <span className="text-lg font-semibold text-brand-700">S2P Nexus</span>
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
@@ -79,13 +81,15 @@ export default function Nav() {
             <Link
               key={link.href}
               href={link.href}
-              className={`block rounded-md px-3 py-2 text-sm font-medium ${
+              className={`flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium ${
                 active
                   ? "bg-brand-50 text-brand-700"
                   : "text-slate-600 hover:bg-slate-100"
               }`}
             >
-              {link.label}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={`/icons/${link.icon}.svg`} alt="" className="h-4 w-4 shrink-0" />
+              <span>{link.label}</span>
             </Link>
           );
         })}
