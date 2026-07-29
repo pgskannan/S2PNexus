@@ -43,6 +43,13 @@ import type {
   NotificationListResponse,
   DashboardMetricsResponse,
   AiProviderResponse,
+  UserListResponse,
+  UserUpdate,
+  Budget,
+  BudgetCreate,
+  BudgetUpdate,
+  BudgetCheckResponse,
+  BudgetListResponse,
 } from "@/lib/types";
 
 const API_BASE_URL =
@@ -197,6 +204,88 @@ export async function listMyAddresses(): Promise<AddressResult[]> {
   // tenant's shared addresses (see app/routers/address.py) -- one call covers
   // the full picker list.
   const { data } = await api.get<AddressResult[]>("/addresses/mine");
+  return data;
+}
+
+// ---- Admin / Users ----
+
+export async function listUsers(params?: {
+  skip?: number;
+  limit?: number;
+  search?: string;
+  sort_by?: string;
+  sort_order?: string;
+}): Promise<UserListResponse> {
+  const { data } = await api.get<UserListResponse>("/users", { params });
+  return data;
+}
+
+export async function getUser(id: string): Promise<User> {
+  const { data } = await api.get<User>(`/users/${id}`);
+  return data;
+}
+
+export async function updateUser(id: string, payload: UserUpdate): Promise<User> {
+  const { data } = await api.patch<User>(`/users/${id}`, payload);
+  return data;
+}
+
+export async function deleteUser(id: string): Promise<void> {
+  await api.delete(`/users/${id}`);
+}
+
+// ---- Admin / Budgets ----
+
+export async function listBudgets(params?: { fiscal_year?: number }): Promise<BudgetListResponse> {
+  const { data } = await api.get<BudgetListResponse>("/budgets", { params });
+  return data;
+}
+
+export async function createBudget(payload: BudgetCreate): Promise<Budget> {
+  const { data } = await api.post<Budget>("/budgets", payload);
+  return data;
+}
+
+export async function getBudget(id: string): Promise<Budget> {
+  const { data } = await api.get<Budget>(`/budgets/${id}`);
+  return data;
+}
+
+export async function updateBudget(id: string, payload: BudgetUpdate): Promise<Budget> {
+  const { data } = await api.put<Budget>(`/budgets/${id}`, payload);
+  return data;
+}
+
+export async function checkBudget(params: {
+  requested_amount: number | string;
+  gl_account_code?: string;
+  cost_center?: string;
+  fiscal_year?: number;
+  fiscal_period?: number;
+}): Promise<BudgetCheckResponse> {
+  const { data } = await api.get<BudgetCheckResponse>("/budgets/check", { params });
+  return data;
+}
+
+// ---- Admin / Shared addresses ----
+
+export async function listSharedAddresses(): Promise<AddressResult[]> {
+  const { data } = await api.get<AddressResult[]>("/addresses/shared");
+  return data;
+}
+
+export async function createSharedAddress(payload: Record<string, unknown>): Promise<{ id: string }> {
+  const { data } = await api.post<{ id: string }>("/addresses/shared", payload);
+  return data;
+}
+
+export async function updateSharedAddress(id: string, payload: Record<string, unknown>): Promise<{ id: string }> {
+  const { data } = await api.patch<{ id: string }>(`/addresses/shared/${id}`, payload);
+  return data;
+}
+
+export async function deleteSharedAddress(id: string): Promise<{ deleted: boolean }> {
+  const { data } = await api.delete<{ deleted: boolean }>(`/addresses/shared/${id}`);
   return data;
 }
 
@@ -786,6 +875,60 @@ export async function uploadCommodityGlMapping(file: File): Promise<{ loaded: nu
 
 export async function downloadCommodityGlMapping(): Promise<void> {
   return downloadCsv("/commodity-codes/mappings/export", "commodity_gl_mapping.csv");
+}
+
+export async function getDepartmentsCount(): Promise<{ count: number }> {
+  const { data } = await api.get<{ count: number }>("/departments/master-data/count");
+  return data;
+}
+
+export async function uploadDepartments(file: File): Promise<{ loaded: number; errors?: string[] }> {
+  return uploadCsv<{ loaded: number; errors?: string[] }>("/departments/master-data/upload", file);
+}
+
+export async function downloadDepartments(): Promise<void> {
+  return downloadCsv("/departments/master-data/export", "departments.csv");
+}
+
+export async function deleteAllDepartments(): Promise<{ deleted: number }> {
+  const { data } = await api.delete<{ deleted: number }>("/departments/master-data");
+  return data;
+}
+
+export async function getCostCentersCount(): Promise<{ count: number }> {
+  const { data } = await api.get<{ count: number }>("/cost-centers/master-data/count");
+  return data;
+}
+
+export async function uploadCostCenters(file: File): Promise<{ loaded: number; errors?: string[] }> {
+  return uploadCsv<{ loaded: number; errors?: string[] }>("/cost-centers/master-data/upload", file);
+}
+
+export async function downloadCostCenters(): Promise<void> {
+  return downloadCsv("/cost-centers/master-data/export", "cost_centers.csv");
+}
+
+export async function deleteAllCostCenters(): Promise<{ deleted: number }> {
+  const { data } = await api.delete<{ deleted: number }>("/cost-centers/master-data");
+  return data;
+}
+
+export async function getPlantsCount(): Promise<{ count: number }> {
+  const { data } = await api.get<{ count: number }>("/plants/master-data/count");
+  return data;
+}
+
+export async function uploadPlants(file: File): Promise<{ loaded: number; errors?: string[] }> {
+  return uploadCsv<{ loaded: number; errors?: string[] }>("/plants/master-data/upload", file);
+}
+
+export async function downloadPlants(): Promise<void> {
+  return downloadCsv("/plants/master-data/export", "plants.csv");
+}
+
+export async function deleteAllPlants(): Promise<{ deleted: number }> {
+  const { data } = await api.delete<{ deleted: number }>("/plants/master-data");
+  return data;
 }
 
 export async function deleteAllCommodityGlMapping(): Promise<{ deleted: number }> {

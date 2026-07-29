@@ -5,13 +5,14 @@ Provides database operations for Supplier model.
 """
 
 import re
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from difflib import SequenceMatcher
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import select, func, asc, desc, update
+from sqlalchemy import delete, select, func, asc, desc, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.supplier import Supplier
@@ -38,6 +39,16 @@ _LIFECYCLE_TRANSITION_MAP: dict[str, tuple[set[str], str]] = {
 async def get_supplier(db: AsyncSession, supplier_id: UUID) -> Optional[Supplier]:
     """Get supplier by ID."""
     result = await db.execute(select(Supplier).where(Supplier.id == supplier_id))
+    return result.scalar_one_or_none()
+
+
+async def get_supplier_by_external_code(db: AsyncSession, external_supplier_code: str) -> Optional[Supplier]:
+    result = await db.execute(select(Supplier).where(Supplier.external_supplier_code == external_supplier_code))
+    return result.scalar_one_or_none()
+
+
+async def get_supplier_by_name(db: AsyncSession, name: str) -> Optional[Supplier]:
+    result = await db.execute(select(Supplier).where(Supplier.name == name))
     return result.scalar_one_or_none()
 
 
@@ -122,6 +133,74 @@ async def delete_supplier(db: AsyncSession, supplier_id: UUID) -> None:
     if supplier:
         await db.delete(supplier)
         await db.commit()
+
+
+async def bulk_upsert_supplier_headers(
+    db: AsyncSession,
+    rows: list[dict],
+    updated_by: Optional[UUID] = None,
+) -> tuple[int, list[str]]:
+    """Upsert supplier header rows by external_supplier_code then exact supplier name."""
+    external_codes = {r["external_supplier_code"] for r in rows if r.get("external_supplier_code")}
+    names = {r["name"] for r in rows if r.get("name")}
+
+    existing_query = select(Supplier).where(
+        (Supplier.external_supplier_code.in_(external_codes)) | (Supplier.name.in_(names))
+    )
+    result = await db.execute(existing_query)
+    existing_suppliers = result.scalars().all()
+
+    existing_by_code: dict[str, Supplier] = {}
+    existing_by_name: dict[str, Supplier] = {}
+    for supplier in existing_suppliers:
+        if supplier.external_supplier_code:
+            existing_by_code[supplier.external_supplier_code] = supplier
+        existing_by_name[supplier.name] = supplier
+
+    loaded = 0
+    errors: list[str] = []
+    for row_index, row in enumerate(rows, start=2):
+        ext_code = row.get("external_supplier_code")
+        name = row.get("name")
+        supplier = None
+
+        if ext_code and ext_code in existing_by_code:
+            supplier = existing_by_code[ext_code]
+        elif name and name in existing_by_name:
+            supplier = existing_by_name[name]
+
+        if supplier is None:
+            if not name:
+                errors.append(f"Row {row_index}: supplier name is required to create a new supplier")
+                continue
+            supplier = Supplier(name=name, created_by=updated_by or uuid.uuid4())
+            db.add(supplier)
+            if ext_code:
+                existing_by_code[ext_code] = supplier
+            existing_by_name[name] = supplier
+
+        if ext_code:
+            supplier.external_supplier_code = ext_code
+        supplier.legal_name = row.get("legal_name")
+        supplier.duns_number = row.get("duns_number")
+        supplier.naics_code = row.get("naics_code")
+        supplier.tax_id = row.get("tax_id")
+        supplier.vat_number = row.get("vat_number")
+        supplier.tax_country = row.get("tax_country")
+        supplier.preferred_payment_method = row.get("preferred_payment_method")
+        supplier.diversity_classifications = row.get("diversity_classifications")
+        supplier.w9_on_file = row.get("w9_on_file", supplier.w9_on_file)
+
+        loaded += 1
+
+    await db.commit()
+    return loaded, errors
+
+
+async def delete_all_suppliers(db: AsyncSession) -> int:
+    result = await db.execute(delete(Supplier))
+    await db.commit()
+    return result.rowcount or 0
 
 
 async def transition_supplier_lifecycle(

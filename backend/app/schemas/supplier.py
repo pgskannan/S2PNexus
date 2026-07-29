@@ -22,6 +22,27 @@ class SupplierBase(BaseModel):
     address: Optional[str] = Field(None, description="Supplier address")
     website: Optional[str] = Field(None, max_length=255, description="Website URL")
     tax_id: Optional[str] = Field(None, max_length=100, description="Tax ID")
+    legal_name: Optional[str] = Field(None, max_length=255, description="Legal entity name")
+    duns_number: Optional[str] = Field(None, max_length=9, description="D-U-N-S number")
+    naics_code: Optional[str] = Field(None, max_length=10, description="NAICS code")
+    vat_number: Optional[str] = Field(None, max_length=50, description="VAT number")
+    tax_country: Optional[str] = Field(None, max_length=2, description="Tax country (ISO 3166-1 alpha-2)")
+    preferred_payment_method: Optional[str] = Field(
+        None,
+        max_length=20,
+        description="Preferred payment method: ach, wire, check, card",
+    )
+    diversity_classifications: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Comma-delimited supplier diversity classifications",
+    )
+    w9_on_file: bool = Field(default=False, description="Whether the supplier's W-9 is on file")
+    external_supplier_code: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="External supplier code from an ERP/MDM system",
+    )
     payment_terms: Optional[str] = Field(None, max_length=100, description="Payment terms")
     currency: str = Field(default="USD", max_length=3, description="Default currency")
     is_active: bool = Field(default=True, description="Active status")
@@ -60,6 +81,15 @@ class SupplierUpdate(BaseModel):
     tax_id: Optional[str] = Field(None, max_length=100)
     payment_terms: Optional[str] = Field(None, max_length=100)
     currency: Optional[str] = Field(None, max_length=3)
+    legal_name: Optional[str] = Field(None, max_length=255)
+    duns_number: Optional[str] = Field(None, max_length=9)
+    naics_code: Optional[str] = Field(None, max_length=10)
+    vat_number: Optional[str] = Field(None, max_length=50)
+    tax_country: Optional[str] = Field(None, max_length=2)
+    preferred_payment_method: Optional[str] = Field(None, max_length=20)
+    diversity_classifications: Optional[str] = Field(None, max_length=500)
+    w9_on_file: Optional[bool] = None
+    external_supplier_code: Optional[str] = Field(None, max_length=50)
     is_active: Optional[bool] = None
 
 
@@ -75,6 +105,103 @@ class SupplierResponse(SupplierBase):
     parent_supplier_id: Optional[UUID] = None
     relationship_type: Optional[str] = None
     merged_into_supplier_id: Optional[UUID] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SupplierAddressBase(BaseModel):
+    """Base schema for a supplier address."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    address_type: str = Field(..., min_length=1, max_length=20)
+    attention_to: Optional[str] = Field(None, max_length=255)
+    address_line1: Optional[str] = Field(None, max_length=255)
+    address_line2: Optional[str] = Field(None, max_length=255)
+    city: Optional[str] = Field(None, max_length=100)
+    state_province: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=40)
+    country: Optional[str] = Field(None, max_length=100)
+    phone: Optional[str] = Field(None, max_length=50)
+    is_default: bool = Field(default=False)
+
+
+class SupplierAddressCreate(SupplierAddressBase):
+    """Request schema for creating a supplier address."""
+
+    pass
+
+
+class SupplierAddressUpdate(BaseModel):
+    """Request schema for updating a supplier address."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    address_type: Optional[str] = Field(None, min_length=1, max_length=20)
+    attention_to: Optional[str] = Field(None, max_length=255)
+    address_line1: Optional[str] = Field(None, max_length=255)
+    address_line2: Optional[str] = Field(None, max_length=255)
+    city: Optional[str] = Field(None, max_length=100)
+    state_province: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=40)
+    country: Optional[str] = Field(None, max_length=100)
+    phone: Optional[str] = Field(None, max_length=50)
+    is_default: Optional[bool] = None
+
+
+class SupplierAddressResponse(SupplierAddressBase):
+    """Response schema for a supplier address."""
+
+    id: UUID
+    supplier_id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class SupplierBankAccountBase(BaseModel):
+    """Base schema for a supplier bank account."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    bank_name: Optional[str] = Field(None, max_length=255)
+    account_holder_name: Optional[str] = Field(None, max_length=255)
+    account_number: Optional[str] = Field(None, max_length=255)
+    iban: Optional[str] = Field(None, max_length=34)
+    swift_bic: Optional[str] = Field(None, max_length=11)
+    routing_number: Optional[str] = Field(None, max_length=20)
+    currency: Optional[str] = Field(None, max_length=3)
+    is_primary: bool = Field(default=False)
+    intermediary_bank_swift: Optional[str] = Field(None, max_length=11)
+
+
+class SupplierBankAccountCreate(SupplierBankAccountBase):
+    """Request schema for creating a supplier bank account."""
+
+    pass
+
+
+class SupplierBankAccountUpdate(BaseModel):
+    """Request schema for updating a supplier bank account."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    bank_name: Optional[str] = Field(None, max_length=255)
+    account_holder_name: Optional[str] = Field(None, max_length=255)
+    account_number: Optional[str] = Field(None, max_length=255)
+    iban: Optional[str] = Field(None, max_length=34)
+    swift_bic: Optional[str] = Field(None, max_length=11)
+    routing_number: Optional[str] = Field(None, max_length=20)
+    currency: Optional[str] = Field(None, max_length=3)
+    is_primary: Optional[bool] = None
+    intermediary_bank_swift: Optional[str] = Field(None, max_length=11)
+
+
+class SupplierBankAccountResponse(SupplierBankAccountBase):
+    """Response schema for a supplier bank account."""
+
+    id: UUID
+    supplier_id: UUID
+    updated_by: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
 

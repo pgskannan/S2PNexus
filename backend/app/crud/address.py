@@ -85,6 +85,17 @@ async def _get_owned_address(db: AsyncSession, address_id: UUID, owner_id: UUID)
     return addr
 
 
+async def _get_shared_address(db: AsyncSession, address_id: UUID, tenant_id: Optional[UUID]) -> Address:
+    eff = _effective_tenant_id(tenant_id)
+    result = await db.execute(
+        select(Address).where(Address.id == address_id, Address.owner_type == "tenant", Address.tenant_id == eff)
+    )
+    addr = result.scalar_one_or_none()
+    if addr is None:
+        raise ValueError("Address not found")
+    return addr
+
+
 async def update_address(db: AsyncSession, address_id: UUID, updates: dict, *, owner_id: UUID) -> Address:
     addr = await _get_owned_address(db, address_id, owner_id)
     for k, v in updates.items():
@@ -95,6 +106,23 @@ async def update_address(db: AsyncSession, address_id: UUID, updates: dict, *, o
     await db.commit()
     await db.refresh(addr)
     return addr
+
+
+async def update_shared_address(db: AsyncSession, address_id: UUID, updates: dict, tenant_id: Optional[UUID]) -> Address:
+    addr = await _get_shared_address(db, address_id, tenant_id)
+    for k, v in updates.items():
+        if k in _NOT_CLIENT_ASSIGNABLE:
+            continue
+        setattr(addr, k, v)
+    await db.commit()
+    await db.refresh(addr)
+    return addr
+
+
+async def delete_shared_address(db: AsyncSession, address_id: UUID, tenant_id: Optional[UUID]) -> None:
+    addr = await _get_shared_address(db, address_id, tenant_id)
+    await db.delete(addr)
+    await db.commit()
 
 
 async def delete_address(db: AsyncSession, address_id: UUID, *, owner_id: UUID) -> None:

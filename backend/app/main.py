@@ -19,7 +19,7 @@ from app.core.config import get_settings, Settings
 from app.database.database import close_db, db_manager, init_db
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
-from app.routers import health, auth, users, suppliers, contracts, documents, analytics, ai, procurement, sourcing, workflow, document_numbering
+from app.routers import health, auth, users, suppliers, contracts, documents, analytics, ai, procurement, sourcing, workflow, document_numbering, org_structure
 from app.routers.commodity import router as commodity_router
 from app.routers.gl_accounts import router as gl_accounts_router
 from app.routers.address import router as address_router
@@ -225,6 +225,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
     app.include_router(gl_accounts_router, prefix="/api/v1", tags=["GL Accounts"])
     app.include_router(address_router, prefix="/api/v1", tags=["Addresses"])
     app.include_router(budget_router, prefix="/api/v1", tags=["Budgets"])
+    app.include_router(org_structure.router, prefix="/api/v1", tags=["OrgStructure"])
     app.include_router(metadata_router, prefix="/api/v1", tags=["Metadata"])
 
     return app

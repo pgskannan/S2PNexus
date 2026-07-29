@@ -14,7 +14,23 @@ export interface User {
   full_name: string;
   role: UserRole;
   is_active: boolean;
+  is_superuser: boolean;
   tenant_id?: string;
+}
+
+export interface UserUpdate {
+  email?: string;
+  full_name?: string;
+  role?: UserRole;
+  is_active?: boolean;
+  is_superuser?: boolean;
+}
+
+export interface UserListResponse {
+  items: User[];
+  total: number;
+  skip: number;
+  limit: number;
 }
 
 export interface Token {
@@ -81,6 +97,56 @@ export interface CommodityCodeResult {
 
 export interface RequisitionListResponse {
   items: Requisition[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface Budget {
+  id: string;
+  tenant_id: string;
+  fiscal_year: number;
+  fiscal_period?: number | null;
+  scope_level: string;
+  scope_code: string;
+  budgeted_amount: string;
+  enforcement: string;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BudgetCreate {
+  fiscal_year: number;
+  fiscal_period?: number | null;
+  scope_level: string;
+  scope_code: string;
+  budgeted_amount: string;
+  enforcement: string;
+}
+
+export interface BudgetUpdate {
+  budgeted_amount?: string;
+  enforcement?: string;
+}
+
+export interface BudgetCheckResponse {
+  budget_id?: string | null;
+  scope_level?: string | null;
+  scope_code?: string | null;
+  enforcement?: string | null;
+  budgeted_amount?: string | null;
+  committed: string;
+  actual: string;
+  available?: string | null;
+  requested_amount: string;
+  would_exceed: boolean;
+  blocked: boolean;
+  message?: string | null;
+}
+
+export interface BudgetListResponse {
+  items: Budget[];
   total: number;
   skip: number;
   limit: number;

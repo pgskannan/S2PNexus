@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.commands.supplier import (
@@ -23,10 +23,13 @@ from app.commands.supplier import (
 )
 from app.core.config import get_settings
 from app.crud.supplier import (
+    bulk_upsert_supplier_headers,
     create_supplier,
+    delete_all_suppliers,
     delete_supplier,
     find_potential_duplicate_suppliers,
     get_supplier,
+    get_supplier_by_external_code,
     get_supplier_hierarchy,
     get_supplier_spend_rollup,
     get_suppliers,
@@ -36,6 +39,29 @@ from app.crud.supplier import (
     set_supplier_parent,
     transition_supplier_lifecycle,
     update_supplier,
+)
+from app.crud.supplier_address import (
+    bulk_upsert_supplier_addresses,
+    count_supplier_addresses,
+    create_supplier_address,
+    delete_all_supplier_addresses,
+    delete_supplier_address,
+    get_supplier_address,
+    list_supplier_addresses,
+    set_default_supplier_address,
+    update_supplier_address,
+)
+from app.crud.supplier_bank_account import (
+    bulk_upsert_supplier_bank_accounts,
+    count_supplier_bank_accounts,
+    create_supplier_bank_account,
+    delete_all_supplier_bank_accounts,
+    delete_supplier_bank_account,
+    get_supplier_bank_account,
+    list_supplier_bank_accounts,
+    mask_sensitive_value,
+    set_primary_supplier_bank_account,
+    update_supplier_bank_account,
 )
 from app.crud.supplier_registration import (
     convert_registration_to_supplier,
@@ -55,8 +81,14 @@ from app.crud.supplier_request import (
     update_supplier_request,
 )
 from app.database.session import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.supplier import (
+    SupplierAddressCreate,
+    SupplierAddressResponse,
+    SupplierAddressUpdate,
+    SupplierBankAccountCreate,
+    SupplierBankAccountResponse,
+    SupplierBankAccountUpdate,
     SupplierCreate,
     SupplierDuplicatesResponse,
     SupplierHierarchyResponse,
@@ -80,6 +112,12 @@ from app.schemas.supplier_request import (
     SupplierRequestResponse,
     SupplierRequestUpdate,
 )
+from app.services.master_data_import import (
+    MasterDataCSVError,
+    parse_supplier_addresses_csv,
+    parse_supplier_bank_accounts_csv,
+    parse_supplier_headers_csv,
+)
 from app.services.supplier_workflow import (
     apply_supplier_registration_transition_workflow,
     apply_supplier_transition_workflow,
@@ -89,6 +127,43 @@ from app.utils.dependencies import get_current_active_user
 
 router = APIRouter(prefix="", tags=["Suppliers"])
 settings = get_settings()
+
+
+def _require_admin(current_user: User) -> None:
+    if current_user.role != UserRole.ADMINISTRATOR and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can change supplier master data",
+        )
+
+
+async def _read_csv_text(file: UploadFile) -> str:
+    raw = await file.read()
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File is not valid UTF-8 text: {exc}",
+        ) from exc
+
+
+async def _resolve_supplier_id(db: AsyncSession, row: dict) -> UUID | None:
+    supplier_id = row.get("supplier_id")
+    if supplier_id:
+        return UUID(supplier_id)
+    external_code = row.get("supplier_external_code")
+    if not external_code:
+        return None
+    supplier = await get_supplier_by_external_code(db, external_code)
+    return supplier.id if supplier else None
+
+
+def _mask_supplier_bank_account_response(account) -> SupplierBankAccountResponse:
+    response = SupplierBankAccountResponse.model_validate(account)
+    response.account_number = mask_sensitive_value(response.account_number)
+    response.iban = mask_sensitive_value(response.iban)
+    return response
 
 
 @router.get(
@@ -471,6 +546,183 @@ async def merge_suppliers_endpoint(
     return SupplierResponse.model_validate(merged)
 
 
+@router.get("/master-data/headers/count")
+async def supplier_headers_count(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    _require_admin(current_user)
+    return {"count": await get_suppliers_count(db)}
+
+
+@router.post("/master-data/headers/upload")
+async def upload_supplier_headers(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+):
+    _require_admin(current_user)
+    csv_text = await _read_csv_text(file)
+    try:
+        rows = parse_supplier_headers_csv(csv_text)
+    except MasterDataCSVError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": exc.errors}) from exc
+
+    loaded, errors = await bulk_upsert_supplier_headers(
+        db,
+        [r.__dict__ for r in rows],
+        updated_by=current_user.id,
+    )
+    return {"loaded": loaded, "errors": errors}
+
+
+@router.delete("/master-data/headers")
+async def delete_all_supplier_headers(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    _require_admin(current_user)
+    deleted = await delete_all_suppliers(db)
+    return {"deleted": deleted}
+
+
+@router.get("/master-data/addresses/count")
+async def supplier_addresses_count(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    _require_admin(current_user)
+    return {"count": await count_supplier_addresses(db)}
+
+
+@router.post("/master-data/addresses/upload")
+async def upload_supplier_addresses(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+):
+    _require_admin(current_user)
+    csv_text = await _read_csv_text(file)
+    try:
+        rows = parse_supplier_addresses_csv(csv_text)
+    except MasterDataCSVError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": exc.errors}) from exc
+
+    loaded = 0
+    errors: list[str] = []
+    resolved_rows: list[dict] = []
+    for line_num, row in enumerate(rows, start=2):
+        supplier_id = None
+        if row.supplier_id:
+            try:
+                supplier_id = UUID(row.supplier_id)
+            except ValueError:
+                errors.append(f"Row {line_num}: invalid supplier_id")
+                continue
+        elif row.supplier_external_code:
+            supplier = await get_supplier_by_external_code(db, row.supplier_external_code)
+            if not supplier:
+                errors.append(f"Row {line_num}: supplier_external_code '{row.supplier_external_code}' not found")
+                continue
+            supplier_id = supplier.id
+
+        if supplier_id is None:
+            errors.append(f"Row {line_num}: missing supplier_id or supplier_external_code")
+            continue
+
+        resolved_rows.append(
+            {
+                "supplier_id": supplier_id,
+                "address_type": row.address_type,
+                "attention_to": row.attention_to,
+                "address_line1": row.address_line1,
+                "address_line2": row.address_line2,
+                "city": row.city,
+                "state_province": row.state_province,
+                "postal_code": row.postal_code,
+                "country": row.country,
+                "phone": row.phone,
+                "is_default": row.is_default,
+            }
+        )
+
+    if resolved_rows:
+        loaded = await bulk_upsert_supplier_addresses(db, rows=resolved_rows)
+    return {"loaded": loaded, "errors": errors}
+
+
+@router.delete("/master-data/addresses")
+async def delete_all_supplier_addresses_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    _require_admin(current_user)
+    deleted = await delete_all_supplier_addresses(db)
+    return {"deleted": deleted}
+
+
+@router.get("/master-data/bank-accounts/count")
+async def supplier_bank_accounts_count(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    _require_admin(current_user)
+    return {"count": await count_supplier_bank_accounts(db)}
+
+
+@router.post("/master-data/bank-accounts/upload")
+async def upload_supplier_bank_accounts(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+):
+    _require_admin(current_user)
+    csv_text = await _read_csv_text(file)
+    try:
+        rows = parse_supplier_bank_accounts_csv(csv_text)
+    except MasterDataCSVError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": exc.errors}) from exc
+
+    loaded = 0
+    errors: list[str] = []
+    resolved_rows: list[dict] = []
+    for line_num, row in enumerate(rows, start=2):
+        supplier_id = None
+        if row.supplier_id:
+            try:
+                supplier_id = UUID(row.supplier_id)
+            except ValueError:
+                errors.append(f"Row {line_num}: invalid supplier_id")
+                continue
+        elif row.supplier_external_code:
+            supplier = await get_supplier_by_external_code(db, row.supplier_external_code)
+            if not supplier:
+                errors.append(f"Row {line_num}: supplier_external_code '{row.supplier_external_code}' not found")
+                continue
+            supplier_id = supplier.id
+
+        if supplier_id is None:
+            errors.append(f"Row {line_num}: missing supplier_id or supplier_external_code")
+            continue
+
+        resolved_rows.append(
+            {
+                "supplier_id": supplier_id,
+                "bank_name": row.bank_name,
+                "account_holder_name": row.account_holder_name,
+                "account_number": row.account_number,
+                "iban": row.iban,
+                "swift_bic": row.swift_bic,
+                "routing_number": row.routing_number,
+                "currency": row.currency,
+                "is_primary": row.is_primary,
+                "intermediary_bank_swift": row.intermediary_bank_swift,
+            }
+        )
+
+    if resolved_rows:
+        loaded = await bulk_upsert_supplier_bank_accounts(db, rows=resolved_rows, updated_by=current_user.id)
+    return {"loaded": loaded, "errors": errors}
+
+
+@router.delete("/master-data/bank-accounts")
+async def delete_all_supplier_bank_accounts_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    _require_admin(current_user)
+    deleted = await delete_all_supplier_bank_accounts(db)
+    return {"deleted": deleted}
+
+
 # NOTE: The generic "/{supplier_id}" routes below must stay registered *after* every
 # other literal-prefixed route on this router (e.g. "/requests", "/registrations",
 # "/requalification-due", "/merge"). FastAPI/Starlette match routes in registration
@@ -549,6 +801,214 @@ async def update_supplier_by_id(
 
     updated_supplier = await update_supplier(db, supplier_id, supplier_update)
     return SupplierResponse.model_validate(updated_supplier)
+
+
+@router.get(
+    "/{supplier_id}/addresses",
+    response_model=list[SupplierAddressResponse],
+    summary="List supplier addresses",
+    description="Get all addresses for a supplier",
+)
+async def get_supplier_addresses_endpoint(
+    supplier_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[SupplierAddressResponse]:
+    supplier = await get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    addresses = await list_supplier_addresses(db, supplier_id)
+    return [SupplierAddressResponse.model_validate(address) for address in addresses]
+
+
+@router.post(
+    "/{supplier_id}/addresses",
+    response_model=SupplierAddressResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create supplier address",
+    description="Create a new address for a supplier",
+)
+async def create_supplier_address_endpoint(
+    supplier_id: UUID,
+    address_data: SupplierAddressCreate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierAddressResponse:
+    supplier = await get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    address = await create_supplier_address(db, supplier_id, **address_data.model_dump())
+    return SupplierAddressResponse.model_validate(address)
+
+
+@router.patch(
+    "/{supplier_id}/addresses/{address_id}",
+    response_model=SupplierAddressResponse,
+    summary="Update a supplier address",
+    description="Update one of a supplier's addresses",
+)
+async def update_supplier_address_endpoint(
+    supplier_id: UUID,
+    address_id: UUID,
+    address_update: SupplierAddressUpdate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierAddressResponse:
+    supplier = await get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    try:
+        address = await update_supplier_address(db, supplier_id, address_id, address_update.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SupplierAddressResponse.model_validate(address)
+
+
+@router.post(
+    "/{supplier_id}/addresses/{address_id}/set-default",
+    response_model=SupplierAddressResponse,
+    summary="Mark a supplier address as default",
+    description="Set a supplier address as the default for the supplier",
+)
+async def set_default_supplier_address_endpoint(
+    supplier_id: UUID,
+    address_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierAddressResponse:
+    supplier = await get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    try:
+        address = await set_default_supplier_address(db, supplier_id, address_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SupplierAddressResponse.model_validate(address)
+
+
+@router.delete(
+    "/{supplier_id}/addresses/{address_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a supplier address",
+    description="Delete a supplier address by ID",
+)
+async def delete_supplier_address_endpoint(
+    supplier_id: UUID,
+    address_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    supplier = await get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    try:
+        await delete_supplier_address(db, supplier_id, address_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get(
+    "/{supplier_id}/bank-accounts",
+    response_model=list[SupplierBankAccountResponse],
+    summary="List supplier bank accounts",
+    description="Get all bank accounts for a supplier",
+)
+async def get_supplier_bank_accounts_endpoint(
+    supplier_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[SupplierBankAccountResponse]:
+    supplier = await get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    accounts = await list_supplier_bank_accounts(db, supplier_id)
+    return [_mask_supplier_bank_account_response(account) for account in accounts]
+
+
+@router.post(
+    "/{supplier_id}/bank-accounts",
+    response_model=SupplierBankAccountResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create supplier bank account",
+    description="Create a new bank account for a supplier",
+)
+async def create_supplier_bank_account_endpoint(
+    supplier_id: UUID,
+    account_data: SupplierBankAccountCreate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierBankAccountResponse:
+    supplier = await get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    account = await create_supplier_bank_account(db, supplier_id, updated_by=current_user.id, **account_data.model_dump())
+    return _mask_supplier_bank_account_response(account)
+
+
+@router.patch(
+    "/{supplier_id}/bank-accounts/{account_id}",
+    response_model=SupplierBankAccountResponse,
+    summary="Update a supplier bank account",
+    description="Update a supplier bank account by ID",
+)
+async def update_supplier_bank_account_endpoint(
+    supplier_id: UUID,
+    account_id: UUID,
+    account_update: SupplierBankAccountUpdate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierBankAccountResponse:
+    supplier = await get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    try:
+        account = await update_supplier_bank_account(db, supplier_id, account_id, updated_by=current_user.id, updates=account_update.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return _mask_supplier_bank_account_response(account)
+
+
+@router.post(
+    "/{supplier_id}/bank-accounts/{account_id}/set-primary",
+    response_model=SupplierBankAccountResponse,
+    summary="Set a supplier bank account as primary",
+    description="Mark a specific supplier bank account as the primary payment account",
+)
+async def set_primary_supplier_bank_account_endpoint(
+    supplier_id: UUID,
+    account_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierBankAccountResponse:
+    supplier = await get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    try:
+        account = await set_primary_supplier_bank_account(db, supplier_id, account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return _mask_supplier_bank_account_response(account)
+
+
+@router.delete(
+    "/{supplier_id}/bank-accounts/{account_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a supplier bank account",
+    description="Delete a supplier bank account by ID",
+)
+async def delete_supplier_bank_account_endpoint(
+    supplier_id: UUID,
+    account_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    supplier = await get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    try:
+        await delete_supplier_bank_account(db, supplier_id, account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.post(

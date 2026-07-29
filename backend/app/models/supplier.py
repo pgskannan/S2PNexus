@@ -67,6 +67,52 @@ class Supplier(Base):
         nullable=True,
         comment="Tax identification number",
     )
+    legal_name: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Supplier legal entity name",
+    )
+    duns_number: Mapped[str | None] = mapped_column(
+        String(9),
+        nullable=True,
+        comment="D-U-N-S number",
+    )
+    naics_code: Mapped[str | None] = mapped_column(
+        String(10),
+        nullable=True,
+        comment="NAICS industry classification code",
+    )
+    vat_number: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        comment="VAT registration number",
+    )
+    tax_country: Mapped[str | None] = mapped_column(
+        String(2),
+        nullable=True,
+        comment="Supplier tax country (ISO 3166-1 alpha-2)",
+    )
+    preferred_payment_method: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="Preferred payment method: ach, wire, check, card",
+    )
+    diversity_classifications: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+        comment="Comma-delimited supplier diversity classifications",
+    )
+    w9_on_file: Mapped[bool] = mapped_column(
+        default=False,
+        nullable=False,
+        comment="Whether the supplier's W-9 is on file",
+    )
+    external_supplier_code: Mapped[str | None] = mapped_column(
+        String(50),
+        unique=True,
+        nullable=True,
+        comment="External supplier code from an ERP or MDM system",
+    )
     payment_terms: Mapped[str | None] = mapped_column(
         String(100),
         nullable=True,
@@ -168,6 +214,18 @@ class Supplier(Base):
         foreign_keys="[SupplierRegistration.supplier_id]",
         uselist=False,
         lazy="selectin",
+    )
+    addresses: Mapped[list["SupplierAddress"]] = relationship(
+        "SupplierAddress",
+        back_populates="supplier",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+    bank_accounts: Mapped[list["SupplierBankAccount"]] = relationship(
+        "SupplierBankAccount",
+        back_populates="supplier",
+        lazy="selectin",
+        cascade="all, delete-orphan",
     )
     # Self-referential hierarchy/merge relationships deliberately use the default
     # lazy ("select") loading rather than "selectin" like the relationships above:
