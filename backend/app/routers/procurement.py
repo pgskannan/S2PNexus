@@ -65,7 +65,13 @@ from app.commands.procurement import (
     TransitionRequisitionCommand,
     TransitionRequisitionCommandHandler,
 )
-from app.services.procurement_workflow import apply_procurement_transition_workflow
+from app.services.goods_receipt_workflow import start_goods_receipt_exception_workflow
+from app.services.invoice_workflow import start_invoice_exception_workflow
+from app.services.procurement_workflow import (
+    apply_procurement_transition_workflow,
+    start_purchase_order_approval_workflow,
+    start_requisition_approval_workflow,
+)
 from app.utils.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/procurement", tags=["Procurement"])
@@ -165,6 +171,11 @@ async def transition_requisition_endpoint(
         event_bus=getattr(request.app.state, "event_bus", None),
         actor_id=current_user.id,
         tenant_id=current_user.tenant_id,
+    )
+    await start_requisition_approval_workflow(
+        requisition,
+        db,
+        started_by=current_user.id,
     )
     return ProcurementRequisitionResponse.model_validate(requisition)
 
@@ -420,6 +431,11 @@ async def transition_po_lifecycle_endpoint(
         actor_id=current_user.id,
         tenant_id=current_user.tenant_id,
     )
+    await start_purchase_order_approval_workflow(
+        po,
+        db,
+        started_by=current_user.id,
+    )
     return PurchaseOrderResponse.model_validate(po)
 
 
@@ -464,6 +480,7 @@ async def create_receipt_endpoint(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    await start_goods_receipt_exception_workflow(receipt, db, started_by=current_user.id)
     return GoodsReceiptResponse.model_validate(receipt)
 
 
@@ -543,4 +560,5 @@ async def resolve_invoice_exception_endpoint(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if not exception:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice exception not found")
+    await start_invoice_exception_workflow(exception, db, started_by=current_user.id)
     return InvoiceMatchExceptionResponse.model_validate(exception)

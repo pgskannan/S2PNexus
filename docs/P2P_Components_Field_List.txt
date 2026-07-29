@@ -1,0 +1,138 @@
+PROCURE-TO-PAY (P2P) COMPONENTS - COMPLETE FIELD LIST
+=====================================================
+Below is a comprehensive field list for the primary components of a Procure-to-Pay (P2P) cycle, separated into Header and Line items where applicable, including small descriptions for each field.
+
+-----------------------------------------------------
+1. PURCHASE REQUISITION (PR)
+-----------------------------------------------------
+HEADER LEVEL FIELDS:
+- Requisition Number: Unique identifier for the PR.
+- Requestor / Requisitioner: The employee requesting the goods or services.
+- Request Date: Date the PR was created or submitted.
+- Approval Status: Current state of the PR (e.g., Draft, Pending Approval, Approved, Rejected).
+- Justification/Business Purpose: Reason for the purchase.
+- Emergency Buy: Checkbox/flag indicating if this is an urgent, critical purchase bypassing standard lead times.
+- Delay Until: Date field indicating that the purchase processing should be paused or delayed until a specific date.
+- Header Tax: Total estimated tax applied at the document level.
+- Shipping Cost: Total estimated freight or shipping charges for the entire requisition.
+- Total Amount: Overall estimated cost of the requisition (including taxes and shipping).
+- Header Attachments: Files attached to the overall PR (e.g., quotes, email approvals, business cases).
+
+LINE LEVEL FIELDS:
+- Line Number: Sequential number for the item/service on the PR.
+- Item/Service Description: Detailed text describing what is being requested.
+- Category / UNSPSC Code: Procurement category or commodity code for spend analysis.
+- Quantity: Number of units requested.
+- UOM (Unit of Measure): How the item is measured (e.g., Each, Box, Hours).
+- Estimated Unit Price: Expected cost per unit.
+- Line Amount: Total cost for the line (Quantity * Unit Price).
+- Required By / Need-By Date: Date the requestor needs the goods/services delivered.
+- Deliver-To Location: Physical or virtual location where the item should be sent.
+- Cost Center / WBS / Project Code: Accounting string dictating which department or project pays for the item.
+- Line Level Tax: Specific tax code or amount applied exclusively to this line item.
+- Line Level Attachments: Files relevant only to this specific line (e.g., item specs, blueprints).
+- Attachment Send to Supplier: Checkbox indicating whether the line-level attachment should be transmitted to the vendor on the subsequent PO.
+
+-----------------------------------------------------
+2. PURCHASE ORDER (PO)
+-----------------------------------------------------
+HEADER LEVEL FIELDS:
+- PO Number: Unique identifier for the finalized Purchase Order.
+- Supplier Name: The vendor providing the goods/services.
+- Supplier Site / Location: Specific vendor branch or fulfillment center.
+- PO Date: Date the PO was officially issued to the supplier.
+- Payment Terms: Agreed timeframe for payment (e.g., Net 30, Net 60).
+- Freight/Shipping Terms: Terms dictating who pays for shipping and assumes risk (e.g., FOB Destination).
+- Buyer Name: Procurement agent responsible for managing this PO.
+- Total PO Value: Total committed financial value of the PO.
+- PO Status: State of the PO (e.g., Open, Closed, Cancelled, Partially Received).
+- Header Attachments: Official documents attached to the PO (e.g., signed contracts, terms and conditions).
+
+LINE LEVEL FIELDS:
+- Line Number: Sequential identifier for PO lines.
+- Item Number / SKU: Supplier's or internal part number.
+- Description: Detailed description of the goods/services ordered.
+- Quantity Ordered: Exact number of units the supplier must provide.
+- UOM: Unit of measurement.
+- Unit Price: Contracted or agreed-upon price per unit.
+- Line Total: Total value of the line.
+- Promised Date: Date the supplier committed to delivering the goods.
+- Tax Code: Tax classification determining how tax is calculated for the line.
+- Ship-To Location: Address where goods will be delivered.
+- Bill-To Location: Address where the supplier should send the invoice.
+
+-----------------------------------------------------
+3. RECEIPT (GOODS / SERVICES RECEIPT)
+-----------------------------------------------------
+HEADER LEVEL FIELDS:
+- Receipt Number: Unique system identifier for the receiving event.
+- PO Reference Number: The PO against which goods/services are being received.
+- Packing Slip / Delivery Note Number: Supplier's delivery document number.
+- Receipt Date: Actual date the goods or services were received.
+- Received By: Employee or warehouse user who accepted the delivery.
+- Carrier Name: Logistics company that delivered the goods.
+
+LINE LEVEL FIELDS:
+- Receipt Line Number: Sequential number of the receipt line.
+- PO Line Reference: The specific PO line being fulfilled.
+- Item Description: Name/details of the item received.
+- Quantity Received: Total number of units physically received.
+- Quantity Accepted: Number of units accepted into inventory.
+- Quantity Rejected: Number of units damaged, incorrect, or failed QA.
+- UOM: Unit of measurement.
+- Return Reason: Explanation if items were rejected (e.g., damaged in transit).
+- Condition/Remarks: Notes regarding the state of the delivery.
+
+-----------------------------------------------------
+4. INVOICE (SUPPLIER INVOICE)
+-----------------------------------------------------
+HEADER LEVEL FIELDS:
+- Invoice Number (Internal): System-generated AP invoice number.
+- Supplier Invoice Number: The invoice number provided by the supplier on their document.
+- Supplier ID / Name: Vendor billing the organization.
+- Invoice Date: Date printed on the supplier's invoice.
+- Invoice Receipt Date: Date the AP department actually received the invoice.
+- Total Invoice Amount: Gross amount demanded by the supplier.
+- Total Tax Amount: Total tax charged on the invoice.
+- Total Freight Amount: Total shipping/misc charges on the invoice.
+- Remit-To Address: Where the payment should be sent.
+- Payment Terms: Timeframe for payment (should mirror PO, unless updated).
+
+LINE LEVEL FIELDS:
+- Invoice Line Number: Sequential number for the billing line.
+- PO Line Reference: Link back to the corresponding PO line.
+- Receipt Line Reference: Link back to the Goods Receipt line (for 3-way match).
+- Item Description: Description of the billed item/service.
+- Invoiced Quantity: Number of units the supplier is billing for.
+- Unit Price: Price per unit charged by the supplier.
+- Line Total: Subtotal for the invoiced line.
+- Tax Rate / Code: Tax applied to this specific item.
+
+-----------------------------------------------------
+5. INVOICE VERIFICATION (MATCHING & APPROVAL)
+-----------------------------------------------------
+(Note: Often integrated directly onto the AP Invoice record, but conceptually a distinct process step)
+- Match Type: System logic applied (2-way: PO-to-Invoice, 3-way: PO-to-Receipt-to-Invoice, 4-way: includes inspection).
+- Match Status: Result of the matching engine (e.g., Matched, Unmatched, Hold).
+- Price Variance Amount: Discrepancy between PO unit price and Invoice unit price.
+- Quantity Variance: Discrepancy between Received quantity and Invoiced quantity.
+- Hold Reason: System or manual flag preventing payment (e.g., "Awaiting GR", "Price Exceeds Tolerance").
+- Tolerance Level: Acceptable deviation percentage/amount before throwing an exception.
+- Verification Date: Date the invoice successfully passed matching rules.
+- Exception Approver: User assigned to resolve variances/holds.
+
+-----------------------------------------------------
+6. PAYMENT
+-----------------------------------------------------
+HEADER/TRANSACTION LEVEL FIELDS:
+- Payment Reference / Voucher Number: Unique internal ID for the payment transaction.
+- Invoice Reference(s): The AP invoice(s) being paid by this transaction.
+- Supplier Remittance Name: Vendor receiving the funds.
+- Payment Date: Date the funds are scheduled to be released/transferred.
+- Payment Method: How the payment is made (e.g., ACH, Wire Transfer, Virtual Card, Check).
+- Paid Amount: Total cash actually disbursed.
+- Discount Taken: Any early-payment discounts applied (e.g., 2% Net 10).
+- Internal Bank Account: The buyer's bank account funding the payment.
+- Supplier Bank Account: The vendor's receiving routing/account details (for electronic payments).
+- Payment Status: Lifecycle of the funds (e.g., Scheduled, Issued, Cleared, Failed, Voided).
+- Cleared Date: Date the funds successfully left the buyer's bank account.

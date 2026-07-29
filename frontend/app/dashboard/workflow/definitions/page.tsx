@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createWorkflowDefinition, extractErrorMessage, listWorkflowDefinitions } from "@/lib/api";
 import type { WorkflowDefinition } from "@/lib/types";
+import { WorkflowCanvas, type WorkflowStepValue } from "@/components/WorkflowCanvas";
+import { WorkflowNodeInspector } from "@/components/WorkflowNodeInspector";
 
 export default function WorkflowDefinitionsPage() {
   const [definitions, setDefinitions] = useState<WorkflowDefinition[]>([]);
@@ -11,12 +13,39 @@ export default function WorkflowDefinitionsPage() {
     name: "",
     entity_type: "requisition",
     description: "",
-    steps: "[]",
+    steps: [] as Array<Record<string, unknown>>,
     is_active: true,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [showJson, setShowJson] = useState(false);
+
+  const selectedNode = useMemo(() => {
+    const index = form.steps.findIndex((step, stepIndex) => `step-${stepIndex}` === selectedNodeId);
+    const step = form.steps[index];
+    if (!step) {
+      return null;
+    }
+
+    return {
+      id: `step-${index}`,
+      name: String(step.name || `Step ${index + 1}`),
+      step_type: (step.step_type as WorkflowStepValue["step_type"]) || "approval",
+      field: typeof step.field === "string" ? step.field : undefined,
+      operator: (step.operator as WorkflowStepValue["operator"]) || "eq",
+      value: step.value,
+      on_true_next_step: typeof step.on_true_next_step === "number" ? step.on_true_next_step : null,
+      on_false_next_step: typeof step.on_false_next_step === "number" ? step.on_false_next_step : null,
+      approvers: Array.isArray(step.approvers) ? step.approvers.map((item) => String(item)) : [],
+      required_approvals: typeof step.required_approvals === "number" ? step.required_approvals : 1,
+      escalate_after_hours: typeof step.escalate_after_hours === "number" ? step.escalate_after_hours : undefined,
+      escalate_to: typeof step.escalate_to === "string" ? step.escalate_to : undefined,
+      recipients: Array.isArray(step.recipients) ? step.recipients.map((item) => String(item)) : [],
+      message_template: typeof step.message_template === "string" ? step.message_template : undefined,
+    } as WorkflowStepValue;
+  }, [form.steps, selectedNodeId]);
 
   async function load() {
     setLoading(true);
@@ -35,26 +64,64 @@ export default function WorkflowDefinitionsPage() {
     load();
   }, []);
 
+  function validateSteps(steps: Array<Record<string, unknown>>) {
+    const errors: string[] = [];
+    if (steps.length === 0) {
+      errors.push("Add at least one step.");
+    }
+    const hasEnd = steps.some((step) => step.step_type === "end");
+    if (!hasEnd) {
+      errors.push("Add an End step to complete the workflow.");
+    }
+    const hasApproval = steps.some((step) => step.step_type === "approval");
+    if (hasApproval && steps.some((step) => step.step_type === "approval" && Array.isArray(step.approvers) && step.approvers.length === 0)) {
+      errors.push("Approval steps need at least one approver.");
+    }
+    const hasCondition = steps.some((step) => step.step_type === "condition");
+    if (hasCondition && steps.some((step) => step.step_type === "condition" && (step.on_true_next_step == null || step.on_false_next_step == null))) {
+      errors.push("Condition steps need both true and false branches configured.");
+    }
+    return errors;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    const validationErrors = validateSteps(form.steps);
+    if (validationErrors.length > 0) {
+      setError(validationErrors.join(" \n"));
+      return;
+    }
     setSaving(true);
     try {
-      const parsedSteps = JSON.parse(form.steps || "[]");
       await createWorkflowDefinition({
         name: form.name,
         entity_type: form.entity_type,
         description: form.description || undefined,
-        steps: Array.isArray(parsedSteps) ? parsedSteps : [],
+        steps: form.steps,
         is_active: form.is_active,
       });
-      setForm({ name: "", entity_type: "requisition", description: "", steps: "[]", is_active: true });
+      setForm({ name: "", entity_type: "requisition", description: "", steps: [], is_active: true });
+      setSelectedNodeId(null);
       await load();
     } catch (err) {
       setError(extractErrorMessage(err));
     } finally {
       setSaving(false);
     }
+  }
+
+  function updateSelectedNode(changes: Partial<WorkflowStepValue>) {
+    if (!selectedNodeId) {
+      return;
+    }
+    const index = form.steps.findIndex((step, stepIndex) => `step-${stepIndex}` === selectedNodeId);
+    if (index < 0) {
+      return;
+    }
+    const nextSteps = [...form.steps];
+    nextSteps[index] = { ...nextSteps[index], ...changes } as Record<string, unknown>;
+    setForm((current) => ({ ...current, steps: nextSteps }));
   }
 
   return (
@@ -144,18 +211,6 @@ export default function WorkflowDefinitionsPage() {
               onChange={(e) => setForm({ ...form, description: e.target.value })}
             />
           </div>
-          <div>
-            <label className="label" htmlFor="steps">
-              Steps JSON
-            </label>
-            <textarea
-              id="steps"
-              className="input-field font-mono text-sm"
-              rows={6}
-              value={form.steps}
-              onChange={(e) => setForm({ ...form, steps: e.target.value })}
-            />
-          </div>
           <label className="flex items-center gap-2 text-sm text-slate-600">
             <input
               type="checkbox"
@@ -164,7 +219,35 @@ export default function WorkflowDefinitionsPage() {
             />
             Active
           </label>
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          <div className="flex items-center gap-2 text-sm">
+            <button type="button" className="btn-secondary" onClick={() => setShowJson((value) => !value)}>
+              {showJson ? "Hide raw JSON" : "Show raw JSON"}
+            </button>
+          </div>
+          {showJson && (
+            <textarea
+              className="input-field font-mono text-sm"
+              rows={8}
+              value={JSON.stringify(form.steps, null, 2)}
+              onChange={(e) => setForm({ ...form, steps: JSON.parse(e.target.value || "[]") })}
+            />
+          )}
+          <WorkflowCanvas
+            value={form.steps}
+            onChange={(steps) => setForm((current) => ({ ...current, steps }))}
+            selectedNodeId={selectedNodeId}
+            onSelectNode={setSelectedNodeId}
+          />
+          <div className="rounded-lg border border-slate-200 p-4">
+            <h3 className="text-sm font-semibold">Node inspector</h3>
+            <div className="mt-3">
+              <WorkflowNodeInspector
+                selectedNode={selectedNode as WorkflowStepValue | null}
+                onUpdate={updateSelectedNode}
+              />
+            </div>
+          </div>
+          {error && <p className="whitespace-pre-line text-sm text-red-600">{error}</p>}
           <button type="submit" disabled={saving} className="btn-primary">
             {saving ? "Creating..." : "Create definition"}
           </button>

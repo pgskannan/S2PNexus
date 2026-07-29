@@ -1,0 +1,34 @@
+diff --git a/backend/app/crud/procurement.py b/backend/app/crud/procurement.py
+index 502d9d0..7a80e93 100644
+--- a/backend/app/crud/procurement.py
++++ b/backend/app/crud/procurement.py
+@@ -9,16 +9,27 @@ from uuid import UUID
+ 
+ from sqlalchemy import desc, func, select
+ from sqlalchemy.ext.asyncio import AsyncSession
+-
++from sqlalchemy.orm import selectinload
++
++from app.crud.document_numbering import generate_document_number
++from app.crud.commodity import resolve_gl_account, resolve_matching_policy
++from app.crud.accounting_split import copy_splits, ensure_default_split
++from app.crud.budget import check_budget_availability, resolve_split_amount
++from app.models.accounting_split import LineItemAccountingSplit
++from app.models.commodity import CommodityCode
+ from app.models.procurement import (
+     GoodsReceipt,
++    GoodsReceiptLineItem,
++    InvoiceMatchException,
+     ProcurementAttachment,
+     ProcurementAuditEvent,
+     ProcurementComment,
+     ProcurementInvoice,
++    ProcurementInvoiceLineItem,
+     ProcurementRequisition,
+     ProcurementRequisitionLineItem,
+     PurchaseOrder,
++    PurchaseOrderLineItem,
+     PurchaseOrderVersion,
+ )
+ from app.schemas.procurement import (
+

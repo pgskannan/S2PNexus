@@ -1,20 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { extractErrorMessage, getWorkflowInstance } from "@/lib/api";
+import { extractErrorMessage, getWorkflowInstance, getWorkflowDefinition } from "@/lib/api";
 import type { WorkflowInstance } from "@/lib/types";
+import { WorkflowCanvas } from "@/components/WorkflowCanvas";
 
 export default function WorkflowInstanceDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [instance, setInstance] = useState<WorkflowInstance | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [definitionSteps, setDefinitionSteps] = useState<Array<Record<string, unknown>>>([]);
 
   async function load() {
     try {
       const data = await getWorkflowInstance(params.id);
       setInstance(data);
+      if (data.definition_id) {
+        const definition = await getWorkflowDefinition(data.definition_id);
+        setDefinitionSteps(definition.steps as Array<Record<string, unknown>>);
+      }
     } catch (err) {
       setError(extractErrorMessage(err));
     }
@@ -25,6 +31,15 @@ export default function WorkflowInstanceDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
 
+  const highlightedNodeId = useMemo(() => {
+    if (!instance) {
+      return null;
+    }
+    return instance.current_step_index >= 0 && instance.current_step_index < definitionSteps.length
+      ? `step-${instance.current_step_index}`
+      : null;
+  }, [definitionSteps.length, instance]);
+
   if (error && !instance) {
     return <p className="text-sm text-red-600">{error}</p>;
   }
@@ -34,7 +49,7 @@ export default function WorkflowInstanceDetailPage() {
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-6xl space-y-6">
       <button
         onClick={() => router.push("/dashboard/workflow")}
         className="text-sm text-brand-600 hover:underline"
@@ -71,6 +86,13 @@ export default function WorkflowInstanceDetailPage() {
             <dd>{instance.completed_at ? new Date(instance.completed_at).toLocaleString() : "—"}</dd>
           </div>
         </dl>
+
+        <div className="rounded-lg border border-slate-200 p-4">
+          <h2 className="font-semibold">Flow</h2>
+          <div className="mt-3 h-[420px]">
+            <WorkflowCanvas value={definitionSteps} onChange={() => undefined} highlightedNodeId={highlightedNodeId} />
+          </div>
+        </div>
 
         <div className="rounded-lg border border-slate-200 p-4">
           <h2 className="font-semibold">Tasks</h2>

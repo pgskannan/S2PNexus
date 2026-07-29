@@ -1,0 +1,59 @@
+Segment,Segment Title,Family,Family Title,Class,Class Title,Commodity,Commodity Title
+10,IT Hardware,1001,Computers,100101,Laptops,10010101,Business laptop
+10,IT Hardware,1001,Computers,100101,Laptops,10010102,Rugged laptop
+10,IT Hardware,1001,Computers,100102,Desktops,10010201,Tower desktop
+10,IT Hardware,1001,Computers,100102,Desktops,10010202,Mini desktop
+10,IT Hardware,1002,Peripherals,100201,Monitors,10020101,27-inch monitor
+10,IT Hardware,1002,Peripherals,100201,Monitors,10020102,Ultrawide monitor
+10,IT Hardware,1002,Peripherals,100202,Input devices,10020201,Wireless keyboard
+10,IT Hardware,1002,Peripherals,100202,Input devices,10020202,Wireless mouse
+11,IT Software & Services,1101,Software licenses,110101,Productivity software,11010101,Office suite license
+11,IT Software & Services,1101,Software licenses,110101,Productivity software,11010102,Collaboration suite license
+11,IT Software & Services,1101,Software licenses,110102,Security software,11010201,Endpoint protection license
+11,IT Software & Services,1101,Software licenses,110102,Security software,11010202,Firewall license
+11,IT Software & Services,1102,Cloud & hosting,110201,Cloud compute,11020101,Virtual machine hosting
+11,IT Software & Services,1102,Cloud & hosting,110201,Cloud compute,11020102,Managed database hosting
+12,Office Supplies,1201,Paper products,120101,Printer paper,12010101,Standard copy paper
+12,Office Supplies,1201,Paper products,120101,Printer paper,12010102,Cardstock
+12,Office Supplies,1202,Writing instruments,120201,Pens & pencils,12020101,Ballpoint pens
+12,Office Supplies,1202,Writing instruments,120201,Pens & pencils,12020102,Mechanical pencils
+13,Furniture,1301,Office furniture,130101,Desks,13010101,Standing desk
+13,Furniture,1301,Office furniture,130101,Desks,13010102,Fixed-height desk
+13,Furniture,1301,Office furniture,130102,Seating,13010201,Task chair
+13,Furniture,1301,Office furniture,130102,Seating,13010202,Conference chair
+14,Facilities & Maintenance,1401,Janitorial supplies,140101,Cleaning chemicals,14010101,All-purpose cleaner
+14,Facilities & Maintenance,1401,Janitorial supplies,140101,Cleaning chemicals,14010102,Disinfectant
+14,Facilities & Maintenance,1402,Building maintenance,140201,HVAC parts,14020101,Air filters
+14,Facilities & Maintenance,1402,Building maintenance,140201,HVAC parts,14020102,Thermostats
+15,Professional Services - Consulting,1501,Management consulting,150101,Strategy advisory,15010101,Strategy engagement
+15,Professional Services - Consulting,1501,Management consulting,150101,Strategy advisory,15010102,Market analysis engagement
+16,Professional Services - Legal,1601,Outside counsel,160101,Contract review,16010101,Commercial contract review
+16,Professional Services - Legal,1601,Outside counsel,160101,Contract review,16010102,IP contract review
+17,Marketing Services,1701,Advertising,170101,Digital advertising,17010101,Paid search campaign
+17,Marketing Services,1701,Advertising,170101,Digital advertising,17010102,Social media campaign
+18,Travel & Lodging,1801,Air travel,180101,Domestic airfare,18010101,Economy domestic fare
+18,Travel & Lodging,1801,Air travel,180101,Domestic airfare,18010102,Business domestic fare
+18,Travel & Lodging,1802,Lodging,180201,Hotel stays,18020101,Standard hotel room
+18,Travel & Lodging,1802,Lodging,180201,Hotel stays,18020102,Extended-stay lodging
+19,Raw Materials - Metals,1901,Steel,190101,Sheet steel,19010101,Cold-rolled steel sheet
+19,Raw Materials - Metals,1901,Steel,190101,Sheet steel,19010102,Galvanized steel sheet
+20,Raw Materials - Chemicals,2001,Industrial chemicals,200101,Solvents,20010101,Industrial-grade solvent
+20,Raw Materials - Chemicals,2001,Industrial chemicals,200101,Solvents,20010102,Cleaning-grade solvent
+21,Packaging,2101,Corrugated packaging,210101,Shipping boxes,21010101,Standard shipping box
+21,Packaging,2101,Corrugated packaging,210101,Shipping boxes,21010102,Heavy-duty shipping box
+22,Logistics & Freight,2201,Freight services,220101,Ground freight,22010101,LTL freight service
+22,Logistics & Freight,2201,Freight services,220101,Ground freight,22010102,FTL freight service
+23,Telecom Services,2301,Connectivity,230101,Internet service,23010101,Business broadband
+23,Telecom Services,2301,Connectivity,230101,Internet service,23010102,Dedicated fiber line
+24,Utilities,2401,Energy,240101,Electricity,24010101,Commercial electricity supply
+24,Utilities,2401,Energy,240101,Electricity,24010102,Renewable energy supply
+25,MRO & Industrial Supplies,2501,Fasteners & hardware,250101,Fasteners,25010101,Machine screws
+25,MRO & Industrial Supplies,2501,Fasteners & hardware,250101,Fasteners,25010102,Hex bolts
+26,Medical & Lab Supplies,2601,Lab consumables,260101,Lab safety supplies,26010101,Nitrile gloves
+26,Medical & Lab Supplies,2601,Lab consumables,260101,Lab safety supplies,26010102,Safety goggles
+27,Food & Catering,2701,Catering services,270101,Event catering,27010101,Corporate event catering
+27,Food & Catering,2701,Catering services,270101,Event catering,27010102,Daily office catering
+28,Print & Publications,2801,Print services,280101,Commercial printing,28010101,Brochure printing
+28,Print & Publications,2801,Print services,280101,Commercial printing,28010102,Signage printing
+29,Construction Materials,2901,Building materials,290101,Concrete & aggregate,29010101,Ready-mix concrete
+29,Construction Materials,2901,Building materials,290101,Concrete & aggregate,29010102,Construction aggregate

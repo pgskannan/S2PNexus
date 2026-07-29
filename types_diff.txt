@@ -1,0 +1,44 @@
+﻿diff --git a/frontend/lib/types.ts b/frontend/lib/types.ts
+index 2d7bd81..8c3d4d1 100644
+--- a/frontend/lib/types.ts
++++ b/frontend/lib/types.ts
+@@ -31,6 +31,7 @@ export interface AiProviderResponse {
+ 
+ export interface Requisition {
+   id: string;
++  requisition_number?: string | null;
+   title: string;
+   description?: string | null;
+   request_type: string;
+@@ -412,3 +413,31 @@ export interface NotificationListResponse {
+   skip: number;
+   limit: number;
+ }
++
++export type DocumentType =
++  | "procurement_requisition"
++  | "purchase_order"
++  | "goods_receipt"
++  | "procurement_invoice";
++
++export type ResetCadence = "monthly" | "yearly" | "never";
++
++export interface DocumentNumberingFormat {
++  document_type: DocumentType;
++  prefix: string;
++  pattern: string;
++  sequence_padding: number;
++  reset_cadence: ResetCadence;
++  is_customized: boolean;
++  sample: string;
++  updated_at?: string | null;
++}
++
++export interface DocumentNumberingFormatListResponse {
++  items: DocumentNumberingFormat[];
++}
++
++export interface DocumentNumberingPreviewResponse {
++  sample: string;
++  next_number: string;
++}

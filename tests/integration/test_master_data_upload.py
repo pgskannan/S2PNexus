@@ -16,6 +16,9 @@ from app.services.master_data_import import (
     parse_commodity_codes_csv,
     parse_gl_accounts_csv,
     parse_gl_mapping_csv,
+    parse_supplier_addresses_csv,
+    parse_supplier_bank_accounts_csv,
+    parse_supplier_headers_csv,
 )
 from app.crud.commodity import (
     bulk_upsert_commodity_account_mappings,
@@ -26,6 +29,19 @@ from app.crud.commodity import (
     list_commodity_account_mappings,
 )
 from app.crud.gl_account import bulk_upsert_gl_accounts, delete_all_gl_accounts, list_gl_accounts
+from app.crud.supplier import bulk_upsert_supplier_headers, delete_all_suppliers, get_suppliers, get_suppliers_count
+from app.crud.supplier_address import (
+    bulk_upsert_supplier_addresses,
+    count_supplier_addresses,
+    delete_all_supplier_addresses,
+    list_supplier_addresses,
+)
+from app.crud.supplier_bank_account import (
+    bulk_upsert_supplier_bank_accounts,
+    count_supplier_bank_accounts,
+    delete_all_supplier_bank_accounts,
+    list_supplier_bank_accounts,
+)
 
 
 async def _new_session() -> AsyncSession:
@@ -143,3 +159,42 @@ def test_malformed_csv_raises_with_row_level_errors():
         assert False, "expected MasterDataCSVError"
     except MasterDataCSVError as exc:
         assert exc.errors  # header mismatch is reported, not a silent empty result
+
+
+def test_supplier_master_data_upload_and_reset():
+    async def run_test():
+        db = await _new_session()
+
+        # headers
+        hdr_csv = "Name,External Supplier Code,Legal Name,Tax ID\nAcme Corp,ACME-1,Acme Corporation,TX-1\n"
+        hdr_rows = parse_supplier_headers_csv(hdr_csv)
+        loaded_hdr = await bulk_upsert_supplier_headers(db, [r.__dict__ for r in hdr_rows], updated_by=None)
+        # bulk_upsert_supplier_headers may return (loaded, errors) or just loaded
+        if isinstance(loaded_hdr, tuple):
+            assert loaded_hdr[0] == 1
+        else:
+            assert loaded_hdr == 1
+
+        # addresses
+        addr_csv = "supplier_external_code,address_type,address_line1,city,country\nACME-1,shipping,123 Main St,Metropolis,US\n"
+        addr_rows = parse_supplier_addresses_csv(addr_csv)
+        loaded_addr = await bulk_upsert_supplier_addresses(db, [r.__dict__ for r in addr_rows])
+        assert loaded_addr == 1
+        assert await count_supplier_addresses(db) == 1
+
+        # bank accounts
+        bank_csv = "supplier_external_code,bank_name,account_holder_name,account_number,iban,currency\nACME-1,Big Bank,Acme Payments,123456789,GB33BUKB20201555555555,USD\n"
+        bank_rows = parse_supplier_bank_accounts_csv(bank_csv)
+        loaded_bank = await bulk_upsert_supplier_bank_accounts(db, [r.__dict__ for r in bank_rows], updated_by=None)
+        assert loaded_bank == 1
+        assert await count_supplier_bank_accounts(db) == 1
+
+        # resets
+        deleted_bank = await delete_all_supplier_bank_accounts(db)
+        deleted_addr = await delete_all_supplier_addresses(db)
+        deleted_suppliers = await delete_all_suppliers(db)
+        assert deleted_bank == 1
+        assert deleted_addr == 1
+        assert deleted_suppliers >= 1
+
+    asyncio.run(run_test())

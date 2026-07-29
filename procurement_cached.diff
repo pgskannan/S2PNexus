@@ -1,0 +1,80 @@
+﻿diff --git a/backend/app/crud/procurement.py b/backend/app/crud/procurement.py
+index 502d9d0..3bf90a3 100644
+--- a/backend/app/crud/procurement.py
++++ b/backend/app/crud/procurement.py
+@@ -9,13 +9,23 @@ from uuid import UUID
+ 
+ from sqlalchemy import desc, func, select
+ from sqlalchemy.ext.asyncio import AsyncSession
+-
++from sqlalchemy.orm import selectinload
++
++from app.crud.document_numbering import generate_document_number
++from app.crud.commodity import resolve_gl_account, resolve_matching_policy
++from app.crud.accounting_split import copy_splits, ensure_default_split
++from app.crud.budget import check_budget_availability, resolve_split_amount
++from app.models.accounting_split import LineItemAccountingSplit
++from app.models.commodity import CommodityCode
+ from app.models.procurement import (
+     GoodsReceipt,
++    GoodsReceiptLineItem,
++    InvoiceMatchException,
+     ProcurementAttachment,
+     ProcurementAuditEvent,
+     ProcurementComment,
+     ProcurementInvoice,
++    ProcurementInvoiceLineItem,
+     ProcurementRequisition,
+     ProcurementRequisitionLineItem,
+     PurchaseOrder,
+@@ -94,6 +104,9 @@ async def create_requisition(
+     requisition = ProcurementRequisition(**data)
+     if tenant_id is not None:
+         requisition.tenant_id = tenant_id
++    requisition.requisition_number = await generate_document_number(
++        db, tenant_id=tenant_id, document_type="procurement_requisition"
++    )
+     requisition.search_text = _build_search_text(requisition)
+     db.add(requisition)
+     await db.commit()
+@@ -212,15 +225,15 @@ async def create_purchase_order(
+     requisition_id: UUID,
+     purchase_order_in: PurchaseOrderCreate,
+     created_by: UUID,
++    tenant_id: Optional[UUID] = None,
+ ) -> PurchaseOrder:
+     purchase_order = PurchaseOrder(
+         requisition_id=requisition_id,
+-        supplier_id=purchase_order_in.supplier_id,
+-        order_number=purchase_order_in.order_number,
+-        status=purchase_order_in.status,
+-        currency=purchase_order_in.currency,
+-        total_amount=purchase_order_in.total_amount,
+-        notes=purchase_order_in.notes,
++        supplier_id=data.get("supplier_id"),
++        order_number=order_number,
++        status=data.get("status", "draft"),
++        currency=data.get("currency", "USD"),
++        notes=data.get("notes"),
+         created_by=created_by,
+     )
+     db.add(purchase_order)
+@@ -300,7 +313,17 @@ async def get_recent_invoices(db: AsyncSession, *, limit: int = 5) -> list[Procu
+     return list(result.scalars().all())
+ 
+ 
+-async def create_invoice(db: AsyncSession, invoice_in: ProcurementInvoiceCreate, created_by: UUID) -> ProcurementInvoice:
++async def create_invoice(
++    db: AsyncSession, invoice_in: ProcurementInvoiceCreate, created_by: UUID, tenant_id: Optional[UUID] = None
++) -> ProcurementInvoice:
++    # Don't trust a client-supplied purchase_order_id blindly -- without this check
++    # a client could link their invoice to another tenant's PO, and it would then
++    # appear in that PO's own invoices list for the other tenant to see.
++    if invoice_in.purchase_order_id is not None:
++        linked_po = await get_purchase_order(db, invoice_in.purchase_order_id, tenant_id=tenant_id)
++        if linked_po is None:
++            raise ValueError("purchase_order_id not found for this tenant")
++    invoice_number = await generate_document_number(db, tenant_id=tenant_id, document_type="procurement_invoice")
+     invoice = ProcurementInvoice(
+         invoice_number=invoice_in.invoice_number,
+         supplier_id=invoice_in.supplier_id,

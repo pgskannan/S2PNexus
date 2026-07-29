@@ -49,9 +49,32 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     # GPU reservation removed - runs CPU-only. Ollama is a local fallback provider
     # here (AI_PROVIDER=gemini is primary); re-add an NVIDIA reservation later if
     # this machine gets a working GPU passthrough and you want faster local inference.
+
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: s2pnexus-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "ollama pull ${OLLAMA_MODEL:-llama3.1:8b} && echo 'model ready: ${OLLAMA_MODEL:-llama3.1:8b}'"
+    restart: "no"
+    # Runs once per `docker-compose up`, pulls the model into the shared ollama_data
+    # volume, then exits 0. No-op (fast) after the first pull since the layer is cached.
+    # backend depends_on this with condition: service_completed_successfully below.
 
   backend:
     build:
@@ -87,7 +110,9 @@ services:
       chromadb:
         condition: service_started
       ollama:
-        condition: service_started
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
     volumes:
       - ./backend/app:/app/app
       - ./secrets:/app/secrets:ro
