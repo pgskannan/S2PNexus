@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
+
+from app.crud.procurement import create_purchase_order, get_requisition, get_requisitions
 from app.events.publisher import EventPublisher
+from app.models.procurement import PurchaseOrder
+from app.schemas.procurement import PurchaseOrderCreate
 
 
 def evaluate_approval_requirement(requisition: Any) -> dict[str, Any]:
@@ -69,6 +76,108 @@ async def apply_procurement_transition_workflow(
     return decision
 
 
+def _filter_requisition_approvers(steps: list[dict[str, Any]] | None, requested_by: UUID | str | None) -> list[dict[str, Any]]:
+    if not steps:
+        return []
+    if requested_by is None:
+        return [dict(step) for step in steps]
+
+    filtered_steps: list[dict[str, Any]] = []
+    requested_by_str = str(requested_by)
+    for step in steps:
+        step_copy = dict(step)
+        if step_copy.get("step_type") == "approval":
+            approvers = step_copy.get("approvers") or []
+            step_copy["approvers"] = [approver for approver in approvers if str(approver) != requested_by_str]
+        filtered_steps.append(step_copy)
+    return filtered_steps
+
+
+async def auto_create_po_from_requisition(db: Any, requisition_id: UUID | str, started_by: UUID, *, tenant_id: UUID | str | None = None) -> Any | None:
+    requisition = await get_requisition(db, requisition_id, tenant_id=tenant_id)
+    if requisition is None:
+        return None
+
+    delay_until = getattr(requisition, "delay_until", None)
+    if delay_until is not None and delay_until > datetime.now(timezone.utc):
+        # Mark it findable by process_deferred_po_creation's sweep: the workflow
+        # engine never touches ProcurementRequisition.approval_status/status
+        # itself (it only tracks WorkflowInstance/WorkflowTask state), so without
+        # this the sweep has no reliable signal that this requisition finished
+        # approval and is just waiting on delay_until.
+        if hasattr(requisition, "approval_status"):
+            requisition.approval_status = "approved"
+        return None
+
+    if db is not None and hasattr(db, "execute"):
+        existing_po_result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.requisition_id == requisition.id))
+        if existing_po_result.scalar_one_or_none() is not None:
+            return None
+
+    requisition_line_items = getattr(requisition, "line_items", None) or []
+    derived_line_items: list[dict[str, Any]] = []
+    for line_item in requisition_line_items:
+        quantity = getattr(line_item, "quantity", 1) or 1
+        unit_price = getattr(line_item, "unit_price", None)
+        if unit_price is None:
+            unit_price = Decimal("0.00")
+        derived_line_items.append(
+            {
+                "description": getattr(line_item, "description", ""),
+                "quantity": str(quantity),
+                "unit_price": str(unit_price),
+                "account_code": getattr(line_item, "account_code", None),
+                "commodity_code_free_text": getattr(line_item, "commodity", None),
+                "requisition_line_item_id": getattr(line_item, "id", None),
+                "need_by_date": getattr(requisition, "need_by_date", None),
+            }
+        )
+
+    payload = PurchaseOrderCreate(
+        supplier_id=getattr(requisition, "supplier_id", None),
+        status="draft",
+        currency=getattr(requisition, "currency", "USD") or "USD",
+        notes=getattr(requisition, "notes", None),
+        line_items=derived_line_items,
+    )
+
+    return await create_purchase_order(
+        db,
+        requisition.id,
+        payload,
+        created_by=started_by,
+        tenant_id=tenant_id,
+    )
+
+
+async def process_deferred_po_creation(db: Any, *, tenant_id: UUID | str | None = None) -> list[Any]:
+    now = datetime.now(timezone.utc)
+    # Deliberately not filtering by ProcurementRequisition.status here: `status`
+    # is a separate, caller-set lifecycle field the workflow engine never
+    # touches (it only sets `approval_status`, see auto_create_po_from_requisition
+    # above), so filtering on `status == "approved"` would silently miss every
+    # requisition approved via a configured WorkflowDefinition.
+    requisitions = await get_requisitions(db, tenant_id=tenant_id, skip=0, limit=1000)
+    created: list[Any] = []
+    for requisition in requisitions:
+        delay_until = getattr(requisition, "delay_until", None)
+        if delay_until is None:
+            continue
+        if delay_until > now:
+            continue
+        if getattr(requisition, "approval_status", None) != "approved":
+            continue
+        created_po = await auto_create_po_from_requisition(
+            db,
+            requisition.id,
+            started_by=getattr(requisition, "requested_by", None),
+            tenant_id=tenant_id,
+        )
+        if created_po is not None:
+            created.append(created_po)
+    return created
+
+
 async def start_requisition_approval_workflow(
     requisition: Any,
     db: Any,
@@ -103,6 +212,14 @@ async def start_requisition_approval_workflow(
         "requisition_id": str(getattr(requisition, "id", "")),
     }
 
+    filtered_steps = _filter_requisition_approvers(getattr(definition, "steps", None), getattr(requisition, "requested_by", None))
+
+    call_kwargs = {
+        "started_by": started_by,
+    }
+    if filtered_steps is not None:
+        call_kwargs["definition_steps_override"] = filtered_steps
+
     return await start_workflow_instance(
         db,
         SimpleNamespace(
@@ -111,7 +228,7 @@ async def start_requisition_approval_workflow(
             entity_id=requisition.id,
             context=context,
         ),
-        started_by=started_by,
+        **call_kwargs,
     )
 
 

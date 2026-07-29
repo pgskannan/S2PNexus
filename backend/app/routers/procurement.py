@@ -69,6 +69,7 @@ from app.services.goods_receipt_workflow import start_goods_receipt_exception_wo
 from app.services.invoice_workflow import start_invoice_exception_workflow
 from app.services.procurement_workflow import (
     apply_procurement_transition_workflow,
+    process_deferred_po_creation,
     start_purchase_order_approval_workflow,
     start_requisition_approval_workflow,
 )
@@ -178,6 +179,19 @@ async def transition_requisition_endpoint(
         started_by=current_user.id,
     )
     return ProcurementRequisitionResponse.model_validate(requisition)
+
+
+@router.post(
+    "/requisitions/process-deferred-pos",
+    response_model=list[PurchaseOrderResponse],
+    summary="Process deferred purchase-order creation for approved requisitions",
+)
+async def process_deferred_po_creation_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[PurchaseOrderResponse]:
+    created = await process_deferred_po_creation(db, tenant_id=current_user.tenant_id)
+    return [PurchaseOrderResponse.model_validate(item) for item in created]
 
 
 @router.post(

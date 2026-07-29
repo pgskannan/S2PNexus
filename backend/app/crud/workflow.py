@@ -124,6 +124,10 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
             instance.status = "completed"
             instance.completed_at = datetime.now(timezone.utc)
             instance.current_step_index = len(steps)
+            if instance.entity_type == "requisition":
+                from app.services.procurement_workflow import auto_create_po_from_requisition
+
+                await auto_create_po_from_requisition(db, instance.entity_id, started_by=instance.started_by)
             return
 
         step = steps[step_index]
@@ -197,7 +201,11 @@ def _safe_format(template: Optional[str], context: dict[str, Any]) -> bool:
 
 
 async def start_workflow_instance(
-    db: AsyncSession, start_in: WorkflowInstanceStart, *, started_by: UUID
+    db: AsyncSession,
+    start_in: WorkflowInstanceStart,
+    *,
+    started_by: UUID,
+    definition_steps_override: list[dict[str, Any]] | None = None,
 ) -> WorkflowInstance:
     definition = await get_workflow_definition(db, start_in.definition_id)
     if not definition:
@@ -217,7 +225,8 @@ async def start_workflow_instance(
     db.add(instance)
     await db.flush()
 
-    await _run_from_step(db, instance, definition.steps, 0)
+    steps = definition_steps_override if definition_steps_override is not None else definition.steps
+    await _run_from_step(db, instance, steps, 0)
 
     await db.commit()
     await db.refresh(instance)
@@ -295,6 +304,13 @@ async def complete_task(
     task.comments = comments
 
     instance = await get_workflow_instance(db, task.instance_id)
+    if instance.entity_type == "requisition":
+        from app.crud.procurement import get_requisition as get_procurement_requisition
+
+        requisition = await get_procurement_requisition(db, instance.entity_id)
+        if requisition is not None and actor_id == requisition.requested_by:
+            raise ValueError("Requisition creator cannot approve their own request")
+
     definition = await get_workflow_definition(db, instance.definition_id)
     step = definition.steps[task.step_index]
 

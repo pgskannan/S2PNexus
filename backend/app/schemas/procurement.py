@@ -87,10 +87,10 @@ class ProcurementRequisitionTransitionRequest(BaseModel):
 class ProcurementRequisitionLineItemCreate(BaseModel):
     description: str = Field(..., min_length=1, max_length=255)
     quantity: Decimal = Field(default=1, ge=0)
-    unit_price: Optional[Decimal] = Field(None, ge=0)
+    unit_price: Decimal = Field(..., gt=0)
     line_total: Optional[Decimal] = Field(None, ge=0)
     commodity: Optional[str] = Field(None, max_length=100)
-    category: Optional[str] = Field(None, max_length=100)
+    category: str = Field(..., min_length=1, max_length=100)
     account_code: Optional[str] = Field(None, max_length=100)
 
 
@@ -145,7 +145,7 @@ class PurchaseOrderCreate(BaseModel):
     # order_number is server-generated (see app.crud.document_numbering) --
     # not accepted from the client, so the tenant's configured format is
     # always honored.
-    supplier_id: UUID
+    supplier_id: Optional[UUID] = None
     status: str = Field(default="draft", max_length=50)
     currency: str = Field(default="USD", max_length=3)
     notes: Optional[str] = None

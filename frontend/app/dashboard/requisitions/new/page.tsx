@@ -70,6 +70,30 @@ export default function NewRequisitionPage() {
   const headerTax = Number(form.header_tax) || 0;
   const shippingCost = Number(form.shipping_cost) || 0;
   const computedGrandTotal = linesSubtotal + headerTax + shippingCost;
+  const lineItemValidation = lineItems.map((li) => {
+    const hasContent =
+      li.description.trim() ||
+      li.unit_price.trim() ||
+      li.category.trim() ||
+      li.commodity.trim() ||
+      li.account_code.trim() ||
+      li.quantity !== "1";
+
+    const errors: { description?: string; unit_price?: string; category?: string } = {};
+    if (hasContent) {
+      if (!li.description.trim()) {
+        errors.description = "Description is required.";
+      }
+      if (!li.category.trim()) {
+        errors.category = "Category is required.";
+      }
+      if (!li.unit_price || Number(li.unit_price) <= 0) {
+        errors.unit_price = "Unit price must be greater than zero.";
+      }
+    }
+    return errors;
+  });
+  const hasLineItemValidationErrors = lineItemValidation.some((errors) => Object.keys(errors).length > 0);
 
   function updateLineItem(index: number, patch: Partial<LineItemDraft>) {
     setLineItems((items) => items.map((item, i) => (i === index ? { ...item, ...patch } : item)));
@@ -90,6 +114,11 @@ export default function NewRequisitionPage() {
     if (target > 1 && !titleValid) {
       setError("Title is required before continuing.");
       setStep(1);
+      return;
+    }
+    if (target === 3 && hasLineItemValidationErrors) {
+      setError("Please complete the highlighted line-item fields before continuing.");
+      setStep(2);
       return;
     }
     setError(null);
@@ -431,10 +460,11 @@ export default function NewRequisitionPage() {
                     <div className="col-span-12 sm:col-span-4">
                       <label className="label">Description</label>
                       <input
-                        className="input-field"
+                        className={`input-field ${lineItemValidation[index]?.description ? "border-red-300" : ""}`}
                         value={li.description}
                         onChange={(e) => updateLineItem(index, { description: e.target.value })}
                       />
+                      {lineItemValidation[index]?.description && <p className="mt-1 text-xs text-red-600">{lineItemValidation[index].description}</p>}
                     </div>
                     <div className="col-span-4 sm:col-span-1">
                       <label className="label">Qty</label>
@@ -453,10 +483,11 @@ export default function NewRequisitionPage() {
                         type="number"
                         min="0"
                         step="0.01"
-                        className="input-field"
+                        className={`input-field ${lineItemValidation[index]?.unit_price ? "border-red-300" : ""}`}
                         value={li.unit_price}
                         onChange={(e) => updateLineItem(index, { unit_price: e.target.value })}
                       />
+                      {lineItemValidation[index]?.unit_price && <p className="mt-1 text-xs text-red-600">{lineItemValidation[index].unit_price}</p>}
                     </div>
                     <div className="col-span-12 sm:col-span-3">
                       <label className="label">Commodity code</label>
@@ -465,10 +496,11 @@ export default function NewRequisitionPage() {
                     <div className="col-span-8 sm:col-span-2">
                       <label className="label">Category</label>
                       <input
-                        className="input-field"
+                        className={`input-field ${lineItemValidation[index]?.category ? "border-red-300" : ""}`}
                         value={li.category}
                         onChange={(e) => updateLineItem(index, { category: e.target.value })}
                       />
+                      {lineItemValidation[index]?.category && <p className="mt-1 text-xs text-red-600">{lineItemValidation[index].category}</p>}
                     </div>
                     <div className="col-span-4 flex items-end sm:col-span-12 sm:justify-end">
                       <button

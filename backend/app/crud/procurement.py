@@ -238,6 +238,29 @@ async def create_purchase_order(
     tenant_id: Optional[UUID] = None,
 ) -> PurchaseOrder:
     data = purchase_order_in.model_dump() if hasattr(purchase_order_in, "model_dump") else dict(purchase_order_in)
+    requisition = await get_requisition(db, requisition_id, tenant_id=tenant_id)
+
+    if requisition is not None:
+        data.setdefault("currency", getattr(requisition, "currency", "USD") or "USD")
+        data.setdefault("notes", getattr(requisition, "notes", None))
+        if data.get("supplier_id") is None:
+            data["supplier_id"] = getattr(requisition, "supplier_id", None)
+        if not data.get("line_items"):
+            line_items: list[dict[str, Any]] = []
+            for line_item in getattr(requisition, "line_items", []) or []:
+                line_items.append(
+                    {
+                        "description": getattr(line_item, "description", ""),
+                        "quantity": str(getattr(line_item, "quantity", 1) or 1),
+                        "unit_price": str(getattr(line_item, "unit_price", 0) or 0),
+                        "account_code": getattr(line_item, "account_code", None),
+                        "commodity_code_free_text": getattr(line_item, "commodity", None),
+                        "requisition_line_item_id": getattr(line_item, "id", None),
+                        "need_by_date": getattr(requisition, "need_by_date", None),
+                    }
+                )
+            data["line_items"] = line_items
+
     order_number = await generate_document_number(db, tenant_id=tenant_id, document_type="purchase_order")
     purchase_order = PurchaseOrder(
         requisition_id=requisition_id,
