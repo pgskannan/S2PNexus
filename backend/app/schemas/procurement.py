@@ -28,6 +28,10 @@ class ProcurementRequisitionBase(BaseModel):
     category: Optional[str] = Field(None, max_length=100)
     account_code: Optional[str] = Field(None, max_length=100)
     need_by_date: Optional[datetime] = None
+    is_emergency: bool = Field(default=False, description="Emergency Buy -- urgent purchase bypassing standard lead times")
+    delay_until: Optional[datetime] = Field(None, description="Pause processing until this date")
+    header_tax: Optional[Decimal] = Field(None, ge=0, description="Total estimated tax at the document level")
+    shipping_cost: Optional[Decimal] = Field(None, ge=0, description="Total estimated freight/shipping for the requisition")
     notes: Optional[str] = None
 
 
@@ -52,6 +56,10 @@ class ProcurementRequisitionUpdate(BaseModel):
     category: Optional[str] = Field(None, max_length=100)
     account_code: Optional[str] = Field(None, max_length=100)
     need_by_date: Optional[datetime] = None
+    is_emergency: Optional[bool] = None
+    delay_until: Optional[datetime] = None
+    header_tax: Optional[Decimal] = Field(None, ge=0)
+    shipping_cost: Optional[Decimal] = Field(None, ge=0)
     notes: Optional[str] = None
 
 

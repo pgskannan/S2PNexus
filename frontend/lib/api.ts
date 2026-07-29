@@ -724,6 +724,21 @@ async function uploadCsv<T = { loaded: number }>(path: string, file: File): Prom
   return data;
 }
 
+// Fetches a CSV export as a blob (auth header goes through the same axios
+// interceptor as every other call, so this can't be a plain <a href> link)
+// and triggers a browser download via a throwaway anchor element.
+async function downloadCsv(path: string, filename: string): Promise<void> {
+  const response = await api.get(path, { responseType: "blob" });
+  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 export async function getCommodityCodeCount(): Promise<{ count: number }> {
   const { data } = await api.get<{ count: number }>("/commodity-codes/master-data/count");
   return data;
@@ -731,6 +746,10 @@ export async function getCommodityCodeCount(): Promise<{ count: number }> {
 
 export async function uploadCommodityCodes(file: File): Promise<{ loaded: number }> {
   return uploadCsv("/commodity-codes/master-data/upload", file);
+}
+
+export async function downloadCommodityCodes(): Promise<void> {
+  return downloadCsv("/commodity-codes/master-data/export", "commodity_codes.csv");
 }
 
 export async function deleteAllCommodityCodes(): Promise<{ deleted: number }> {
@@ -747,6 +766,10 @@ export async function uploadGlAccounts(file: File): Promise<{ loaded: number }> 
   return uploadCsv("/gl-accounts/upload", file);
 }
 
+export async function downloadGlAccounts(): Promise<void> {
+  return downloadCsv("/gl-accounts/export", "gl_accounts.csv");
+}
+
 export async function deleteAllGlAccounts(): Promise<{ deleted: number }> {
   const { data } = await api.delete<{ deleted: number }>("/gl-accounts");
   return data;
@@ -759,6 +782,10 @@ export async function getCommodityGlMappingCount(): Promise<number> {
 
 export async function uploadCommodityGlMapping(file: File): Promise<{ loaded: number; errors: string[] }> {
   return uploadCsv<{ loaded: number; errors: string[] }>("/commodity-codes/mappings/upload", file);
+}
+
+export async function downloadCommodityGlMapping(): Promise<void> {
+  return downloadCsv("/commodity-codes/mappings/export", "commodity_gl_mapping.csv");
 }
 
 export async function deleteAllCommodityGlMapping(): Promise<{ deleted: number }> {

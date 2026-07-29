@@ -8,12 +8,13 @@ commodity-to-GL mappings; the mapping upload validates against these rows.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.crud.gl_account import bulk_upsert_gl_accounts, delete_all_gl_accounts, list_gl_accounts
+from app.crud.gl_account import bulk_upsert_gl_accounts, count_gl_accounts, delete_all_gl_accounts, list_gl_accounts
 from app.database.session import get_db
 from app.models.user import User, UserRole
-from app.services.master_data_import import MasterDataCSVError, parse_gl_accounts_csv
+from app.services.master_data_import import MasterDataCSVError, build_gl_accounts_csv, parse_gl_accounts_csv
 from app.utils.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/gl-accounts", tags=["GL Accounts"])
@@ -40,8 +41,23 @@ async def list_gl_accounts_endpoint(current_user: Annotated[User, Depends(get_cu
 
 @router.get("/count")
 async def gl_accounts_count(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    return {"count": await count_gl_accounts(db, tenant_id=current_user.tenant_id)}
+
+
+@router.get("/export")
+async def export_gl_accounts(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    """Download the currently active GL accounts as a CSV in the same shape /upload
+    accepts -- edit and re-upload to update in place."""
+    _require_admin(current_user)
     items = await list_gl_accounts(db, tenant_id=current_user.tenant_id)
-    return {"count": len(items)}
+    csv_text = build_gl_accounts_csv(
+        [{"code": a.code, "description": a.description, "account_type": a.account_type} for a in items]
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=gl_accounts.csv"},
+    )
 
 
 @router.post("/upload")

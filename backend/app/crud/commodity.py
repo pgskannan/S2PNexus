@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document_numbering import NO_TENANT_ID
@@ -53,6 +53,7 @@ async def resolve_gl_account(db: AsyncSession, tenant_id: Optional[UUID], commod
                     CommodityAccountMapping.tenant_id == candidate_tenant,
                     CommodityAccountMapping.scope_level == level,
                     CommodityAccountMapping.scope_code == scope_code,
+                    CommodityAccountMapping.is_active.is_(True),
                 )
             )
             mapping = result.scalar_one_or_none()
@@ -117,6 +118,7 @@ async def upsert_commodity_account_mapping(
     row.gl_account_description = gl_account_description
     row.cost_center = cost_center
     row.updated_by = updated_by
+    row.is_active = True
 
     await db.commit()
     await db.refresh(row)
@@ -156,7 +158,9 @@ async def upsert_commodity_matching_policy(
 
 
 async def search_commodity_codes(db: AsyncSession, query: Optional[str], limit: int = 25) -> list[CommodityCode]:
-    stmt = select(CommodityCode)
+    """Autocomplete/browse for pickers -- active codes only, so a deactivated
+    code silently stops showing up as a choice without needing to be deleted."""
+    stmt = select(CommodityCode).where(CommodityCode.is_active.is_(True))
     if query:
         q = f"%{query}%"
         stmt = stmt.where(
@@ -173,18 +177,26 @@ async def search_commodity_codes(db: AsyncSession, query: Optional[str], limit: 
 # ---------------------------------------------------------------------------
 
 
-async def list_commodity_codes(db: AsyncSession, limit: int = 500) -> list[CommodityCode]:
-    result = await db.execute(select(CommodityCode).order_by(CommodityCode.code).limit(limit))
+async def list_commodity_codes(db: AsyncSession, limit: int = 500, include_inactive: bool = False) -> list[CommodityCode]:
+    stmt = select(CommodityCode).order_by(CommodityCode.code).limit(limit)
+    if not include_inactive:
+        stmt = stmt.where(CommodityCode.is_active.is_(True))
+    result = await db.execute(stmt)
     return list(result.scalars().all())
 
 
 async def count_commodity_codes(db: AsyncSession) -> int:
-    result = await db.execute(select(CommodityCode))
-    return len(result.scalars().all())
+    result = await db.execute(select(func.count()).select_from(CommodityCode).where(CommodityCode.is_active.is_(True)))
+    return result.scalar_one()
 
 
 async def bulk_upsert_commodity_codes(db: AsyncSession, rows: list[dict]) -> int:
-    """Upsert a batch of commodity codes (unique on `code`, not tenant-scoped). Commits once."""
+    """Upsert a batch of commodity codes (unique on `code`, not tenant-scoped). Commits once.
+
+    Re-uploading a code that was previously soft-deleted (is_active=False, see
+    delete_all_commodity_codes) reactivates it -- a row appearing in a fresh
+    upload is, by definition, back in use.
+    """
     codes = [r["code"] for r in rows]
     existing_result = await db.execute(select(CommodityCode).where(CommodityCode.code.in_(codes)))
     existing_by_code = {c.code: c for c in existing_result.scalars().all()}
@@ -202,24 +214,39 @@ async def bulk_upsert_commodity_codes(db: AsyncSession, rows: list[dict]) -> int
         row.class_code = r.get("class_code")
         row.class_title = r.get("class_title")
         row.commodity_title = r.get("commodity_title")
+        row.is_active = True
 
     await db.commit()
     return len(rows)
 
 
 async def delete_all_commodity_codes(db: AsyncSession) -> int:
-    result = await db.execute(delete(CommodityCode))
+    """Soft delete: mark every commodity code inactive rather than dropping the rows.
+
+    Keeps history (and anything that already references a code, e.g. a PO line
+    item's commodity_code_id) intact, and lets a later re-upload of the same
+    code reactivate it instead of recreating a new row. Returns the number of
+    rows actually flipped from active to inactive.
+    """
+    result = await db.execute(
+        update(CommodityCode).where(CommodityCode.is_active.is_(True)).values(is_active=False)
+    )
     await db.commit()
     return result.rowcount or 0
 
 
-async def list_commodity_account_mappings(db: AsyncSession, tenant_id: Optional[UUID] = None) -> list[CommodityAccountMapping]:
+async def list_commodity_account_mappings(
+    db: AsyncSession, tenant_id: Optional[UUID] = None, include_inactive: bool = False
+) -> list[CommodityAccountMapping]:
     eff = _effective_tenant_id(tenant_id)
-    result = await db.execute(
+    stmt = (
         select(CommodityAccountMapping)
         .where(CommodityAccountMapping.tenant_id == eff)
         .order_by(CommodityAccountMapping.scope_level, CommodityAccountMapping.scope_code)
     )
+    if not include_inactive:
+        stmt = stmt.where(CommodityAccountMapping.is_active.is_(True))
+    result = await db.execute(stmt)
     return list(result.scalars().all())
 
 
@@ -268,6 +295,7 @@ async def bulk_upsert_commodity_account_mappings(
         row.gl_account_description = gl_account.description
         row.cost_center = r.get("cost_center")
         row.updated_by = updated_by
+        row.is_active = True
         loaded += 1
 
     await db.commit()
@@ -275,7 +303,15 @@ async def bulk_upsert_commodity_account_mappings(
 
 
 async def delete_all_commodity_account_mappings(db: AsyncSession, tenant_id: Optional[UUID] = None) -> int:
+    """Soft delete: mark this tenant's mappings inactive rather than dropping the rows
+    (same rationale as delete_all_commodity_codes). resolve_gl_account already filters
+    on is_active, so a deactivated mapping stops being used for GL auto-population
+    immediately without losing the row's history."""
     eff = _effective_tenant_id(tenant_id)
-    result = await db.execute(delete(CommodityAccountMapping).where(CommodityAccountMapping.tenant_id == eff))
+    result = await db.execute(
+        update(CommodityAccountMapping)
+        .where(CommodityAccountMapping.tenant_id == eff, CommodityAccountMapping.is_active.is_(True))
+        .values(is_active=False)
+    )
     await db.commit()
     return result.rowcount or 0

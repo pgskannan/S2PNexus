@@ -107,6 +107,31 @@ def parse_commodity_codes_csv(csv_text: str) -> list[CommodityCodeRow]:
     return rows
 
 
+def build_commodity_codes_csv(rows: list[dict]) -> str:
+    """Export helper, symmetric with parse_commodity_codes_csv -- round-trips
+    through the exact same column names/order the upload endpoint accepts, so
+    a downloaded file can be edited and re-uploaded as-is."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        ["segment", "segment_title", "family", "family_title", "class", "class_title", "commodity", "commodity_title"]
+    )
+    for r in rows:
+        writer.writerow(
+            [
+                r.get("segment_code") or "",
+                r.get("segment_title") or "",
+                r.get("family_code") or "",
+                r.get("family_title") or "",
+                r.get("class_code") or "",
+                r.get("class_title") or "",
+                r.get("code") or "",
+                r.get("commodity_title") or "",
+            ]
+        )
+    return buf.getvalue()
+
+
 @dataclass
 class GLAccountRow:
     code: str
@@ -145,6 +170,16 @@ def parse_gl_accounts_csv(csv_text: str) -> list[GLAccountRow]:
     if errors:
         raise MasterDataCSVError(errors)
     return rows
+
+
+def build_gl_accounts_csv(rows: list[dict]) -> str:
+    """Export helper, symmetric with parse_gl_accounts_csv."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["code", "description", "account_type"])
+    for r in rows:
+        writer.writerow([r.get("code") or "", r.get("description") or "", r.get("account_type") or ""])
+    return buf.getvalue()
 
 
 @dataclass
@@ -200,3 +235,15 @@ def parse_gl_mapping_csv(csv_text: str) -> list[GLMappingRow]:
     if errors:
         raise MasterDataCSVError(errors)
     return rows
+
+
+def build_gl_mapping_csv(rows: list[dict]) -> str:
+    """Export helper, symmetric with parse_gl_mapping_csv."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["scope_level", "scope_code", "gl_account_code", "cost_center"])
+    for r in rows:
+        writer.writerow(
+            [r.get("scope_level") or "", r.get("scope_code") or "", r.get("gl_account_code") or "", r.get("cost_center") or ""]
+        )
+    return buf.getvalue()

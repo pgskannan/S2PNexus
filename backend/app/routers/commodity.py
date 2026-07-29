@@ -5,6 +5,7 @@ commodity code taxonomy and its GL account mapping."""
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crud.commodity import (
@@ -14,6 +15,7 @@ from app.crud.commodity import (
     delete_all_commodity_account_mappings,
     delete_all_commodity_codes,
     list_commodity_account_mappings,
+    list_commodity_codes,
     resolve_gl_account,
     resolve_matching_policy,
     search_commodity_codes,
@@ -22,7 +24,13 @@ from app.crud.commodity import (
 )
 from app.database.session import get_db
 from app.models.user import User, UserRole
-from app.services.master_data_import import MasterDataCSVError, parse_commodity_codes_csv, parse_gl_mapping_csv
+from app.services.master_data_import import (
+    MasterDataCSVError,
+    build_commodity_codes_csv,
+    build_gl_mapping_csv,
+    parse_commodity_codes_csv,
+    parse_gl_mapping_csv,
+)
 from app.utils.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/commodity-codes", tags=["Commodity Codes"])
@@ -158,9 +166,39 @@ async def upload_commodity_codes(
 
 @router.delete("/master-data")
 async def delete_all_commodity_codes_endpoint(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    """Soft delete: marks every commodity code inactive (see app.crud.commodity.
+    delete_all_commodity_codes). Re-uploading the same codes later reactivates them."""
     _require_admin(current_user)
     deleted = await delete_all_commodity_codes(db)
     return {"deleted": deleted}
+
+
+@router.get("/master-data/export")
+async def export_commodity_codes(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    """Download the currently active commodity codes as a CSV in the same shape
+    /master-data/upload accepts -- edit and re-upload to update in place."""
+    _require_admin(current_user)
+    items = await list_commodity_codes(db, limit=10000)
+    csv_text = build_commodity_codes_csv(
+        [
+            {
+                "segment_code": c.segment_code,
+                "segment_title": c.segment_title,
+                "family_code": c.family_code,
+                "family_title": c.family_title,
+                "class_code": c.class_code,
+                "class_title": c.class_title,
+                "code": c.code,
+                "commodity_title": c.commodity_title,
+            }
+            for c in items
+        ]
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=commodity_codes.csv"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +257,33 @@ async def upload_mappings(
 
 @router.delete("/mappings")
 async def delete_all_mappings_endpoint(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    """Soft delete: marks this tenant's mappings inactive (see app.crud.commodity.
+    delete_all_commodity_account_mappings). resolve_gl_account stops using them
+    immediately; re-uploading the same scope later reactivates the row."""
     _require_admin(current_user)
     deleted = await delete_all_commodity_account_mappings(db, tenant_id=current_user.tenant_id)
     return {"deleted": deleted}
+
+
+@router.get("/mappings/export")
+async def export_mappings(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    """Download the currently active commodity-to-GL mapping as a CSV in the same
+    shape /mappings/upload accepts -- edit and re-upload to update in place."""
+    _require_admin(current_user)
+    items = await list_commodity_account_mappings(db, tenant_id=current_user.tenant_id)
+    csv_text = build_gl_mapping_csv(
+        [
+            {
+                "scope_level": m.scope_level,
+                "scope_code": m.scope_code,
+                "gl_account_code": m.gl_account_code,
+                "cost_center": m.cost_center,
+            }
+            for m in items
+        ]
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=commodity_gl_mapping.csv"},
+    )

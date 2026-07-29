@@ -11,12 +11,15 @@ import {
   previewDocumentNumberingFormat,
   getCommodityCodeCount,
   uploadCommodityCodes,
+  downloadCommodityCodes,
   deleteAllCommodityCodes,
   getGlAccountCount,
   uploadGlAccounts,
+  downloadGlAccounts,
   deleteAllGlAccounts,
   getCommodityGlMappingCount,
   uploadCommodityGlMapping,
+  downloadCommodityGlMapping,
   deleteAllCommodityGlMapping,
 } from "@/lib/api";
 import type { DocumentNumberingFormat, DocumentType, ResetCadence } from "@/lib/types";
@@ -250,14 +253,18 @@ interface MasterDataCardProps {
   isAdmin: boolean;
   getCount: () => Promise<number>;
   upload: (file: File) => Promise<{ loaded: number; errors?: string[] }>;
+  // Optional: not every master-data dataset has an export endpoint yet
+  // (only commodity codes / GL accounts / mapping do, as of this pass).
+  download?: () => Promise<void>;
   deleteAll: () => Promise<{ deleted: number }>;
 }
 
-function MasterDataCard({ title, description, columnsHint, isAdmin, getCount, upload, deleteAll }: MasterDataCardProps) {
+function MasterDataCard({ title, description, columnsHint, isAdmin, getCount, upload, download, deleteAll }: MasterDataCardProps) {
   const [count, setCount] = useState<number | null>(null);
   const [loadingCount, setLoadingCount] = useState(true);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
@@ -302,8 +309,25 @@ function MasterDataCard({ title, description, columnsHint, isAdmin, getCount, up
     }
   }
 
+  async function handleDownload() {
+    if (!download) return;
+    setDownloading(true);
+    setError(null);
+    try {
+      await download();
+    } catch (err) {
+      setError(extractErrorMessage(err));
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   async function handleDeleteAll() {
-    if (!window.confirm(`Delete all ${title} data? This clears the table so you can re-upload cleanly. This can't be undone.`)) {
+    if (
+      !window.confirm(
+        `Deactivate all ${title} data? Rows are marked inactive (not deleted) and drop out of pickers/lookups immediately. Re-uploading the same codes later reactivates them.`
+      )
+    ) {
       return;
     }
     setDeleting(true);
@@ -311,7 +335,7 @@ function MasterDataCard({ title, description, columnsHint, isAdmin, getCount, up
     setSuccess(null);
     try {
       const result = await deleteAll();
-      setSuccess(`Deleted ${result.deleted} row(s).`);
+      setSuccess(`Deactivated ${result.deleted} row(s).`);
       await refreshCount();
     } catch (err) {
       setError(extractErrorMessage(err));
@@ -364,17 +388,27 @@ function MasterDataCard({ title, description, columnsHint, isAdmin, getCount, up
           >
             {uploading ? "Uploading..." : "Upload"}
           </button>
+          {download && (
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={downloading}
+              onClick={handleDownload}
+            >
+              {downloading ? "Downloading..." : "Download current"}
+            </button>
+          )}
           <button
             type="button"
             className="btn-secondary"
             disabled={deleting}
             onClick={handleDeleteAll}
           >
-            {deleting ? "Deleting..." : "Delete all"}
+            {deleting ? "Deactivating..." : "Deactivate all"}
           </button>
         </div>
       ) : (
-        <p className="mt-4 text-sm text-slate-500">Only administrators can upload or delete master data.</p>
+        <p className="mt-4 text-sm text-slate-500">Only administrators can upload, download, or deactivate master data.</p>
       )}
     </div>
   );
@@ -399,6 +433,7 @@ function MasterDataSettings({ isAdmin }: { isAdmin: boolean }) {
         isAdmin={isAdmin}
         getCount={async () => (await getCommodityCodeCount()).count}
         upload={uploadCommodityCodes}
+        download={downloadCommodityCodes}
         deleteAll={deleteAllCommodityCodes}
       />
 
@@ -409,6 +444,7 @@ function MasterDataSettings({ isAdmin }: { isAdmin: boolean }) {
         isAdmin={isAdmin}
         getCount={async () => (await getGlAccountCount()).count}
         upload={uploadGlAccounts}
+        download={downloadGlAccounts}
         deleteAll={deleteAllGlAccounts}
       />
 
@@ -419,6 +455,7 @@ function MasterDataSettings({ isAdmin }: { isAdmin: boolean }) {
         isAdmin={isAdmin}
         getCount={getCommodityGlMappingCount}
         upload={uploadCommodityGlMapping}
+        download={downloadCommodityGlMapping}
         deleteAll={deleteAllCommodityGlMapping}
       />
     </div>

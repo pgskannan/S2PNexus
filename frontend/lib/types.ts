@@ -60,6 +60,10 @@ export interface Requisition {
   category?: string | null;
   account_code?: string | null;
   need_by_date?: string | null;
+  is_emergency?: boolean;
+  delay_until?: string | null;
+  header_tax?: string | null;
+  shipping_cost?: string | null;
   notes?: string | null;
   line_items: RequisitionLineItem[];
   created_at: string;
