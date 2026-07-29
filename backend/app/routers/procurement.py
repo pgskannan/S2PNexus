@@ -69,6 +69,7 @@ from app.services.goods_receipt_workflow import start_goods_receipt_exception_wo
 from app.services.invoice_workflow import start_invoice_exception_workflow
 from app.services.procurement_workflow import (
     apply_procurement_transition_workflow,
+    auto_create_po_from_requisition,
     process_deferred_po_creation,
     start_purchase_order_approval_workflow,
     start_requisition_approval_workflow,
@@ -178,6 +179,21 @@ async def transition_requisition_endpoint(
         db,
         started_by=current_user.id,
     )
+    # Auto-create the PO here too, not just on workflow-instance completion --
+    # the requisition detail page's "Approve" button calls this endpoint
+    # directly with lifecycle_status="approved" and never touches the
+    # WorkflowDefinition/Instance engine at all (no WorkflowDefinition is
+    # required for a requisition to be approvable). Without this, PR approval
+    # via that button silently never produces a PO. auto_create_po_from_requisition
+    # is already idempotent (no-ops if a PO already exists) and already
+    # respects delay_until, so it's safe to call from both trigger points.
+    if transition_data.lifecycle_status == "approved":
+        await auto_create_po_from_requisition(
+            db,
+            requisition.id,
+            started_by=current_user.id,
+            tenant_id=current_user.tenant_id,
+        )
     return ProcurementRequisitionResponse.model_validate(requisition)
 
 
