@@ -73,7 +73,7 @@ def test_percentage_splits_must_sum_to_exactly_100():
         line = await add_requisition_line_item(
             db,
             requisition.id,
-            ProcurementRequisitionLineItemCreate(description="Widget", quantity=Decimal("1"), unit_price=Decimal("100.00"), line_total=Decimal("100.00")),
+            ProcurementRequisitionLineItemCreate(description="Widget", quantity=Decimal("1"), unit_price=Decimal("100.00"), line_total=Decimal("100.00"), category="General"),
         )
 
         try:
@@ -104,7 +104,7 @@ def test_amount_splits_must_sum_to_exactly_line_total():
         line = await add_requisition_line_item(
             db,
             requisition.id,
-            ProcurementRequisitionLineItemCreate(description="Widget", quantity=Decimal("1"), unit_price=Decimal("100.00"), line_total=Decimal("100.00")),
+            ProcurementRequisitionLineItemCreate(description="Widget", quantity=Decimal("1"), unit_price=Decimal("100.00"), line_total=Decimal("100.00"), category="General"),
         )
 
         try:
@@ -139,7 +139,7 @@ def test_split_carry_through_and_manual_correction_isolation():
         req_line = await add_requisition_line_item(
             db,
             requisition.id,
-            ProcurementRequisitionLineItemCreate(description="Widget", quantity=Decimal("1"), unit_price=Decimal("100.00"), line_total=Decimal("100.00")),
+            ProcurementRequisitionLineItemCreate(description="Widget", quantity=Decimal("1"), unit_price=Decimal("100.00"), line_total=Decimal("100.00"), category="General"),
         )
         # Override the auto-default (100% to no account) with an explicit two-way split.
         await set_line_item_splits(
