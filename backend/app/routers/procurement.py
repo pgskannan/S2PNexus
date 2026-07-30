@@ -18,6 +18,7 @@ from app.crud.procurement import (
     create_invoice,
     create_purchase_order,
     create_requisition,
+    get_goods_receipt,
     get_invoice,
     get_invoice_exception,
     get_invoice_exceptions,
@@ -219,6 +220,17 @@ async def transition_requisition_endpoint(
             started_by=current_user.id,
             tenant_id=current_user.tenant_id,
         )
+    # start_requisition_approval_workflow (via start_workflow_instance) and
+    # auto_create_po_from_requisition each call db.commit() on this same
+    # session. With the default expire_on_commit=True, that expires every
+    # attribute AND relationship (including line_items, lazy="selectin") on
+    # `requisition`, which was fetched earlier in this request. Serializing
+    # the stale object via Pydantic's synchronous model_validate() then tries
+    # to lazy-load those expired attributes with no awaited context, raising
+    # `MissingGreenlet` -- surfaces to the browser as a misleading CORS error
+    # since Starlette's error middleware sits outside CORSMiddleware. Re-fetch
+    # a fully fresh, eager-loaded copy instead of trying to refresh in place.
+    requisition = await get_requisition(db, requisition_id, tenant_id=current_user.tenant_id)
     return ProcurementRequisitionResponse.model_validate(requisition)
 
 
@@ -533,6 +545,12 @@ async def transition_po_lifecycle_endpoint(
         db,
         started_by=current_user.id,
     )
+    # Same expire-on-commit hazard as transition_requisition_endpoint above:
+    # start_purchase_order_approval_workflow commits on this session, which
+    # expires `po` (fetched earlier), and serializing it via Pydantic
+    # afterward raises MissingGreenlet on the next lazy-loaded attribute.
+    # Re-fetch a fresh, eager-loaded copy before returning.
+    po = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
     return PurchaseOrderResponse.model_validate(po)
 
 
@@ -578,6 +596,11 @@ async def create_receipt_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     await start_goods_receipt_exception_workflow(receipt, db, started_by=current_user.id)
+    # Same expire-on-commit hazard as the requisition/PO transition endpoints
+    # above: start_goods_receipt_exception_workflow commits on this session
+    # once a "goods_receipt" WorkflowDefinition exists, expiring `receipt`.
+    # Re-fetch before serializing.
+    receipt = await get_goods_receipt(db, receipt.id, tenant_id=current_user.tenant_id)
     return GoodsReceiptResponse.model_validate(receipt)
 
 
@@ -658,4 +681,8 @@ async def resolve_invoice_exception_endpoint(
     if not exception:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice exception not found")
     await start_invoice_exception_workflow(exception, db, started_by=current_user.id)
+    # Same expire-on-commit hazard as above: start_invoice_exception_workflow
+    # commits on this session once an "invoice_exception" WorkflowDefinition
+    # exists, expiring `exception`. Re-fetch before serializing.
+    exception = await get_invoice_exception(db, exception_id, tenant_id=current_user.tenant_id)
     return InvoiceMatchExceptionResponse.model_validate(exception)

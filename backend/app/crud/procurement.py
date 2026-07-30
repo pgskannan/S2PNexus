@@ -714,6 +714,20 @@ async def get_purchase_order_receipt_status(db: AsyncSession, purchase_order_id:
     return statuses
 
 
+async def get_goods_receipt(
+    db: AsyncSession, goods_receipt_id: UUID, tenant_id: Optional[UUID] = None
+) -> Optional[GoodsReceipt]:
+    # GoodsReceipt has no tenant_id column of its own -- inherits tenant scope
+    # from its parent PO/requisition, same reasoning as get_purchase_order.
+    query = select(GoodsReceipt).where(GoodsReceipt.id == goods_receipt_id)
+    if tenant_id is not None:
+        query = query.join(PurchaseOrder, GoodsReceipt.purchase_order_id == PurchaseOrder.id).join(
+            ProcurementRequisition, PurchaseOrder.requisition_id == ProcurementRequisition.id
+        ).where(ProcurementRequisition.tenant_id == tenant_id)
+    result = await db.execute(query)
+    return result.scalar_one_or_none()
+
+
 async def create_goods_receipt(
     db: AsyncSession,
     purchase_order_id: UUID,
