@@ -70,7 +70,11 @@ export default function ConvertToPurchaseOrderPage() {
         setRequisition(req);
         setSuppliers(supplierRes.items);
         setAddresses(addressList);
-        setForm((f) => ({ ...f, currency: req.currency || "USD" }));
+        setForm((f) => ({
+          ...f,
+          currency: req.currency || "USD",
+          supplier_id: req.supplier_id || f.supplier_id,
+        }));
         if (req.line_items && req.line_items.length > 0) {
           setLineItems(req.line_items.map(fromRequisitionLine));
         }

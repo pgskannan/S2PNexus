@@ -113,6 +113,67 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             # be visible in logs and can be retried via the admin upload endpoint.
             pass
 
+        # Seed a default WorkflowDefinition per entity type so the approval
+        # engine and its graph view actually have something to show out of the
+        # box. Previously the only thing that created these rows was
+        # backend/scripts/seed_workflow_definitions.py, a standalone script
+        # nothing ever invoked in a deployed environment -- so
+        # start_requisition_approval_workflow (services/procurement_workflow.py)
+        # always found zero active definitions, returned None, and no
+        # WorkflowInstance was ever created. Requisitions could still reach
+        # approval_status="approved" via the legacy threshold check in the same
+        # file, which made it look like "approval" happened with nothing for the
+        # designer's graph view to actually display.
+        try:
+            from uuid import uuid4
+
+            from sqlalchemy import select as _select
+
+            from app.crud.workflow import create_workflow_definition, get_workflow_definitions
+            from app.models.user import User, UserRole
+            from app.schemas.workflow import WorkflowDefinitionCreate
+
+            default_flows = [
+                ("Requisition approval", "requisition", "Route requisition approvals through the workflow engine.", "Initial review"),
+                ("Purchase order approval", "purchase_order", "Route PO approvals through the workflow engine.", "Finance review"),
+                ("Goods receipt exception review", "goods_receipt", "Route goods receipt exceptions through the workflow engine.", "Exception review"),
+                ("Invoice exception review", "invoice_exception", "Route invoice matching exceptions through the workflow engine.", "AP review"),
+            ]
+
+            # Default the single approval step's approver to the first admin
+            # account so a seeded flow is actually completable, not just
+            # visible. Best-effort: falls back to no approver (step stays
+            # visible but requires an admin to add one via the designer) if no
+            # administrator exists yet at first boot.
+            admin_result = await session.execute(
+                _select(User.id).where(User.role == UserRole.ADMINISTRATOR).limit(1)
+            )
+            default_approver = admin_result.scalar_one_or_none()
+            default_approvers = [default_approver] if default_approver else []
+
+            for name, entity_type, description, step_name in default_flows:
+                existing = await get_workflow_definitions(session, entity_type=entity_type, is_active=True, limit=1)
+                if existing:
+                    continue
+                payload = WorkflowDefinitionCreate(
+                    name=name,
+                    entity_type=entity_type,
+                    description=description,
+                    is_active=True,
+                    steps=[
+                        {
+                            "name": step_name,
+                            "step_type": "approval",
+                            "approvers": default_approvers,
+                            "required_approvals": 1,
+                        }
+                    ],
+                )
+                await create_workflow_definition(session, payload, created_by=default_approver or uuid4())
+        except Exception:
+            # Non-fatal: seeding should not prevent app startup.
+            pass
+
     yield
     # Shutdown
     await close_db()

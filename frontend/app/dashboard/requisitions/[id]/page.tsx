@@ -6,10 +6,11 @@ import Link from "next/link";
 import {
   getRequisition,
   listPurchaseOrders,
+  listWorkflowInstances,
   transitionRequisition,
   extractErrorMessage,
 } from "@/lib/api";
-import type { PurchaseOrder, Requisition } from "@/lib/types";
+import type { PurchaseOrder, Requisition, WorkflowInstance } from "@/lib/types";
 
 const nextSteps: Record<string, { new_status: string; lifecycle_status: string; label: string }[]> = {
   draft: [
@@ -26,6 +27,7 @@ export default function RequisitionDetailPage() {
   const router = useRouter();
   const [requisition, setRequisition] = useState<Requisition | null>(null);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [workflowInstance, setWorkflowInstance] = useState<WorkflowInstance | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -35,6 +37,15 @@ export default function RequisitionDetailPage() {
       setRequisition(data);
       const poRes = await listPurchaseOrders({ requisition_id: params.id });
       setPurchaseOrders(poRes.items);
+      // Surface the approval flow graph if a workflow instance exists for
+      // this requisition -- WorkflowCanvas already renders it correctly at
+      // /dashboard/workflow/instances/[id], it just had no entry point from
+      // here.
+      const wfRes = await listWorkflowInstances({
+        entity_type: "requisition",
+        entity_id: params.id,
+      });
+      setWorkflowInstance(wfRes.items[0] ?? null);
     } catch (err) {
       setError(extractErrorMessage(err));
     }
@@ -92,9 +103,19 @@ export default function RequisitionDetailPage() {
               {requisition.description || "No description"}
             </p>
           </div>
-          <span className="badge bg-slate-100 text-slate-700 capitalize">
-            {requisition.lifecycle_status}
-          </span>
+          <div className="flex flex-col items-end gap-2">
+            <span className="badge bg-slate-100 text-slate-700 capitalize">
+              {requisition.lifecycle_status}
+            </span>
+            {workflowInstance && (
+              <Link
+                href={`/dashboard/workflow/instances/${workflowInstance.id}`}
+                className="text-sm text-brand-600 hover:underline"
+              >
+                View approval flow &rarr;
+              </Link>
+            )}
+          </div>
         </div>
 
         <dl className="grid grid-cols-2 gap-4 text-sm">
@@ -171,7 +192,7 @@ export default function RequisitionDetailPage() {
       <div className="card space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Purchase orders</h2>
-          {requisition.lifecycle_status === "approved" && (
+          {requisition.lifecycle_status === "approved" && purchaseOrders.length === 0 && (
             <button
               className="btn-primary"
               onClick={() =>

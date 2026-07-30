@@ -69,10 +69,14 @@ export default function WorkflowDefinitionsPage() {
     if (steps.length === 0) {
       errors.push("Add at least one step.");
     }
-    const hasEnd = steps.some((step) => step.step_type === "end");
-    if (!hasEnd) {
-      errors.push("Add an End step to complete the workflow.");
-    }
+    // NOTE: there used to be a check here requiring a step with
+    // step_type === "end", but "end" was never a real step type -- the
+    // backend schema (schemas/workflow.py STEP_TYPES) and the step-type
+    // picker in WorkflowNodeInspector.tsx only support
+    // condition/approval/notification. That meant this validation could
+    // never pass, so no workflow definition could ever be saved through this
+    // page. A workflow instance simply completes when it runs out of steps,
+    // so no explicit "end" marker is needed.
     const hasApproval = steps.some((step) => step.step_type === "approval");
     if (hasApproval && steps.some((step) => step.step_type === "approval" && Array.isArray(step.approvers) && step.approvers.length === 0)) {
       errors.push("Approval steps need at least one approver.");
