@@ -351,6 +351,16 @@ export async function listPurchaseOrders(params?: {
   return data;
 }
 
+export async function listGoodsReceipts(): Promise<{ items: import("@/lib/types").GoodsReceipt[] }> {
+  const { data } = await api.get<{ items: import("@/lib/types").GoodsReceipt[] }>("/procurement/receipts");
+  return data;
+}
+
+export async function listInvoices(): Promise<{ items: import("@/lib/types").ProcurementInvoice[] }> {
+  const { data } = await api.get<{ items: import("@/lib/types").ProcurementInvoice[] }>("/procurement/invoices");
+  return data;
+}
+
 export async function getPurchaseOrder(id: string): Promise<PurchaseOrder> {
   const { data } = await api.get<PurchaseOrder>(
     `/procurement/purchase-orders/${id}`

@@ -258,6 +258,29 @@ export interface PurchaseOrderListResponse {
   limit: number;
 }
 
+export interface GoodsReceipt {
+  id: string;
+  purchase_order_id: string;
+  receipt_number: string;
+  status: string;
+  received_quantity: number;
+  inspection_status: string;
+  has_exceptions: boolean;
+  created_at: string;
+}
+
+export interface ProcurementInvoice {
+  id: string;
+  invoice_number: string;
+  purchase_order_id?: string | null;
+  amount: string;
+  total_amount?: string | null;
+  currency: string;
+  status: string;
+  match_status: string;
+  created_at: string;
+}
+
 export type SupplierLifecycleStatus =
   | "active"
   | "under_monitoring"

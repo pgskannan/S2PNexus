@@ -10,6 +10,7 @@ import {
   listPurchaseOrders,
   listWorkflowInstances,
   listRequisitionAuditEvents,
+  listUserDirectory,
   transitionRequisition,
   extractErrorMessage,
 } from "@/lib/api";
@@ -36,6 +37,7 @@ export default function RequisitionDetailPage() {
   const [approvalSteps, setApprovalSteps] = useState<ApprovalStep[]>([]);
   const [auditEvents, setAuditEvents] = useState<import("@/lib/types").ProcurementAuditEvent[]>([]);
   const [activeTab, setActiveTab] = useState<"overview" | "audit">("overview");
+  const [actorNames, setActorNames] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -49,6 +51,8 @@ export default function RequisitionDetailPage() {
       ]);
       setPurchaseOrders(poRes.items);
       setAuditEvents(auditRes);
+      const directory = await listUserDirectory({ limit: 1000 });
+      setActorNames(Object.fromEntries(directory.items.map((user) => [user.id, user.full_name || user.email])));
       // Surface the approval flow inline (Ariba-style stepper) if a workflow
       // instance exists for this requisition.
       const wfRes = await listWorkflowInstances({
@@ -127,6 +131,24 @@ export default function RequisitionDetailPage() {
   }
 
   const actions = nextSteps[requisition.lifecycle_status] ?? [];
+
+  function auditLabel(action: string) {
+    return action
+      .split(":")
+      .map((part) => part.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()))
+      .join(" · ");
+  }
+
+  function auditSummary(event: import("@/lib/types").ProcurementAuditEvent) {
+    const details = event.details || {};
+    if (event.action === "purchase_order:created") return `Purchase order ${String(details.order_number || "created")}`;
+    if (event.action === "workflow:started") return "Approval workflow started";
+    if (event.action === "workflow:completed") return "All approval steps completed";
+    if (event.action === "workflow:approved") return details.comments ? `Approved: ${String(details.comments)}` : "Approval granted";
+    if (event.action === "workflow:rejected") return details.comments ? `Rejected: ${String(details.comments)}` : "Approval rejected";
+    if (event.action.startsWith("transition:")) return `Requisition moved to ${event.action.split(":")[1].replace(/_/g, " ")}`;
+    return "Activity recorded";
+  }
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -222,11 +244,11 @@ export default function RequisitionDetailPage() {
               {auditEvents.map((event) => (
                 <li key={event.id} className="py-3 text-sm">
                   <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium text-slate-700">{event.action}</span>
+                    <span className="font-medium text-slate-700">{auditLabel(event.action)}</span>
                     <time className="text-xs text-slate-400">{new Date(event.created_at).toLocaleString()}</time>
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">Actor: {event.actor_id}</p>
-                  {event.details && <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-2 text-xs text-slate-600">{JSON.stringify(event.details, null, 2)}</pre>}
+                  <p className="mt-1 text-sm text-slate-600">{auditSummary(event)}</p>
+                  <p className="mt-1 text-xs text-slate-400">By {actorNames[event.actor_id] || "System user"}</p>
                 </li>
               ))}
             </ul>

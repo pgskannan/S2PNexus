@@ -1,10 +1,12 @@
 """Procurement router for S2PNexus."""
 
 from decimal import Decimal
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crud.procurement import (
@@ -21,6 +23,8 @@ from app.crud.procurement import (
     create_requisition,
     delete_requisition,
     get_goods_receipt,
+    get_goods_receipts,
+    get_invoices,
     get_invoice,
     get_invoice_exception,
     get_invoice_exceptions,
@@ -39,9 +43,11 @@ from app.crud.procurement import (
 from app.crud.accounting_split import get_line_item_splits, set_line_item_splits
 from app.database.session import get_db
 from app.models.user import User
+from app.models.workflow import WorkflowInstance, WorkflowTask
 from app.schemas.procurement import (
     GoodsReceiptCreate,
     GoodsReceiptResponse,
+    GoodsReceiptListResponse,
     InvoiceMatchExceptionResolveRequest,
     InvoiceMatchExceptionResponse,
     MatchInvoiceRequest,
@@ -51,6 +57,7 @@ from app.schemas.procurement import (
     ProcurementCommentResponse,
     ProcurementInvoiceCreate,
     ProcurementInvoiceResponse,
+    ProcurementInvoiceListResponse,
     ProcurementListResponse,
     ProcurementRequisitionCreate,
     ProcurementRequisitionLineItemCreate,
@@ -253,11 +260,12 @@ async def transition_requisition_endpoint(
         actor_id=current_user.id,
         tenant_id=current_user.tenant_id,
     )
-    await start_requisition_approval_workflow(
-        requisition,
-        db,
-        started_by=current_user.id,
-    )
+    if transition_data.lifecycle_status == "submitted":
+        await start_requisition_approval_workflow(
+            requisition,
+            db,
+            started_by=current_user.id,
+        )
     # Auto-create the PO here too, not just on workflow-instance completion --
     # the requisition detail page's "Approve" button calls this endpoint
     # directly with lifecycle_status="approved" and never touches the
@@ -267,6 +275,31 @@ async def transition_requisition_endpoint(
     # is already idempotent (no-ops if a PO already exists) and already
     # respects delay_until, so it's safe to call from both trigger points.
     if transition_data.lifecycle_status == "approved":
+        # The requisition detail page can approve directly when no task is
+        # being completed from the workflow inbox. Close the active instance
+        # as well so its graph cannot remain visually active after approval.
+        active_instances = await db.execute(
+            select(WorkflowInstance).where(
+                WorkflowInstance.entity_type == "requisition",
+                WorkflowInstance.entity_id == requisition.id,
+                WorkflowInstance.status == "in_progress",
+            )
+        )
+        completed_at = datetime.now(timezone.utc)
+        for instance in active_instances.scalars().all():
+            instance.status = "completed"
+            instance.current_step_index = len(instance.definition.steps) if instance.definition else instance.current_step_index
+            instance.completed_at = completed_at
+            pending_tasks = await db.execute(
+                select(WorkflowTask).where(
+                    WorkflowTask.instance_id == instance.id,
+                    WorkflowTask.status.in_(["pending", "escalated"]),
+                )
+            )
+            for task in pending_tasks.scalars().all():
+                task.status = "approved"
+                task.completed_by = current_user.id
+                task.completed_at = completed_at
         await auto_create_po_from_requisition(
             db,
             requisition.id,
@@ -668,6 +701,24 @@ async def create_invoice_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     return ProcurementInvoiceResponse.model_validate(invoice)
+
+
+@router.get("/receipts", response_model=GoodsReceiptListResponse)
+async def list_receipts_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> GoodsReceiptListResponse:
+    receipts = await get_goods_receipts(db, tenant_id=current_user.tenant_id)
+    return GoodsReceiptListResponse(items=[GoodsReceiptResponse.model_validate(item) for item in receipts])
+
+
+@router.get("/invoices", response_model=ProcurementInvoiceListResponse)
+async def list_invoices_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> ProcurementInvoiceListResponse:
+    invoices = await get_invoices(db, tenant_id=current_user.tenant_id)
+    return ProcurementInvoiceListResponse(items=[ProcurementInvoiceResponse.model_validate(item) for item in invoices])
 
 
 @router.get("/invoices/matching-exceptions", response_model=list[ProcurementInvoiceResponse])

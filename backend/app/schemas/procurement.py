@@ -401,6 +401,14 @@ class ProcurementInvoiceResponse(BaseModel):
     updated_at: datetime
 
 
+class GoodsReceiptListResponse(BaseModel):
+    items: list[GoodsReceiptResponse]
+
+
+class ProcurementInvoiceListResponse(BaseModel):
+    items: list[ProcurementInvoiceResponse]
+
+
 class MatchInvoiceRequest(BaseModel):
     match_type: str = Field(default="two_way", max_length=20)
     matching_tolerance_amount: Optional[Decimal] = Field(None, ge=0)

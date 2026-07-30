@@ -11,6 +11,8 @@ const links = [
   { href: "/dashboard", label: "Overview", icon: "overview" },
   { href: "/dashboard/requisitions", label: "Requisitions", icon: "requisitions" },
   { href: "/dashboard/purchase-orders", label: "Purchase Orders", icon: "purchase-orders" },
+  { href: "/dashboard/receipts", label: "Receipts", icon: "purchase-orders" },
+  { href: "/dashboard/invoices", label: "Invoices", icon: "documents" },
   { href: "/dashboard/contracts", label: "Contracts", icon: "contracts" },
   { href: "/dashboard/documents", label: "Documents", icon: "documents" },
   { href: "/dashboard/sourcing", label: "Sourcing", icon: "sourcing" },

@@ -789,6 +789,24 @@ async def get_goods_receipt(
     return result.scalar_one_or_none()
 
 
+async def get_goods_receipts(db: AsyncSession, *, tenant_id: Optional[UUID] = None, limit: int = 100) -> list[GoodsReceipt]:
+    query = select(GoodsReceipt).join(PurchaseOrder, GoodsReceipt.purchase_order_id == PurchaseOrder.id).join(
+        ProcurementRequisition, PurchaseOrder.requisition_id == ProcurementRequisition.id
+    )
+    if tenant_id is not None:
+        query = query.where(ProcurementRequisition.tenant_id == tenant_id)
+    result = await db.execute(query.order_by(desc(GoodsReceipt.created_at)).limit(limit))
+    return list(result.scalars().all())
+
+
+async def get_invoices(db: AsyncSession, *, tenant_id: Optional[UUID] = None, limit: int = 100) -> list[ProcurementInvoice]:
+    query = select(ProcurementInvoice).order_by(desc(ProcurementInvoice.created_at)).limit(limit)
+    if tenant_id is not None:
+        query = query.where(ProcurementInvoice.tenant_id == tenant_id)
+    result = await db.execute(query)
+    return list(result.scalars().all())
+
+
 async def create_goods_receipt(
     db: AsyncSession,
     purchase_order_id: UUID,
