@@ -108,6 +108,19 @@ async def get_workflow_definition(db: AsyncSession, definition_id: UUID | str) -
     return result.scalar_one_or_none()
 
 
+async def delete_workflow_definition(db: AsyncSession, definition_id: UUID | str) -> bool:
+    definition = await get_workflow_definition(db, definition_id)
+    if definition is None:
+        return False
+    await db.delete(definition)
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise ValueError("Workflow definitions with execution history cannot be deleted; deactivate them instead")
+    return True
+
+
 # --- Instances / step execution -----------------------------------------------------
 
 async def _create_notification(
@@ -144,6 +157,17 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
                     requisition.approval_status = "approved"
                     requisition.approved_at = instance.completed_at
                     tenant_id = requisition.tenant_id
+                    if db is not None and hasattr(db, "add"):
+                        from app.models.procurement import ProcurementAuditEvent
+
+                        db.add(
+                            ProcurementAuditEvent(
+                                requisition_id=requisition.id,
+                                actor_id=instance.started_by,
+                                action="workflow:completed",
+                                details={"workflow_instance_id": str(instance.id)},
+                            )
+                        )
                 await auto_create_po_from_requisition(
                     db,
                     instance.entity_id,
@@ -348,6 +372,16 @@ async def complete_task(
                 requisition.lifecycle_status = "rejected"
                 requisition.approval_status = "rejected"
                 requisition.rejected_at = now
+                from app.models.procurement import ProcurementAuditEvent
+
+                db.add(
+                    ProcurementAuditEvent(
+                        requisition_id=requisition.id,
+                        actor_id=actor_id,
+                        action="workflow:rejected",
+                        details={"task_id": str(task.id), "comments": comments},
+                    )
+                )
         # Cancel any other still-pending tasks in this step so they don't linger.
         result = await db.execute(
             select(WorkflowTask).where(
@@ -370,6 +404,18 @@ async def complete_task(
         required = step.get("required_approvals", 1)
         if approved_count >= required:
             await _run_from_step(db, instance, definition.steps, task.step_index + 1)
+
+    if instance.entity_type == "requisition" and decision == "approve":
+        from app.models.procurement import ProcurementAuditEvent
+
+        db.add(
+            ProcurementAuditEvent(
+                requisition_id=instance.entity_id,
+                actor_id=actor_id,
+                action="workflow:approved",
+                details={"task_id": str(task.id), "comments": comments},
+            )
+        )
 
     await db.commit()
     await db.refresh(task)

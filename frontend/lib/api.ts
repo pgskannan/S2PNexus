@@ -155,6 +155,13 @@ export async function getRequisition(id: string): Promise<Requisition> {
   return data;
 }
 
+export async function listRequisitionAuditEvents(id: string): Promise<import("@/lib/types").ProcurementAuditEvent[]> {
+  const { data } = await api.get<import("@/lib/types").ProcurementAuditEvent[]>(
+    `/procurement/requisitions/${id}/audit-events`
+  );
+  return data;
+}
+
 export async function createRequisition(
   payload: Partial<Requisition> & { title: string; requested_by: string }
 ): Promise<Requisition> {
@@ -657,6 +664,10 @@ export async function createWorkflowDefinition(payload: {
 export async function getWorkflowDefinition(id: string): Promise<WorkflowDefinition> {
   const { data } = await api.get<WorkflowDefinition>(`/workflow/definitions/${id}`);
   return data;
+}
+
+export async function deleteWorkflowDefinition(id: string): Promise<void> {
+  await api.delete(`/workflow/definitions/${id}`);
 }
 
 export async function listWorkflowInstances(params?: {

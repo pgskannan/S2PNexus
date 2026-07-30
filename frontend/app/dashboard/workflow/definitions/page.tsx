@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { createWorkflowDefinition, extractErrorMessage, listWorkflowDefinitions } from "@/lib/api";
+import { createWorkflowDefinition, deleteWorkflowDefinition, extractErrorMessage, listWorkflowDefinitions } from "@/lib/api";
+import { useAuthStore } from "@/lib/auth-store";
 import type { WorkflowDefinition } from "@/lib/types";
 import { WorkflowCanvas, type WorkflowStepValue } from "@/components/WorkflowCanvas";
 import { WorkflowNodeInspector } from "@/components/WorkflowNodeInspector";
@@ -21,6 +22,8 @@ export default function WorkflowDefinitionsPage() {
   const [saving, setSaving] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [showJson, setShowJson] = useState(false);
+  const user = useAuthStore((state) => state.user);
+  const isAdmin = user?.role === "administrator" || user?.is_superuser === true;
 
   const selectedNode = useMemo(() => {
     const index = form.steps.findIndex((step, stepIndex) => `step-${stepIndex}` === selectedNodeId);
@@ -115,6 +118,16 @@ export default function WorkflowDefinitionsPage() {
     }
   }
 
+  async function handleDelete(definition: WorkflowDefinition) {
+    if (!confirm(`Delete workflow definition "${definition.name}"?`)) return;
+    try {
+      await deleteWorkflowDefinition(definition.id);
+      await load();
+    } catch (err) {
+      setError(extractErrorMessage(err));
+    }
+  }
+
   function updateSelectedNode(changes: Partial<WorkflowStepValue>) {
     if (!selectedNodeId) {
       return;
@@ -145,19 +158,20 @@ export default function WorkflowDefinitionsPage() {
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Entity type</th>
                 <th className="px-4 py-3">Status</th>
+                {isAdmin && <th className="px-4 py-3">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading && (
                 <tr>
-                  <td className="px-4 py-4 text-slate-400" colSpan={3}>
+                  <td className="px-4 py-4 text-slate-400" colSpan={isAdmin ? 4 : 3}>
                     Loading...
                   </td>
                 </tr>
               )}
               {!loading && definitions.length === 0 && (
                 <tr>
-                  <td className="px-4 py-4 text-slate-400" colSpan={3}>
+                  <td className="px-4 py-4 text-slate-400" colSpan={isAdmin ? 4 : 3}>
                     No workflow definitions yet.
                   </td>
                 </tr>
@@ -171,6 +185,13 @@ export default function WorkflowDefinitionsPage() {
                       {definition.is_active ? "Active" : "Inactive"}
                     </span>
                   </td>
+                  {isAdmin && (
+                    <td className="px-4 py-3">
+                      <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => handleDelete(definition)}>
+                        Delete
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

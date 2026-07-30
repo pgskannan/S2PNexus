@@ -593,6 +593,15 @@ export interface WorkflowInstanceListResponse {
   limit: number;
 }
 
+export interface ProcurementAuditEvent {
+  id: string;
+  requisition_id: string;
+  actor_id: string;
+  action: string;
+  details?: Record<string, unknown> | null;
+  created_at: string;
+}
+
 export interface Notification {
   id: string;
   recipient_id: string;

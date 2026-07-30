@@ -28,6 +28,7 @@ from app.crud.procurement import (
     get_purchase_order,
     get_purchase_orders,
     get_requisition,
+    get_requisition_audit_events,
     get_requisitions,
     get_requisitions_count,
     match_invoice,
@@ -55,6 +56,7 @@ from app.schemas.procurement import (
     ProcurementRequisitionLineItemCreate,
     ProcurementRequisitionLineItemResponse,
     ProcurementRequisitionResponse,
+    ProcurementAuditEventResponse,
     ProcurementRequisitionTransitionRequest,
     ProcurementRequisitionUpdate,
     PurchaseOrderCreate,
@@ -201,6 +203,20 @@ async def delete_requisition_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only draft requisitions can be deleted. Cancel this one via the transition endpoint instead.",
         )
+
+
+@router.get("/requisitions/{requisition_id}/audit-events", response_model=list[ProcurementAuditEventResponse])
+async def list_requisition_audit_events_endpoint(
+    requisition_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[ProcurementAuditEventResponse]:
+    events = await get_requisition_audit_events(db, requisition_id, tenant_id=current_user.tenant_id)
+    if not events:
+        requisition = await get_requisition(db, requisition_id, tenant_id=current_user.tenant_id)
+        if requisition is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    return [ProcurementAuditEventResponse.model_validate(event) for event in events]
 
 
 @router.post(

@@ -9,10 +9,11 @@ import type { ApprovalStep, ApprovalStepStatus } from "@/components/ApprovalFlow
 // order, including steps that haven't been reached yet (shown as "Waiting")
 // -- this maps one onto the other.
 
-function mapTaskStatus(status: string): ApprovalStepStatus {
+function mapTaskStatus(status: string, instanceStatus: string): ApprovalStepStatus {
   const normalized = (status || "").toLowerCase();
   if (normalized === "approved") return "APPROVED";
   if (normalized === "rejected") return "REJECTED";
+  if (instanceStatus === "completed") return "APPROVED";
   if (normalized === "pending" || normalized === "escalated") return "PENDING";
   // "cancelled" (e.g. sibling tasks cancelled after a rejection) has no
   // Ariba-native equivalent; showing it as waiting/greyed-out reads better
@@ -72,7 +73,7 @@ export function buildApprovalSteps(
         step_order: index + taskIndex * 0.01,
         approver_name: userNamesById[task.assignee_id] || "Unknown approver",
         approver_role: task.step_name || stepName,
-        status: mapTaskStatus(task.status),
+        status: mapTaskStatus(task.status, instance.status),
         decided_at: task.completed_at || undefined,
         comment: task.comments || undefined,
       });

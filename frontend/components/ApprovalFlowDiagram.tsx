@@ -116,6 +116,7 @@ function StepCard({
     <button
       type="button"
       onClick={() => onSelect(step)}
+      title={step.comment || `${step.approver_name}: ${norm(step.status).toLowerCase()}`}
       className={`relative flex-shrink-0 w-[180px] rounded-xl border bg-white shadow-sm text-left
         transition-all hover:shadow-md focus:outline-none
         ${borderColor} ${isSelected ? "ring-2 ring-offset-1 ring-slate-400" : ""}`}

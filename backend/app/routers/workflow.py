@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.crud.workflow import (
     complete_task,
     create_workflow_definition,
+    delete_workflow_definition,
     escalate_overdue_tasks,
     get_my_tasks,
     get_notifications,
@@ -38,6 +39,7 @@ from app.schemas.workflow import (
     WorkflowTaskResponse,
 )
 from app.utils.dependencies import get_current_active_user
+from app.utils.dependencies import get_current_active_superuser
 
 router = APIRouter(prefix="", tags=["Workflow"])
 
@@ -83,6 +85,20 @@ async def get_workflow_definition_endpoint(
     if not definition:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow definition not found")
     return WorkflowDefinitionResponse.model_validate(definition)
+
+
+@router.delete("/definitions/{definition_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_workflow_definition_endpoint(
+    definition_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_superuser)],
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    try:
+        deleted = await delete_workflow_definition(db, definition_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow definition not found")
 
 
 @router.get("/instances", response_model=WorkflowInstanceListResponse, summary="List workflow instances")

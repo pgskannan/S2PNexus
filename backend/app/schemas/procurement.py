@@ -123,6 +123,17 @@ class ProcurementCommentResponse(BaseModel):
     created_at: datetime
 
 
+class ProcurementAuditEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    requisition_id: UUID
+    actor_id: UUID
+    action: str
+    details: Optional[dict] = None
+    created_at: datetime
+
+
 class ProcurementAttachmentCreate(BaseModel):
     filename: str = Field(..., min_length=1, max_length=255)
     content_type: Optional[str] = Field(None, max_length=100)

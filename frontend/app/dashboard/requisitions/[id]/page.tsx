@@ -9,6 +9,7 @@ import {
   getWorkflowDefinition,
   listPurchaseOrders,
   listWorkflowInstances,
+  listRequisitionAuditEvents,
   transitionRequisition,
   extractErrorMessage,
 } from "@/lib/api";
@@ -33,6 +34,8 @@ export default function RequisitionDetailPage() {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [workflowInstance, setWorkflowInstance] = useState<WorkflowInstance | null>(null);
   const [approvalSteps, setApprovalSteps] = useState<ApprovalStep[]>([]);
+  const [auditEvents, setAuditEvents] = useState<import("@/lib/types").ProcurementAuditEvent[]>([]);
+  const [activeTab, setActiveTab] = useState<"overview" | "audit">("overview");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -40,8 +43,12 @@ export default function RequisitionDetailPage() {
     try {
       const data = await getRequisition(params.id);
       setRequisition(data);
-      const poRes = await listPurchaseOrders({ requisition_id: params.id });
+      const [poRes, auditRes] = await Promise.all([
+        listPurchaseOrders({ requisition_id: params.id }),
+        listRequisitionAuditEvents(params.id),
+      ]);
       setPurchaseOrders(poRes.items);
+      setAuditEvents(auditRes);
       // Surface the approval flow inline (Ariba-style stepper) if a workflow
       // instance exists for this requisition.
       const wfRes = await listWorkflowInstances({
@@ -180,7 +187,16 @@ export default function RequisitionDetailPage() {
         {error && <p className="text-sm text-red-600">{error}</p>}
       </div>
 
-      {workflowInstance && (
+      <div className="flex gap-2 border-b border-slate-200">
+        <button type="button" className={`px-3 py-2 text-sm font-medium ${activeTab === "overview" ? "border-b-2 border-brand-600 text-brand-700" : "text-slate-500"}`} onClick={() => setActiveTab("overview")}>
+          Overview
+        </button>
+        <button type="button" className={`px-3 py-2 text-sm font-medium ${activeTab === "audit" ? "border-b-2 border-brand-600 text-brand-700" : "text-slate-500"}`} onClick={() => setActiveTab("audit")}>
+          Audit log ({auditEvents.length})
+        </button>
+      </div>
+
+      {activeTab === "overview" && workflowInstance && (
         <div className="space-y-2">
           <ApprovalFlowDiagram
             docNumber={requisition.requisition_number || undefined}
@@ -193,6 +209,28 @@ export default function RequisitionDetailPage() {
           >
             View raw workflow instance &rarr;
           </Link>
+        </div>
+      )}
+
+      {activeTab === "audit" && (
+        <div className="card">
+          <h2 className="text-lg font-semibold">Audit log</h2>
+          {auditEvents.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-400">No audit events recorded yet.</p>
+          ) : (
+            <ul className="mt-3 divide-y divide-slate-100">
+              {auditEvents.map((event) => (
+                <li key={event.id} className="py-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-slate-700">{event.action}</span>
+                    <time className="text-xs text-slate-400">{new Date(event.created_at).toLocaleString()}</time>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">Actor: {event.actor_id}</p>
+                  {event.details && <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-2 text-xs text-slate-600">{JSON.stringify(event.details, null, 2)}</pre>}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 

@@ -181,6 +181,20 @@ async def get_requisition(
     return result.scalar_one_or_none()
 
 
+async def get_requisition_audit_events(
+    db: AsyncSession, requisition_id: UUID, *, tenant_id: Optional[UUID] = None
+) -> list[ProcurementAuditEvent]:
+    requisition = await get_requisition(db, requisition_id, tenant_id=tenant_id)
+    if requisition is None:
+        return []
+    result = await db.execute(
+        select(ProcurementAuditEvent)
+        .where(ProcurementAuditEvent.requisition_id == requisition_id)
+        .order_by(desc(ProcurementAuditEvent.created_at))
+    )
+    return list(result.scalars().all())
+
+
 async def delete_requisition(
     db: AsyncSession,
     requisition_id: UUID,

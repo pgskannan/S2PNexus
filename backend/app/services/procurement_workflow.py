@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.crud.procurement import create_purchase_order, get_requisition, get_requisitions
 from app.events.publisher import EventPublisher
-from app.models.procurement import PurchaseOrder
+from app.models.procurement import ProcurementAuditEvent, PurchaseOrder
 from app.schemas.procurement import PurchaseOrderCreate
 
 
@@ -141,13 +141,24 @@ async def auto_create_po_from_requisition(db: Any, requisition_id: UUID | str, s
         line_items=derived_line_items,
     )
 
-    return await create_purchase_order(
+    created_po = await create_purchase_order(
         db,
         requisition.id,
         payload,
         created_by=started_by,
         tenant_id=tenant_id,
     )
+    if db is not None and hasattr(db, "add"):
+        db.add(
+            ProcurementAuditEvent(
+                requisition_id=requisition.id,
+                actor_id=started_by,
+                action="purchase_order:created",
+                details={"purchase_order_id": str(created_po.id), "order_number": getattr(created_po, "order_number", None)},
+            )
+        )
+        await db.commit()
+    return created_po
 
 
 async def process_deferred_po_creation(db: Any, *, tenant_id: UUID | str | None = None) -> list[Any]:
@@ -220,7 +231,7 @@ async def start_requisition_approval_workflow(
     if filtered_steps is not None:
         call_kwargs["definition_steps_override"] = filtered_steps
 
-    return await start_workflow_instance(
+    instance = await start_workflow_instance(
         db,
         SimpleNamespace(
             definition_id=definition.id,
@@ -230,6 +241,18 @@ async def start_requisition_approval_workflow(
         ),
         **call_kwargs,
     )
+    instance_id = instance.get("id") if isinstance(instance, dict) else getattr(instance, "id", None)
+    if db is not None and hasattr(db, "add") and instance_id is not None:
+        db.add(
+            ProcurementAuditEvent(
+                requisition_id=requisition.id,
+                actor_id=started_by,
+                action="workflow:started",
+                details={"workflow_instance_id": str(instance_id), "definition_id": str(definition.id)},
+            )
+        )
+        await db.commit()
+    return instance
 
 
 async def start_purchase_order_approval_workflow(
