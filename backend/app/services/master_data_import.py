@@ -59,6 +59,46 @@ class CommodityCodeRow:
     commodity_title: str | None
 
 
+@dataclass
+class CategoryRow:
+    code: str
+    name: str
+
+
+def parse_categories_csv(csv_text: str) -> list[CategoryRow]:
+    reader = _reader_for(csv_text)
+    fieldnames = reader.fieldnames or []
+    code_col = _find_column(fieldnames, ("code", "category_code", "category"))
+    name_col = _find_column(fieldnames, ("name", "category_name", "title"))
+
+    if code_col is None or name_col is None:
+        raise MasterDataCSVError([f"Expected columns code and name. Found headers: {fieldnames}"])
+
+    rows: list[CategoryRow] = []
+    errors: list[str] = []
+    seen_codes: set[str] = set()
+    for line_num, raw in enumerate(reader, start=2):
+        code = (raw.get(code_col) or "").strip()
+        name = (raw.get(name_col) or "").strip()
+        if not code and not name:
+            continue
+        if not code:
+            errors.append(f"Row {line_num}: missing category code")
+            continue
+        if not name:
+            errors.append(f"Row {line_num}: missing category name")
+            continue
+        if code in seen_codes:
+            errors.append(f"Row {line_num}: duplicate category code '{code}'")
+            continue
+        seen_codes.add(code)
+        rows.append(CategoryRow(code=code, name=name))
+
+    if errors:
+        raise MasterDataCSVError(errors)
+    return rows
+
+
 def parse_commodity_codes_csv(csv_text: str) -> list[CommodityCodeRow]:
     reader = _reader_for(csv_text)
     fieldnames = reader.fieldnames or []

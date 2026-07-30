@@ -43,6 +43,7 @@ from app.models.system_setting import SystemSetting  # noqa: F401
 from app.models.agent_activity import AgentActivityLog  # noqa: F401
 from app.models.document_numbering import DocumentNumberingFormat, DocumentNumberingSequence  # noqa: F401
 from app.models.commodity import CommodityCode, CommodityAccountMapping, CommodityMatchingPolicy  # noqa: F401
+from app.models.category import Category  # noqa: F401
 from app.models.gl_account import GLAccount  # noqa: F401
 from app.models.address import Address  # noqa: F401
 from app.models.accounting_split import LineItemAccountingSplit, Budget  # noqa: F401
@@ -89,6 +90,7 @@ __all__ = [
     "CommodityCode",
     "CommodityAccountMapping",
     "CommodityMatchingPolicy",
+    "Category",
     "GLAccount",
     "Address",
     "PurchaseOrderLineItem",

@@ -95,6 +95,12 @@ export interface CommodityCodeResult {
   is_active: boolean;
 }
 
+export interface CategoryResult {
+  code: string;
+  name?: string | null;
+  is_active: boolean;
+}
+
 export interface RequisitionListResponse {
   items: Requisition[];
   total: number;

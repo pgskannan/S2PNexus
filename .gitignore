@@ -23,3 +23,8 @@ frontend/.env.local
 ## OS/editor
 .DS_Store
 .vscode/
+
+# Local test artifacts
+pytest-output.txt
+test.db
+.test_db.sqlite

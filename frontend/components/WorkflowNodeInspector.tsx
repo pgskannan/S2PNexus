@@ -1,4 +1,5 @@
 import type { WorkflowStepValue } from "./WorkflowCanvas";
+import UserPicker from "@/components/UserPicker";
 
 interface WorkflowNodeInspectorProps {
   selectedNode: WorkflowStepValue | null;
@@ -65,18 +66,11 @@ export function WorkflowNodeInspector({ selectedNode, onUpdate }: WorkflowNodeIn
       {selectedNode.step_type === "approval" && (
         <>
           <div>
-            <label className="label">Approvers (comma separated UUIDs)</label>
-            <input
-              className="input-field"
-              value={(selectedNode.approvers || []).join(",")}
-              onChange={(event) =>
-                onUpdate({
-                  approvers: event.target.value
-                    .split(",")
-                    .map((item) => item.trim())
-                    .filter(Boolean),
-                })
-              }
+            <label className="label">Approvers</label>
+            <UserPicker
+              value={selectedNode.approvers || []}
+              onChange={(ids) => onUpdate({ approvers: ids })}
+              multiple
             />
           </div>
           <div>
@@ -100,11 +94,11 @@ export function WorkflowNodeInspector({ selectedNode, onUpdate }: WorkflowNodeIn
             />
           </div>
           <div>
-            <label className="label">Escalate to (UUID)</label>
-            <input
-              className="input-field"
-              value={selectedNode.escalate_to || ""}
-              onChange={(event) => onUpdate({ escalate_to: event.target.value || undefined })}
+            <label className="label">Escalate to</label>
+            <UserPicker
+              value={selectedNode.escalate_to ? [selectedNode.escalate_to] : []}
+              onChange={(ids) => onUpdate({ escalate_to: ids.length ? ids[0] : undefined })}
+              multiple={false}
             />
           </div>
         </>
@@ -113,18 +107,11 @@ export function WorkflowNodeInspector({ selectedNode, onUpdate }: WorkflowNodeIn
       {selectedNode.step_type === "notification" && (
         <>
           <div>
-            <label className="label">Recipients (comma separated UUIDs)</label>
-            <input
-              className="input-field"
-              value={(selectedNode.recipients || []).join(",")}
-              onChange={(event) =>
-                onUpdate({
-                  recipients: event.target.value
-                    .split(",")
-                    .map((item) => item.trim())
-                    .filter(Boolean),
-                })
-              }
+            <label className="label">Recipients</label>
+            <UserPicker
+              value={selectedNode.recipients || []}
+              onChange={(ids) => onUpdate({ recipients: ids })}
+              multiple
             />
           </div>
           <div>

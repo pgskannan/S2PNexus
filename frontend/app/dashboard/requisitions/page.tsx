@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { listRequisitions, extractErrorMessage } from "@/lib/api";
+import { listRequisitions, extractErrorMessage, listSuppliers } from "@/lib/api";
+import CategoryInput from "@/components/CategoryInput";
 import type { Requisition } from "@/lib/types";
 
 const statusColors: Record<string, string> = {
@@ -15,14 +16,26 @@ const statusColors: Record<string, string> = {
 export default function RequisitionsPage() {
   const [items, setItems] = useState<Requisition[]>([]);
   const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<string | undefined>(undefined);
+  const [category, setCategory] = useState("");
+  const [supplierId, setSupplierId] = useState("");
+  const [createdAfter, setCreatedAfter] = useState("");
+  const [createdBefore, setCreatedBefore] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [suppliers, setSuppliers] = useState([] as any[]);
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const res = await listRequisitions({ search: search || undefined });
+      const params: any = { search: search || undefined };
+      if (status) params.status = status;
+      if (category) params.category = category;
+      if (supplierId) params.supplier_id = supplierId;
+      if (createdAfter) params.created_after = createdAfter;
+      if (createdBefore) params.created_before = createdBefore;
+      const res = await listRequisitions(params);
       setItems(res.items);
     } catch (err) {
       setError(extractErrorMessage(err));
@@ -34,6 +47,12 @@ export default function RequisitionsPage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    listSuppliers()
+      .then((r) => setSuppliers(r.items))
+      .catch(() => setSuppliers([]));
   }, []);
 
   return (
@@ -50,7 +69,7 @@ export default function RequisitionsPage() {
           e.preventDefault();
           load();
         }}
-        className="flex gap-2"
+        className="flex gap-2 flex-wrap items-end"
       >
         <input
           className="input-field max-w-xs"
@@ -58,8 +77,62 @@ export default function RequisitionsPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        <select className="input-field" value={status || ""} onChange={(e) => setStatus(e.target.value || undefined)}>
+          <option value="">Any status</option>
+          <option value="draft">Draft</option>
+          <option value="submitted">Submitted</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+        <div style={{ minWidth: 220 }}>
+          <CategoryInput value={category} onChange={setCategory} />
+        </div>
+        <select className="input-field" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+          <option value="">Any supplier</option>
+          {suppliers.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        <label className="text-xs text-slate-500">Created after</label>
+        <input type="date" className="input-field" value={createdAfter} onChange={(e) => setCreatedAfter(e.target.value)} />
+        <label className="text-xs text-slate-500">Created before</label>
+        <input type="date" className="input-field" value={createdBefore} onChange={(e) => setCreatedBefore(e.target.value)} />
         <button type="submit" className="btn-secondary">
-          Search
+          Apply
+        </button>
+        <button type="button" className="btn-secondary" onClick={async () => {
+          // Re-fetch up to 1000 for export
+          const params: any = { search: search || undefined, limit: 1000 };
+          if (status) params.status = status;
+          if (category) params.category = category;
+          if (supplierId) params.supplier_id = supplierId;
+          if (createdAfter) params.created_after = createdAfter;
+          if (createdBefore) params.created_before = createdBefore;
+          try {
+            const res = await listRequisitions(params);
+            const rows = res.items;
+            const cols = ["requisition_number","title","status","priority","estimated_value","currency","created_at"];
+            const csv = [cols.join(",")].concat(rows.map(r => cols.map(c => {
+              const v = (r as any)[c];
+              if (v === undefined || v === null) return "";
+              return String(v).replace(/"/g,'""');
+            }).map(v=>`"${v}"`).join(",")) ).join("\n");
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'requisitions_export.csv';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+          } catch (err) {
+            alert('Export failed: ' + (err as any).message || 'unknown');
+          }
+        }}>
+          Export CSV
         </button>
       </form>
 

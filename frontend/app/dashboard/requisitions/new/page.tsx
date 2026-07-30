@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createRequisition, addRequisitionLineItem, extractErrorMessage } from "@/lib/api";
+import { createRequisition, addRequisitionLineItem, extractErrorMessage, listSuppliers } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth-store";
 import CommodityCodeInput from "@/components/CommodityCodeInput";
+import CategoryInput from "@/components/CategoryInput";
+import type { Supplier } from "@/lib/types";
 
 interface LineItemDraft {
   description: string;
@@ -46,6 +48,7 @@ export default function NewRequisitionPage() {
   const [form, setForm] = useState({
     title: "",
     description: "",
+    supplier_id: "",
     request_type: "catalog",
     currency: "USD",
     estimated_value: "",
@@ -60,9 +63,16 @@ export default function NewRequisitionPage() {
     notes: "",
   });
   const [lineItems, setLineItems] = useState<LineItemDraft[]>([emptyLineItem()]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [lineItemWarning, setLineItemWarning] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    listSuppliers()
+      .then((res) => setSuppliers(res.items))
+      .catch(() => setSuppliers([]));
+  }, []);
 
   const titleValid = form.title.trim().length > 0;
   const rowsToSubmit = lineItems.filter((li) => li.description.trim());
@@ -139,6 +149,7 @@ export default function NewRequisitionPage() {
       const requisition = await createRequisition({
         title: form.title,
         description: form.description || undefined,
+        supplier_id: form.supplier_id || undefined,
         request_type: form.request_type,
         currency: form.currency,
         estimated_value: form.estimated_value ? form.estimated_value : undefined,
@@ -251,6 +262,7 @@ export default function NewRequisitionPage() {
                 <input
                   id="title"
                   required
+                  placeholder="e.g. Laptops for new engineering hires"
                   className="input-field"
                   value={form.title}
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
@@ -262,11 +274,30 @@ export default function NewRequisitionPage() {
                 </label>
                 <textarea
                   id="description"
+                  placeholder="Business justification for this request"
                   className="input-field"
                   rows={3}
                   value={form.description}
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                 />
+              </div>
+              <div>
+                <label className="label" htmlFor="supplier_id" title="Who this requisition will be ordered from — required before it can convert to a PO">
+                  Supplier
+                </label>
+                <select
+                  id="supplier_id"
+                  className="input-field"
+                  value={form.supplier_id}
+                  onChange={(e) => setForm({ ...form, supplier_id: e.target.value })}
+                >
+                  <option value="">Select a supplier (optional at this stage)...</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -341,14 +372,14 @@ export default function NewRequisitionPage() {
                   />
                 </div>
                 <div>
-                  <label className="label" htmlFor="category">
+                  <label className="label" htmlFor="category" title="Classifies this line for spend reporting and GL mapping">
                     Category
                   </label>
-                  <input
+                  <CategoryInput
                     id="category"
-                    className="input-field"
                     value={form.category}
-                    onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    placeholder="e.g. IT Hardware"
+                    onChange={(value) => setForm({ ...form, category: value })}
                   />
                 </div>
               </div>
@@ -494,11 +525,12 @@ export default function NewRequisitionPage() {
                       <CommodityCodeInput value={li.commodity} onChange={(value) => updateLineItem(index, { commodity: value })} />
                     </div>
                     <div className="col-span-8 sm:col-span-2">
-                      <label className="label">Category</label>
-                      <input
-                        className={`input-field ${lineItemValidation[index]?.category ? "border-red-300" : ""}`}
+                      <label className="label" title="Classifies this line for spend reporting and GL mapping">Category</label>
+                      <CategoryInput
+                        id={`line-category-${index}`}
                         value={li.category}
-                        onChange={(e) => updateLineItem(index, { category: e.target.value })}
+                        placeholder="e.g. IT Hardware"
+                        onChange={(value) => updateLineItem(index, { category: value })}
                       />
                       {lineItemValidation[index]?.category && <p className="mt-1 text-xs text-red-600">{lineItemValidation[index].category}</p>}
                     </div>

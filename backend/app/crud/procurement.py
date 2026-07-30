@@ -57,11 +57,25 @@ async def get_requisitions(
     limit: int = 100,
     search: Optional[str] = None,
     status: Optional[str] = None,
+    category: Optional[str] = None,
+    supplier_id: Optional[UUID] = None,
+    created_after: Optional[str] = None,
+    created_before: Optional[str] = None,
     tenant_id: Optional[UUID] = None,
 ) -> list[ProcurementRequisition]:
     query = select(ProcurementRequisition)
     if status:
         query = query.where(ProcurementRequisition.status == status)
+    if category:
+        query = query.where(ProcurementRequisition.category == category)
+    if supplier_id is not None:
+        query = query.where(ProcurementRequisition.supplier_id == supplier_id)
+    if created_after:
+        created_after_dt = datetime.fromisoformat(created_after).replace(tzinfo=timezone.utc)
+        query = query.where(ProcurementRequisition.created_at >= created_after_dt)
+    if created_before:
+        created_before_dt = datetime.fromisoformat(created_before).replace(tzinfo=timezone.utc)
+        query = query.where(ProcurementRequisition.created_at <= created_before_dt)
     if search:
         query = query.where(
             ProcurementRequisition.title.ilike(f"%{search}%")
@@ -76,11 +90,28 @@ async def get_requisitions(
 
 
 async def get_requisitions_count(
-    db: AsyncSession, status: Optional[str] = None, search: Optional[str] = None, tenant_id: Optional[UUID] = None
+    db: AsyncSession,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    category: Optional[str] = None,
+    supplier_id: Optional[UUID] = None,
+    created_after: Optional[str] = None,
+    created_before: Optional[str] = None,
+    tenant_id: Optional[UUID] = None,
 ) -> int:
     query = select(func.count(ProcurementRequisition.id))
     if status:
         query = query.where(ProcurementRequisition.status == status)
+    if category:
+        query = query.where(ProcurementRequisition.category == category)
+    if supplier_id is not None:
+        query = query.where(ProcurementRequisition.supplier_id == supplier_id)
+    if created_after:
+        created_after_dt = datetime.fromisoformat(created_after).replace(tzinfo=timezone.utc)
+        query = query.where(ProcurementRequisition.created_at >= created_after_dt)
+    if created_before:
+        created_before_dt = datetime.fromisoformat(created_before).replace(tzinfo=timezone.utc)
+        query = query.where(ProcurementRequisition.created_at <= created_before_dt)
     if search:
         query = query.where(
             ProcurementRequisition.title.ilike(f"%{search}%")

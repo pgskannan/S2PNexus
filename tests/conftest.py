@@ -11,27 +11,91 @@ if not hasattr(pytest_python.Package, "obj"):
     setattr(pytest_python.Package, "obj", None)
 
 from app.main import app
+import importlib
+importlib.import_module("app.models")  # ensure all ORM models are imported before creating test DB tables
 from app.database.database import Base, get_db
+from app.database.database import db_manager
 from app.core.config import settings
+from app.models.user import UserRole
+import uuid
+from types import SimpleNamespace
+from app.utils.dependencies import get_current_active_user
 
-# Test database URL (SQLite in-memory for testing)
+
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def _override_auth_for_all_tests(test_engine):
+    async def _override_get_user():
+        return SimpleNamespace(
+            # Never use an all-zero UUID here: under SQLite (this test DB),
+            # postgresql.UUID(as_uuid=True) round-trips via hex string, and an
+            # all-zero UUID's hex form is all digits, which SQLite's NUMERIC
+            # column affinity silently coerces to an int on read -- it comes
+            # back as `0` instead of a UUID and blows up on the next
+            # `uuid.UUID(...)` call. Use an all-f sentinel instead, which has
+            # a-f characters and isn't affected.
+            id=uuid.UUID(int=(2**128 - 1)),
+            email="test@example.com",
+            full_name="Test User",
+            role=UserRole.ADMINISTRATOR,
+            is_active=True,
+            is_superuser=True,
+            tenant_id=None,
+        )
+
+    # Bind the global db_manager to the test engine/session factory so
+    # endpoints using the normal `get_db` dependency use the in-memory DB.
+    original_engine = getattr(db_manager, "_engine", None)
+    original_session_factory = getattr(db_manager, "_session_factory", None)
+    db_manager._engine = test_engine
+    db_manager._session_factory = TestingSessionLocal
+
+    # Apply globally for all tests (many tests construct their own AsyncClient)
+    app.dependency_overrides[get_current_active_user] = _override_get_user
+    try:
+        yield
+    finally:
+        # restore original state
+        app.dependency_overrides.pop(get_current_active_user, None)
+        db_manager._engine = original_engine
+        db_manager._session_factory = original_session_factory
+
+# Test database URL (in-memory SQLite with StaticPool for cross-connection visibility)
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
-# Create test engine
+# Create test engine (in-memory + StaticPool mirrors existing master-data tests)
 _test_engine = create_async_engine(
     TEST_DATABASE_URL,
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
 )
 
-TestingSessionLocal = async_sessionmaker(
-    _test_engine, class_=AsyncSession, expire_on_commit=False
-)
+TestingSessionLocal = async_sessionmaker(_test_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine():
     """Create test database engine."""
+    # Some models use Postgres-specific types (JSONB) which SQLite cannot
+    # compile during `create_all`. For tests using SQLite, coerce
+    # PostgreSQL JSONB -> generic JSON so tables can be created.
+    import sqlalchemy as sa
+    try:
+        from sqlalchemy.dialects import postgresql
+        postgresql.JSONB = sa.JSON
+    except Exception:
+        pass
+
+    # Replace any JSONB columns on existing Table objects with generic JSON
+    # types so SQLite can compile DDL.
+    import sqlalchemy as sa
+    for table in list(Base.metadata.tables.values()):
+        for col in table.columns:
+            try:
+                if col.type.__class__.__name__ == "JSONB":
+                    col.type = sa.JSON()
+            except Exception:
+                continue
+
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield _test_engine
@@ -52,7 +116,27 @@ async def client(db_session):
     async def override_get_db():
         yield db_session
 
+    async def override_get_user():
+        # Provide a simple test user for endpoints that require auth.
+        return SimpleNamespace(
+            # Never use an all-zero UUID here: under SQLite (this test DB),
+            # postgresql.UUID(as_uuid=True) round-trips via hex string, and an
+            # all-zero UUID's hex form is all digits, which SQLite's NUMERIC
+            # column affinity silently coerces to an int on read -- it comes
+            # back as `0` instead of a UUID and blows up on the next
+            # `uuid.UUID(...)` call. Use an all-f sentinel instead, which has
+            # a-f characters and isn't affected.
+            id=uuid.UUID(int=(2**128 - 1)),
+            email="test@example.com",
+            full_name="Test User",
+            role=UserRole.ADMINISTRATOR,
+            is_active=True,
+            is_superuser=True,
+            tenant_id=None,
+        )
+
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_active_user] = override_get_user
     async with AsyncClient(app=app, base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()

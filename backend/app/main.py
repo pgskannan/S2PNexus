@@ -22,6 +22,7 @@ from app.middleware.rate_limit import RateLimitMiddleware
 from app.routers import health, auth, users, suppliers, contracts, documents, analytics, ai, procurement, sourcing, workflow, document_numbering, org_structure
 from app.routers.commodity import router as commodity_router
 from app.routers.gl_accounts import router as gl_accounts_router
+from app.routers.categories import router as categories_router
 from app.routers.address import router as address_router
 from app.routers.budget import router as budget_router
 from app.metadata_engine.bootstrap import bootstrap_metadata_registry
@@ -81,6 +82,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     async with db_manager.session() as session:
         await bootstrap_metadata_registry(session)
+        # Ensure a small starter set of categories exists for first-time deployments.
+        try:
+            from app.crud.category import count_categories, bulk_upsert_categories
+            from app.models.document_numbering import NO_TENANT_ID
+
+            existing = await count_categories(session, tenant_id=NO_TENANT_ID)
+            if existing == 0:
+                starter_categories = [
+                    ("IT_HARDWARE", "IT Hardware"),
+                    ("SOFTWARE", "Software"),
+                    ("OFFICE_SUPPLIES", "Office Supplies"),
+                    ("TRAVEL", "Travel"),
+                    ("CONSULTING", "Consulting"),
+                    ("MARKETING", "Marketing"),
+                    ("HR", "HR"),
+                    ("FACILITIES", "Facilities"),
+                    ("EQUIPMENT", "Equipment"),
+                    ("SERVICES", "Services"),
+                    ("MRO", "MRO"),
+                    ("INDIRECT", "Indirect Spend"),
+                ]
+                await bulk_upsert_categories(
+                    session,
+                    tenant_id=NO_TENANT_ID,
+                    rows=[{"code": code, "name": name} for code, name in starter_categories],
+                )
+        except Exception:
+            # Non-fatal: seeding should not prevent app startup. Any errors will
+            # be visible in logs and can be retried via the admin upload endpoint.
+            pass
 
     yield
     # Shutdown
@@ -223,6 +254,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
     app.include_router(document_numbering.router, prefix="/api/v1", tags=["Document Numbering"])
     app.include_router(commodity_router, prefix="/api/v1", tags=["Commodity Codes"])
     app.include_router(gl_accounts_router, prefix="/api/v1", tags=["GL Accounts"])
+    app.include_router(categories_router, prefix="/api/v1", tags=["Categories"])
     app.include_router(address_router, prefix="/api/v1", tags=["Addresses"])
     app.include_router(budget_router, prefix="/api/v1", tags=["Budgets"])
     app.include_router(org_structure.router, prefix="/api/v1", tags=["OrgStructure"])

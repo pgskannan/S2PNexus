@@ -407,6 +407,45 @@ export default function MasterDataAdminPage() {
         />
 
         <MasterDataCard
+          title="Categories"
+          description="Requisition categories used for spend classification and reporting."
+          columnsHint="code, name"
+          isAdmin={isAdmin}
+          getCount={async (): Promise<number> => {
+            const data = await fetch('/api/v1/categories/master-data/count').then((r) => r.json().catch(() => ({ count: 0 })));
+            return (data as any).count;
+          }}
+          upload={async (file: File) => {
+            const form = new FormData();
+            form.append("file", file);
+            const res = await fetch("/api/v1/categories/master-data/upload", { method: "POST", body: form });
+            const data = await res.json().catch(() => ({}));
+            return (data as any) || { loaded: 0 };
+          }}
+          download={async (): Promise<void> => {
+            const r = await fetch('/api/v1/categories/master-data/export');
+            const blob = await r.blob();
+            const text = await blob.text();
+            // MasterDataCard expects a void-returning download that triggers client behavior;
+            // use a simple client-side download here.
+            const blobOut = new Blob([text], { type: 'text/csv' });
+            const url = URL.createObjectURL(blobOut);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'categories.csv';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+          }}
+          deleteAll={async () => {
+            const res = await fetch('/api/v1/categories/master-data', { method: 'DELETE' });
+            const data = await res.json().catch(() => ({ deleted: 0 }));
+            return data as { deleted: number };
+          }}
+        />
+
+        <MasterDataCard
           title="Commodity-to-GL Mapping"
           description="Default GL account and optional cost center per commodity scope."
           columnsHint="scope_level, scope_code, gl_account_code, cost_center"

@@ -135,6 +135,44 @@ class TestProcurementEndpoints:
 
         asyncio.run(run_test())
 
+    def test_list_requisitions_forwards_filter_params(self, mock_user):
+        async def run_test():
+            async def override_get_current_active_user():
+                return mock_user
+
+            app.dependency_overrides[procurement.get_current_active_user] = override_get_current_active_user
+            supplier_id = uuid4()
+            try:
+                with patch("app.routers.procurement.get_requisitions", new_callable=AsyncMock) as mock_list:
+                    mock_list.return_value = [self._build_requisition(uuid4())]
+                    with patch("app.routers.procurement.get_requisitions_count", new_callable=AsyncMock) as mock_count:
+                        mock_count.return_value = 1
+
+                        async with AsyncClient(app=app, base_url="http://test") as client:
+                            response = await client.get(
+                                "/api/v1/procurement/requisitions",
+                                params={
+                                    "status": "submitted",
+                                    "category": "IT Hardware",
+                                    "supplier_id": str(supplier_id),
+                                    "created_after": "2026-01-01",
+                                    "created_before": "2026-06-01",
+                                },
+                                headers={"Authorization": "Bearer valid_token"},
+                            )
+
+                        assert response.status_code == 200
+                        assert mock_list.await_count == 1
+                        assert mock_list.await_args.kwargs["status"] == "submitted"
+                        assert mock_list.await_args.kwargs["category"] == "IT Hardware"
+                        assert mock_list.await_args.kwargs["supplier_id"] == supplier_id
+                        assert mock_list.await_args.kwargs["created_after"] == "2026-01-01"
+                        assert mock_list.await_args.kwargs["created_before"] == "2026-06-01"
+            finally:
+                app.dependency_overrides.pop(procurement.get_current_active_user, None)
+
+        asyncio.run(run_test())
+
     def test_create_purchase_order_from_requisition(self, mock_user):
         async def run_test():
             async def override_get_current_active_user():

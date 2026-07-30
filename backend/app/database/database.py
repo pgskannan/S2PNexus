@@ -101,6 +101,14 @@ class DatabaseManager:
         @event.listens_for(self.engine.sync_engine, "connect")
         def set_postgresql_timezone(dbapi_connection, connection_record):
             """Set timezone on connection."""
+            # Only run the SET TIME ZONE command for PostgreSQL connections;
+            # SQLite and other drivers do not support this SQL and will fail.
+            try:
+                dialect_name = self._engine.sync_engine.dialect.name
+            except Exception:
+                dialect_name = None
+            if dialect_name != "postgresql":
+                return
             cursor = dbapi_connection.cursor()
             cursor.execute("SET TIME ZONE 'UTC'")
             cursor.close()

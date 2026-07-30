@@ -130,6 +130,10 @@ export async function getMe(token: string): Promise<User> {
 export async function listRequisitions(params?: {
   search?: string;
   status?: string;
+  category?: string;
+  supplier_id?: string;
+  created_after?: string;
+  created_before?: string;
 }): Promise<RequisitionListResponse> {
   const { data } = await api.get<RequisitionListResponse>(
     "/procurement/requisitions",
@@ -194,6 +198,16 @@ export async function searchCommodityCodes(
   const { data } = await api.get<CommodityCodeResult[]>("/commodity-codes", {
     params: search ? { search } : undefined,
   });
+  return data;
+}
+
+export async function searchCategories(
+  search?: string
+): Promise<Array<{ code: string; name?: string | null; is_active: boolean }>> {
+  const { data } = await api.get<Array<{ code: string; name?: string | null; is_active: boolean }>>(
+    "/categories",
+    { params: search ? { search } : undefined }
+  );
   return data;
 }
 
