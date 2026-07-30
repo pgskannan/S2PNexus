@@ -134,6 +134,12 @@ export async function listRequisitions(params?: {
   supplier_id?: string;
   created_after?: string;
   created_before?: string;
+  priority?: string;
+  estimated_value_min?: number;
+  estimated_value_max?: number;
+  requested_by?: string;
+  limit?: number;
+  skip?: number;
 }): Promise<RequisitionListResponse> {
   const { data } = await api.get<RequisitionListResponse>(
     "/procurement/requisitions",

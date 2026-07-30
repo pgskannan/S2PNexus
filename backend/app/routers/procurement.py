@@ -1,5 +1,6 @@
 """Procurement router for S2PNexus."""
 
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
@@ -93,6 +94,10 @@ async def list_requisitions(
     supplier_id: UUID | None = Query(None),
     created_after: str | None = Query(None),
     created_before: str | None = Query(None),
+    priority: str | None = Query(None),
+    estimated_value_min: Decimal | None = Query(None),
+    estimated_value_max: Decimal | None = Query(None),
+    requested_by: UUID | None = Query(None),
 ) -> ProcurementListResponse:
     requisitions = await get_requisitions(
         db,
@@ -104,6 +109,10 @@ async def list_requisitions(
         supplier_id=supplier_id,
         created_after=created_after,
         created_before=created_before,
+        priority=priority,
+        estimated_value_min=estimated_value_min,
+        estimated_value_max=estimated_value_max,
+        requested_by=requested_by,
         tenant_id=current_user.tenant_id,
     )
     total = await get_requisitions_count(
@@ -114,6 +123,10 @@ async def list_requisitions(
         supplier_id=supplier_id,
         created_after=created_after,
         created_before=created_before,
+        priority=priority,
+        estimated_value_min=estimated_value_min,
+        estimated_value_max=estimated_value_max,
+        requested_by=requested_by,
         tenant_id=current_user.tenant_id,
     )
     return ProcurementListResponse(

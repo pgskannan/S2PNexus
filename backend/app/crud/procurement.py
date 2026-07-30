@@ -61,6 +61,10 @@ async def get_requisitions(
     supplier_id: Optional[UUID] = None,
     created_after: Optional[str] = None,
     created_before: Optional[str] = None,
+    priority: Optional[str] = None,
+    estimated_value_min: Optional[Decimal] = None,
+    estimated_value_max: Optional[Decimal] = None,
+    requested_by: Optional[UUID] = None,
     tenant_id: Optional[UUID] = None,
 ) -> list[ProcurementRequisition]:
     query = select(ProcurementRequisition)
@@ -76,6 +80,14 @@ async def get_requisitions(
     if created_before:
         created_before_dt = datetime.fromisoformat(created_before).replace(tzinfo=timezone.utc)
         query = query.where(ProcurementRequisition.created_at <= created_before_dt)
+    if priority:
+        query = query.where(ProcurementRequisition.priority == priority)
+    if estimated_value_min is not None:
+        query = query.where(ProcurementRequisition.estimated_value >= estimated_value_min)
+    if estimated_value_max is not None:
+        query = query.where(ProcurementRequisition.estimated_value <= estimated_value_max)
+    if requested_by is not None:
+        query = query.where(ProcurementRequisition.requested_by == requested_by)
     if search:
         query = query.where(
             ProcurementRequisition.title.ilike(f"%{search}%")
@@ -97,6 +109,10 @@ async def get_requisitions_count(
     supplier_id: Optional[UUID] = None,
     created_after: Optional[str] = None,
     created_before: Optional[str] = None,
+    priority: Optional[str] = None,
+    estimated_value_min: Optional[Decimal] = None,
+    estimated_value_max: Optional[Decimal] = None,
+    requested_by: Optional[UUID] = None,
     tenant_id: Optional[UUID] = None,
 ) -> int:
     query = select(func.count(ProcurementRequisition.id))
@@ -112,6 +128,14 @@ async def get_requisitions_count(
     if created_before:
         created_before_dt = datetime.fromisoformat(created_before).replace(tzinfo=timezone.utc)
         query = query.where(ProcurementRequisition.created_at <= created_before_dt)
+    if priority:
+        query = query.where(ProcurementRequisition.priority == priority)
+    if estimated_value_min is not None:
+        query = query.where(ProcurementRequisition.estimated_value >= estimated_value_min)
+    if estimated_value_max is not None:
+        query = query.where(ProcurementRequisition.estimated_value <= estimated_value_max)
+    if requested_by is not None:
+        query = query.where(ProcurementRequisition.requested_by == requested_by)
     if search:
         query = query.where(
             ProcurementRequisition.title.ilike(f"%{search}%")
