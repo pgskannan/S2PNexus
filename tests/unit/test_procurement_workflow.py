@@ -274,6 +274,54 @@ def test_complete_task_rejects_self_approval_for_requisition(monkeypatch):
     asyncio.run(run_test())
 
 
+def test_completed_requisition_workflow_approves_requisition_and_creates_tenant_po(monkeypatch):
+    async def run_test() -> None:
+        requisition_id = uuid4()
+        tenant_id = uuid4()
+        instance = SimpleNamespace(
+            entity_type="requisition",
+            entity_id=requisition_id,
+            started_by=uuid4(),
+            status="in_progress",
+            completed_at=None,
+            current_step_index=0,
+        )
+        requisition = SimpleNamespace(
+            id=requisition_id,
+            tenant_id=tenant_id,
+            status="submitted",
+            lifecycle_status="submitted",
+            approval_status="pending",
+            approved_at=None,
+        )
+        created_po = SimpleNamespace(id=uuid4())
+        captured: dict[str, object] = {}
+
+        async def fake_get_requisition(db, requested_id, tenant_id=None):
+            assert requested_id == requisition_id
+            return requisition
+
+        async def fake_auto_create_po(db, requested_id, started_by, tenant_id=None):
+            captured["requisition_id"] = requested_id
+            captured["started_by"] = started_by
+            captured["tenant_id"] = tenant_id
+            return created_po
+
+        monkeypatch.setattr("app.crud.procurement.get_requisition", fake_get_requisition)
+        monkeypatch.setattr("app.services.procurement_workflow.auto_create_po_from_requisition", fake_auto_create_po)
+
+        await workflow_crud._run_from_step(db=None, instance=instance, steps=[], step_index=0)
+
+        assert instance.status == "completed"
+        assert requisition.status == "approved"
+        assert requisition.lifecycle_status == "approved"
+        assert requisition.approval_status == "approved"
+        assert requisition.approved_at is not None
+        assert captured["tenant_id"] == tenant_id
+
+    asyncio.run(run_test())
+
+
 def test_procurement_requisition_line_item_requires_category_and_price():
     with pytest.raises(ValidationError):
         ProcurementRequisitionLineItemCreate(description="Widget", quantity=Decimal("1"))

@@ -21,6 +21,7 @@ class TestProcurementEndpoints:
         user.full_name = "Procurement User"
         user.is_active = True
         user.is_superuser = False
+        user.tenant_id = uuid4()
         return user
 
     def _build_requisition(self, requisition_id, *, title="Office Supplies"):
@@ -35,6 +36,9 @@ class TestProcurementEndpoints:
             currency="USD",
             estimated_value=125.0,
             approval_status="pending",
+            lifecycle_status="draft",
+            line_items=[],
+            tenant_id=uuid4(),
             notes=None,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
@@ -282,13 +286,18 @@ class TestProcurementEndpoints:
             try:
                 with patch("app.routers.procurement.transition_requisition", new_callable=AsyncMock) as mock_transition:
                     mock_transition.return_value = self._build_requisition(requisition_id)
-
-                    async with AsyncClient(app=app, base_url="http://test") as client:
-                        response = await client.post(
-                            f"/api/v1/procurement/requisitions/{requisition_id}/transition",
-                            json={"new_status": "submitted", "lifecycle_status": "submitted", "details": "Ready for review"},
-                            headers={"Authorization": "Bearer valid_token"},
-                        )
+                    with patch("app.routers.procurement.get_requisition", new_callable=AsyncMock) as mock_get_requisition, patch(
+                        "app.routers.procurement.start_requisition_approval_workflow", new_callable=AsyncMock
+                    ), patch(
+                        "app.routers.procurement.auto_create_po_from_requisition", new_callable=AsyncMock
+                    ):
+                        mock_get_requisition.return_value = mock_transition.return_value
+                        async with AsyncClient(app=app, base_url="http://test") as client:
+                            response = await client.post(
+                                f"/api/v1/procurement/requisitions/{requisition_id}/transition",
+                                json={"new_status": "submitted", "lifecycle_status": "submitted", "details": "Ready for review"},
+                                headers={"Authorization": "Bearer valid_token"},
+                            )
 
                     assert response.status_code == 200
                     assert mock_transition.await_count == 1

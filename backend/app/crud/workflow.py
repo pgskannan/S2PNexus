@@ -133,9 +133,23 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
             instance.completed_at = datetime.now(timezone.utc)
             instance.current_step_index = len(steps)
             if instance.entity_type == "requisition":
+                from app.crud.procurement import get_requisition
                 from app.services.procurement_workflow import auto_create_po_from_requisition
 
-                await auto_create_po_from_requisition(db, instance.entity_id, started_by=instance.started_by)
+                requisition = await get_requisition(db, instance.entity_id)
+                tenant_id = None
+                if requisition is not None:
+                    requisition.status = "approved"
+                    requisition.lifecycle_status = "approved"
+                    requisition.approval_status = "approved"
+                    requisition.approved_at = instance.completed_at
+                    tenant_id = requisition.tenant_id
+                await auto_create_po_from_requisition(
+                    db,
+                    instance.entity_id,
+                    started_by=instance.started_by,
+                    tenant_id=tenant_id,
+                )
             return
 
         step = steps[step_index]
@@ -325,6 +339,15 @@ async def complete_task(
     if decision == "reject":
         instance.status = "rejected"
         instance.completed_at = now
+        if instance.entity_type == "requisition":
+            from app.crud.procurement import get_requisition
+
+            requisition = await get_requisition(db, instance.entity_id)
+            if requisition is not None:
+                requisition.status = "rejected"
+                requisition.lifecycle_status = "rejected"
+                requisition.approval_status = "rejected"
+                requisition.rejected_at = now
         # Cancel any other still-pending tasks in this step so they don't linger.
         result = await db.execute(
             select(WorkflowTask).where(

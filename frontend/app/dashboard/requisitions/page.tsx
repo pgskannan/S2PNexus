@@ -292,11 +292,6 @@ export default function RequisitionsPage() {
               setValueMin(String(HIGH_VALUE_THRESHOLD));
             },
           },
-          {
-            label: "New requisition",
-            tone: "neutral",
-            href: "/dashboard/requisitions/new",
-          },
         ]}
       />
 

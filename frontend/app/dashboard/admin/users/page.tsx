@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAuthStore } from "@/lib/auth-store";
-import { deleteUser, extractErrorMessage, listUsers, updateUser } from "@/lib/api";
+import { deleteUser, extractErrorMessage, listUserDirectory, listUsers, updateUser } from "@/lib/api";
 import type { User, UserRole, UserUpdate } from "@/lib/types";
 
 const USER_ROLE_OPTIONS: UserRole[] = [
@@ -47,6 +47,19 @@ export default function UsersAdminPage() {
     setLoading(true);
     setError(null);
     try {
+      if (!isAdmin) {
+        const data = await listUserDirectory({ limit: 1000 });
+        setUsers(
+          data.items.map((item) => ({
+            ...item,
+            role: "requester",
+            is_active: true,
+            is_superuser: false,
+          }))
+        );
+        setTotal(data.items.length);
+        return;
+      }
       const data = await listUsers({ skip, limit, search, sort_by: "email", sort_order: "asc" });
       setUsers(data.items);
       setTotal(data.total);
@@ -59,7 +72,7 @@ export default function UsersAdminPage() {
 
   useEffect(() => {
     void loadUsers();
-  }, [skip]);
+  }, [skip, isAdmin]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -150,9 +163,9 @@ export default function UsersAdminPage() {
                 <tr>
                   <th className="px-3 py-2">Email</th>
                   <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Role</th>
-                  <th className="px-3 py-2">Active</th>
-                  <th className="px-3 py-2">Superuser</th>
+                  {isAdmin && <th className="px-3 py-2">Role</th>}
+                  {isAdmin && <th className="px-3 py-2">Active</th>}
+                  {isAdmin && <th className="px-3 py-2">Superuser</th>}
                   {isAdmin && <th className="px-3 py-2">Actions</th>}
                 </tr>
               </thead>
@@ -161,9 +174,9 @@ export default function UsersAdminPage() {
                   <tr key={item.id} className="border-b border-slate-100">
                     <td className="px-3 py-3">{item.email}</td>
                     <td className="px-3 py-3">{item.full_name}</td>
-                    <td className="px-3 py-3">{ROLE_LABELS[item.role]}</td>
-                    <td className="px-3 py-3">{item.is_active ? "Yes" : "No"}</td>
-                    <td className="px-3 py-3">{item.is_superuser ? "Yes" : "No"}</td>
+                    {isAdmin && <td className="px-3 py-3">{ROLE_LABELS[item.role]}</td>}
+                    {isAdmin && <td className="px-3 py-3">{item.is_active ? "Yes" : "No"}</td>}
+                    {isAdmin && <td className="px-3 py-3">{item.is_superuser ? "Yes" : "No"}</td>}
                     {isAdmin && (
                       <td className="px-3 py-3">
                         <div className="flex gap-2">
