@@ -58,3 +58,20 @@ class UserListResponse(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+class UserDirectoryEntry(BaseModel):
+    """Minimal, non-sensitive user info for display purposes (e.g. resolving
+    an assignee_id/requested_by UUID to a name). Deliberately excludes role,
+    is_superuser, tenant_id etc. so this is safe to expose to any
+    authenticated user, not just admins."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    full_name: str
+    email: str
+
+
+class UserDirectoryResponse(BaseModel):
+    items: list[UserDirectoryEntry]

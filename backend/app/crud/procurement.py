@@ -181,6 +181,29 @@ async def get_requisition(
     return result.scalar_one_or_none()
 
 
+async def delete_requisition(
+    db: AsyncSession,
+    requisition_id: UUID,
+    tenant_id: Optional[UUID] = None,
+) -> str:
+    """Delete a requisition. Returns one of "deleted", "not_found",
+    "not_draft" so the router can pick the right HTTP status without a second
+    query. Only draft requisitions are deletable -- once submitted there's an
+    audit trail (ProcurementAuditEvent rows, possibly a WorkflowInstance) that
+    a hard delete would silently orphan or destroy; cancelling via the normal
+    transition endpoint is the right move past that point, not deletion.
+    line_items cascade via the model's `cascade="all, delete-orphan"`.
+    """
+    requisition = await get_requisition(db, requisition_id, tenant_id=tenant_id)
+    if not requisition:
+        return "not_found"
+    if requisition.lifecycle_status != "draft":
+        return "not_draft"
+    await db.delete(requisition)
+    await db.commit()
+    return "deleted"
+
+
 async def update_requisition(
     db: AsyncSession,
     requisition_id: UUID,

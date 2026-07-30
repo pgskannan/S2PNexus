@@ -19,6 +19,7 @@ from app.crud.procurement import (
     create_invoice,
     create_purchase_order,
     create_requisition,
+    delete_requisition,
     get_goods_receipt,
     get_invoice,
     get_invoice_exception,
@@ -177,6 +178,29 @@ async def update_requisition_endpoint(
     if not requisition:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     return ProcurementRequisitionResponse.model_validate(requisition)
+
+
+@router.delete(
+    "/requisitions/{requisition_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a draft requisition",
+    description="Only requisitions still in 'draft' status can be deleted. Once "
+    "submitted, cancel it via the transition endpoint instead -- deleting past "
+    "that point would silently orphan its audit trail.",
+)
+async def delete_requisition_endpoint(
+    requisition_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    result = await delete_requisition(db, requisition_id, tenant_id=current_user.tenant_id)
+    if result == "not_found":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    if result == "not_draft":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only draft requisitions can be deleted. Cancel this one via the transition endpoint instead.",
+        )
 
 
 @router.post(

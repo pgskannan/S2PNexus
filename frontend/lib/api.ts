@@ -177,6 +177,10 @@ export async function transitionRequisition(
   return data;
 }
 
+export async function deleteRequisition(id: string): Promise<void> {
+  await api.delete(`/procurement/requisitions/${id}`);
+}
+
 export async function addRequisitionLineItem(
   requisitionId: string,
   payload: {
@@ -228,6 +232,22 @@ export async function listMyAddresses(): Promise<AddressResult[]> {
 }
 
 // ---- Admin / Users ----
+
+export interface UserDirectoryEntry {
+  id: string;
+  full_name: string;
+  email: string;
+}
+
+// Unlike listUsers()/getUser() below (admin-only, 403s for non-superusers),
+// this hits GET /users/directory -- available to any authenticated user, for
+// resolving a requested_by/assignee_id UUID to a display name (requisition
+// lists, the Ariba-style approval flow diagram, etc). Deliberately returns
+// only id/full_name/email, nothing sensitive.
+export async function listUserDirectory(params?: { limit?: number }): Promise<{ items: UserDirectoryEntry[] }> {
+  const { data } = await api.get<{ items: UserDirectoryEntry[] }>("/users/directory", { params });
+  return data;
+}
 
 export async function listUsers(params?: {
   skip?: number;

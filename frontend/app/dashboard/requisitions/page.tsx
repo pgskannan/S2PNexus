@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { listRequisitions, listSuppliers, listUsers, extractErrorMessage } from "@/lib/api";
+import { listRequisitions, listSuppliers, listUserDirectory, deleteRequisition, extractErrorMessage, type UserDirectoryEntry } from "@/lib/api";
 import CategoryInput from "@/components/CategoryInput";
 import { StatusBadge } from "@/components/StatusBadge";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
-import type { Requisition, Supplier, User } from "@/lib/types";
+import type { Requisition, Supplier } from "@/lib/types";
 
 type StatusFilter = "" | "draft" | "submitted" | "approved" | "rejected";
 type SortField = "requisition_number" | "title" | "priority" | "estimated_value" | "created_at";
@@ -103,7 +103,7 @@ export default function RequisitionsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
+  const [users, setUsers] = useState<UserDirectoryEntry[]>([]);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [highValueCount, setHighValueCount] = useState(0);
   const [sortField, setSortField] = useState<SortField>("created_at");
@@ -175,7 +175,7 @@ export default function RequisitionsPage() {
     listSuppliers()
       .then((r) => setSuppliers(r.items))
       .catch(() => setSuppliers([]));
-    listUsers({ limit: 200 })
+    listUserDirectory({ limit: 500 })
       .then((r) => setUsers(r.items))
       .catch(() => setUsers([]));
   }, []);
@@ -207,6 +207,19 @@ export default function RequisitionsPage() {
     });
     return data;
   }, [items, sortField, sortDirection]);
+
+  async function handleDelete(id: string) {
+    if (!confirm("Delete this draft requisition? This cannot be undone.")) {
+      return;
+    }
+    try {
+      await deleteRequisition(id);
+      setItems((prev) => prev.filter((r) => r.id !== id));
+      loadCounts();
+    } catch (err) {
+      alert("Delete failed: " + extractErrorMessage(err));
+    }
+  }
 
   async function handleExport() {
     try {
@@ -398,19 +411,20 @@ export default function RequisitionsPage() {
               <SortHeader label="Priority" field="priority" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
               <SortHeader label="Est. value" field="estimated_value" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
               <SortHeader label="Created" field="created_at" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} />
+              <th className="px-4 py-3"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {loading && (
               <tr>
-                <td className="px-4 py-4 text-slate-400" colSpan={7}>
+                <td className="px-4 py-4 text-slate-400" colSpan={8}>
                   Loading...
                 </td>
               </tr>
             )}
             {!loading && sortedItems.length === 0 && (
               <tr>
-                <td className="px-4 py-4 text-slate-400" colSpan={7}>
+                <td className="px-4 py-4 text-slate-400" colSpan={8}>
                   No requisitions match these filters.
                 </td>
               </tr>
@@ -444,6 +458,17 @@ export default function RequisitionsPage() {
                   )}
                 </td>
                 <td className="px-4 py-3 text-slate-500">{new Date(item.created_at).toLocaleDateString()}</td>
+                <td className="px-4 py-3">
+                  {item.lifecycle_status === "draft" && (
+                    <button
+                      onClick={() => handleDelete(item.id)}
+                      className="text-xs text-red-600 hover:underline"
+                      title="Delete draft"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

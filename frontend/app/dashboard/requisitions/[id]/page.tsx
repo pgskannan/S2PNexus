@@ -4,13 +4,17 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
+  deleteRequisition,
   getRequisition,
+  getWorkflowDefinition,
   listPurchaseOrders,
   listWorkflowInstances,
   transitionRequisition,
   extractErrorMessage,
 } from "@/lib/api";
 import type { PurchaseOrder, Requisition, WorkflowInstance } from "@/lib/types";
+import { ApprovalFlowDiagram, type ApprovalStep } from "@/components/ApprovalFlowDiagram";
+import { buildApprovalSteps, resolveApproverNames } from "@/lib/approvalFlow";
 
 const nextSteps: Record<string, { new_status: string; lifecycle_status: string; label: string }[]> = {
   draft: [
@@ -28,6 +32,7 @@ export default function RequisitionDetailPage() {
   const [requisition, setRequisition] = useState<Requisition | null>(null);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [workflowInstance, setWorkflowInstance] = useState<WorkflowInstance | null>(null);
+  const [approvalSteps, setApprovalSteps] = useState<ApprovalStep[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -37,15 +42,23 @@ export default function RequisitionDetailPage() {
       setRequisition(data);
       const poRes = await listPurchaseOrders({ requisition_id: params.id });
       setPurchaseOrders(poRes.items);
-      // Surface the approval flow graph if a workflow instance exists for
-      // this requisition -- WorkflowCanvas already renders it correctly at
-      // /dashboard/workflow/instances/[id], it just had no entry point from
-      // here.
+      // Surface the approval flow inline (Ariba-style stepper) if a workflow
+      // instance exists for this requisition.
       const wfRes = await listWorkflowInstances({
         entity_type: "requisition",
         entity_id: params.id,
       });
-      setWorkflowInstance(wfRes.items[0] ?? null);
+      const instance = wfRes.items[0] ?? null;
+      setWorkflowInstance(instance);
+      if (instance) {
+        const [definition, approverNames] = await Promise.all([
+          getWorkflowDefinition(instance.definition_id),
+          resolveApproverNames(instance),
+        ]);
+        setApprovalSteps(buildApprovalSteps(instance, definition.steps, approverNames));
+      } else {
+        setApprovalSteps([]);
+      }
     } catch (err) {
       setError(extractErrorMessage(err));
     }
@@ -69,6 +82,21 @@ export default function RequisitionDetailPage() {
     } catch (err) {
       setError(extractErrorMessage(err));
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!confirm("Delete this draft requisition? This cannot be undone.")) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteRequisition(params.id);
+      router.push("/dashboard/requisitions");
+    } catch (err) {
+      setError(extractErrorMessage(err));
       setBusy(false);
     }
   }
@@ -103,19 +131,9 @@ export default function RequisitionDetailPage() {
               {requisition.description || "No description"}
             </p>
           </div>
-          <div className="flex flex-col items-end gap-2">
-            <span className="badge bg-slate-100 text-slate-700 capitalize">
-              {requisition.lifecycle_status}
-            </span>
-            {workflowInstance && (
-              <Link
-                href={`/dashboard/workflow/instances/${workflowInstance.id}`}
-                className="text-sm text-brand-600 hover:underline"
-              >
-                View approval flow &rarr;
-              </Link>
-            )}
-          </div>
+          <span className="badge bg-slate-100 text-slate-700 capitalize">
+            {requisition.lifecycle_status}
+          </span>
         </div>
 
         <dl className="grid grid-cols-2 gap-4 text-sm">
@@ -151,6 +169,22 @@ export default function RequisitionDetailPage() {
 
         {error && <p className="text-sm text-red-600">{error}</p>}
       </div>
+
+      {workflowInstance && (
+        <div className="space-y-2">
+          <ApprovalFlowDiagram
+            docNumber={requisition.requisition_number || undefined}
+            title={requisition.title}
+            steps={approvalSteps}
+          />
+          <Link
+            href={`/dashboard/workflow/instances/${workflowInstance.id}`}
+            className="text-xs text-slate-400 hover:text-brand-600 hover:underline"
+          >
+            View raw workflow instance &rarr;
+          </Link>
+        </div>
+      )}
 
       <div className="card space-y-3">
         <h2 className="text-lg font-semibold">Line items</h2>
@@ -235,7 +269,7 @@ export default function RequisitionDetailPage() {
       </div>
 
       <div className="card space-y-4">
-        {actions.length > 0 && (
+        {(actions.length > 0 || requisition.lifecycle_status === "draft") && (
           <div className="flex gap-3 border-t border-slate-100 pt-4">
             {actions.map((action) => (
               <button
@@ -249,9 +283,18 @@ export default function RequisitionDetailPage() {
                 {action.label}
               </button>
             ))}
+            {requisition.lifecycle_status === "draft" && (
+              <button
+                disabled={busy}
+                onClick={handleDelete}
+                className="btn-secondary text-red-600 hover:bg-red-50"
+              >
+                Delete draft
+              </button>
+            )}
           </div>
         )}
-        {actions.length === 0 && (
+        {actions.length === 0 && requisition.lifecycle_status !== "draft" && (
           <p className="border-t border-slate-100 pt-4 text-sm text-slate-400">
             No further transitions available from this status.
           </p>
