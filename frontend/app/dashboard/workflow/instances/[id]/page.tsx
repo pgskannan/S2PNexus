@@ -1,25 +1,29 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { extractErrorMessage, getWorkflowInstance, getWorkflowDefinition } from "@/lib/api";
 import type { WorkflowInstance } from "@/lib/types";
-import { WorkflowCanvas } from "@/components/WorkflowCanvas";
+import { ApprovalFlowDiagram, type ApprovalStep } from "@/components/ApprovalFlowDiagram";
+import { buildApprovalSteps, resolveApproverNames } from "@/lib/approvalFlow";
 
 export default function WorkflowInstanceDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [instance, setInstance] = useState<WorkflowInstance | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [definitionSteps, setDefinitionSteps] = useState<Array<Record<string, unknown>>>([]);
+  const [approvalSteps, setApprovalSteps] = useState<ApprovalStep[]>([]);
 
   async function load() {
     try {
       const data = await getWorkflowInstance(params.id);
       setInstance(data);
       if (data.definition_id) {
-        const definition = await getWorkflowDefinition(data.definition_id);
-        setDefinitionSteps(definition.steps as Array<Record<string, unknown>>);
+        const [definition, approverNames] = await Promise.all([
+          getWorkflowDefinition(data.definition_id),
+          resolveApproverNames(data),
+        ]);
+        setApprovalSteps(buildApprovalSteps(data, definition.steps, approverNames));
       }
     } catch (err) {
       setError(extractErrorMessage(err));
@@ -30,15 +34,6 @@ export default function WorkflowInstanceDetailPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
-
-  const highlightedNodeId = useMemo(() => {
-    if (!instance) {
-      return null;
-    }
-    return instance.current_step_index >= 0 && instance.current_step_index < definitionSteps.length
-      ? `step-${instance.current_step_index}`
-      : null;
-  }, [definitionSteps.length, instance]);
 
   if (error && !instance) {
     return <p className="text-sm text-red-600">{error}</p>;
@@ -87,29 +82,13 @@ export default function WorkflowInstanceDetailPage() {
           </div>
         </dl>
 
-        <div className="rounded-lg border border-slate-200 p-4">
-          <h2 className="font-semibold">Flow</h2>
-          <div className="mt-3 h-[420px]">
-            <WorkflowCanvas value={definitionSteps} onChange={() => undefined} highlightedNodeId={highlightedNodeId} />
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-slate-200 p-4">
-          <h2 className="font-semibold">Tasks</h2>
-          {instance.tasks.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-500">No tasks yet.</p>
-          ) : (
-            <ul className="mt-3 space-y-2 text-sm">
-              {instance.tasks.map((task) => (
-                <li key={task.id} className="rounded bg-slate-50 p-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span>{task.step_name}</span>
-                    <span className="text-slate-500">{task.status}</span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
+        <div>
+          <h2 className="mb-2 font-semibold">Approval flow</h2>
+          <ApprovalFlowDiagram
+            docNumber={instance.entity_type}
+            title={instance.entity_id}
+            steps={approvalSteps}
+          />
         </div>
       </div>
     </div>
