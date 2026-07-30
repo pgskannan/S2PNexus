@@ -73,12 +73,15 @@ export default function RequisitionDetailPage() {
     setBusy(true);
     setError(null);
     try {
-      const updated = await transitionRequisition(
-        params.id,
-        newStatus,
-        lifecycleStatus
-      );
-      setRequisition(updated);
+      await transitionRequisition(params.id, newStatus, lifecycleStatus);
+      // Re-run the full load(), not just setRequisition(updated) -- approving
+      // can auto-create a PO and/or advance a workflow instance server-side
+      // (see transition_requisition_endpoint), and this page's
+      // purchaseOrders/workflowInstance/approvalSteps state was only ever
+      // fetched once on initial mount. Without this, "Convert to PO" and the
+      // approval diagram both silently show stale pre-transition state even
+      // though the backend did the right thing.
+      await load();
     } catch (err) {
       setError(extractErrorMessage(err));
     } finally {
