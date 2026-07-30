@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { listRequisitions, listSuppliers, listUserDirectory, deleteRequisition, extractErrorMessage, type UserDirectoryEntry } from "@/lib/api";
+import { listRequisitions, listSuppliers, listUserDirectory, deleteRequisition, transitionRequisition, extractErrorMessage, type UserDirectoryEntry } from "@/lib/api";
 import CategoryInput from "@/components/CategoryInput";
 import { StatusBadge } from "@/components/StatusBadge";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
@@ -218,6 +218,19 @@ export default function RequisitionsPage() {
       loadCounts();
     } catch (err) {
       alert("Delete failed: " + extractErrorMessage(err));
+    }
+  }
+
+  async function handleWithdraw(id: string) {
+    if (!confirm("Withdraw this submitted requisition? It will no longer be available for approval.")) {
+      return;
+    }
+    try {
+      await transitionRequisition(id, "cancelled", "cancelled");
+      await load();
+      await loadCounts();
+    } catch (err) {
+      alert("Withdraw failed: " + extractErrorMessage(err));
     }
   }
 
@@ -461,6 +474,15 @@ export default function RequisitionsPage() {
                       title="Delete draft"
                     >
                       Delete
+                    </button>
+                  )}
+                  {item.lifecycle_status === "submitted" && (
+                    <button
+                      onClick={() => handleWithdraw(item.id)}
+                      className="text-xs text-red-600 hover:underline"
+                      title="Withdraw submitted requisition"
+                    >
+                      Withdraw
                     </button>
                   )}
                 </td>

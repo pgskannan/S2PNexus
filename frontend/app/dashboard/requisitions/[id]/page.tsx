@@ -104,6 +104,13 @@ export default function RequisitionDetailPage() {
     }
   }
 
+  async function handleWithdraw() {
+    if (!confirm("Withdraw this submitted requisition? It will no longer be available for approval.")) {
+      return;
+    }
+    await handleTransition("cancelled", "cancelled");
+  }
+
   if (error && !requisition) {
     return <p className="text-sm text-red-600">{error}</p>;
   }
@@ -293,6 +300,15 @@ export default function RequisitionDetailPage() {
                 className="btn-secondary text-red-600 hover:bg-red-50"
               >
                 Delete draft
+              </button>
+            )}
+            {requisition.lifecycle_status === "submitted" && (
+              <button
+                disabled={busy}
+                onClick={handleWithdraw}
+                className="btn-secondary text-red-600 hover:bg-red-50"
+              >
+                Withdraw requisition
               </button>
             )}
           </div>
