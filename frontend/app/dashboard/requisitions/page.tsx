@@ -112,6 +112,11 @@ export default function RequisitionsPage() {
   const [highValueCount, setHighValueCount] = useState(0);
   const [sortField, setSortField] = useState<SortField>("created_at");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  const activeFilterCount = [category, supplierId, priority, requestedBy, valueMin, valueMax, createdAfter, createdBefore].filter(
+    (v) => v
+  ).length;
 
   const usersById = useMemo(() => {
     const map: Record<string, string> = {};
@@ -337,82 +342,118 @@ export default function RequisitionsPage() {
         })}
       </div>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          load();
-          loadCounts();
-        }}
-        className="card flex flex-wrap gap-2 items-end"
-      >
-        <div>
-          <label className="text-xs text-slate-500">Search</label>
-          <input
-            className="input-field max-w-xs"
-            placeholder="Title, number, description..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+      <div className="card space-y-3">
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex-1 min-w-[220px]">
+            <label className="text-xs text-slate-500">Search</label>
+            <input
+              className="input-field"
+              placeholder="Title, number, description..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <button
+            type="button"
+            className="btn-secondary inline-flex items-center gap-2"
+            onClick={() => setFiltersOpen((v) => !v)}
+          >
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="rounded-full bg-slate-900 px-1.5 text-xs text-white">{activeFilterCount}</span>
+            )}
+            <span className="text-xs">{filtersOpen ? "▲" : "▼"}</span>
+          </button>
+          <button type="button" className="btn-secondary" onClick={handleExport}>
+            Export CSV
+          </button>
         </div>
-        <div style={{ minWidth: 200 }}>
-          <label className="text-xs text-slate-500">Category</label>
-          <CategoryInput value={category} onChange={setCategory} />
-        </div>
-        <div>
-          <label className="text-xs text-slate-500">Supplier</label>
-          <select className="input-field" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-            <option value="">Any supplier</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="text-xs text-slate-500">Priority</label>
-          <select className="input-field" value={priority} onChange={(e) => setPriority(e.target.value)}>
-            <option value="">Any priority</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="urgent">Urgent</option>
-          </select>
-        </div>
-        <div>
-          <label className="text-xs text-slate-500">Requested by</label>
-          <select className="input-field" value={requestedBy} onChange={(e) => setRequestedBy(e.target.value)}>
-            <option value="">Anyone</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.full_name || u.email}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="text-xs text-slate-500">Value min</label>
-          <input type="number" min="0" className="input-field w-28" value={valueMin} onChange={(e) => setValueMin(e.target.value)} />
-        </div>
-        <div>
-          <label className="text-xs text-slate-500">Value max</label>
-          <input type="number" min="0" className="input-field w-28" value={valueMax} onChange={(e) => setValueMax(e.target.value)} />
-        </div>
-        <div>
-          <label className="text-xs text-slate-500">Created after</label>
-          <input type="date" className="input-field" value={createdAfter} onChange={(e) => setCreatedAfter(e.target.value)} />
-        </div>
-        <div>
-          <label className="text-xs text-slate-500">Created before</label>
-          <input type="date" className="input-field" value={createdBefore} onChange={(e) => setCreatedBefore(e.target.value)} />
-        </div>
-        <button type="submit" className="btn-secondary">
-          Apply
-        </button>
-        <button type="button" className="btn-secondary" onClick={handleExport}>
-          Export CSV
-        </button>
-      </form>
+
+        {filtersOpen && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              load();
+              loadCounts();
+            }}
+            className="flex flex-wrap gap-2 items-end border-t border-slate-100 pt-3"
+          >
+            <div style={{ minWidth: 200 }}>
+              <label className="text-xs text-slate-500">Category</label>
+              <CategoryInput value={category} onChange={setCategory} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Supplier</label>
+              <select className="input-field" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+                <option value="">Any supplier</option>
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Priority</label>
+              <select className="input-field" value={priority} onChange={(e) => setPriority(e.target.value)}>
+                <option value="">Any priority</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Requested by</label>
+              <select className="input-field" value={requestedBy} onChange={(e) => setRequestedBy(e.target.value)}>
+                <option value="">Anyone</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name || u.email}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Value min</label>
+              <input type="number" min="0" className="input-field w-28" value={valueMin} onChange={(e) => setValueMin(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Value max</label>
+              <input type="number" min="0" className="input-field w-28" value={valueMax} onChange={(e) => setValueMax(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Created after</label>
+              <input type="date" className="input-field" value={createdAfter} onChange={(e) => setCreatedAfter(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Created before</label>
+              <input type="date" className="input-field" value={createdBefore} onChange={(e) => setCreatedBefore(e.target.value)} />
+            </div>
+            <button type="submit" className="btn-secondary">
+              Apply
+            </button>
+            {activeFilterCount > 0 && (
+              <button
+                type="button"
+                className="text-xs text-red-600 hover:underline"
+                onClick={() => {
+                  setCategory("");
+                  setSupplierId("");
+                  setPriority("");
+                  setRequestedBy("");
+                  setValueMin("");
+                  setValueMax("");
+                  setCreatedAfter("");
+                  setCreatedBefore("");
+                }}
+              >
+                Clear filters
+              </button>
+            )}
+          </form>
+        )}
+      </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
