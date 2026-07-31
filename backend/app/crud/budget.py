@@ -37,12 +37,26 @@ from app.models.procurement import (
 # PO lifecycle states that represent a real financial commitment against a
 # budget -- draft/pending_approval haven't committed anything yet, and
 # cancelled never will.
+#
+# "invoiced" was missing here even though it's a real commitment state:
+# create_invoice flips a linked PO to "invoiced" immediately on invoice
+# creation, before matching -- an invoiced-but-unmatched PO is still
+# committed, not yet actual (that only flips once match_invoice runs; see
+# compute_actual / _MATCHED_STATUSES below). The gap made compute_committed
+# silently drop to 0 the moment an invoice was created, caught via
+# test_committed_drops_and_actual_rises_over_po_lifecycle.
+#
+# "ordered" (new status, sits between approved and sent_to_supplier) is
+# included too -- it doesn't reduce the commitment approval already
+# established.
 COMMITTED_LIFECYCLE_STATUSES = (
     "approved",
+    "ordered",
     "sent_to_supplier",
     "acknowledged",
     "partially_received",
     "fully_received",
+    "invoiced",
 )
 
 _MATCHED_STATUSES = ("matched", "matched_with_variance")

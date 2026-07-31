@@ -15,6 +15,7 @@ from app.crud.procurement import (
     get_requisition,
     get_requisitions,
     get_po_line_receipt_status,
+    po_line_requires_receipt,
     resolve_match_type_and_policy_for_po_line,
 )
 from app.events.publisher import EventPublisher
@@ -176,27 +177,33 @@ async def auto_create_receipts_for_ordered_po(
 ) -> Any | None:
     """Called when a PO transitions to lifecycle_status "ordered".
 
-    Business rule (per user request 2026-07-31): two-way-match PO lines never get
-    a receipt at all -- their invoice matches straight against the PO. Three-way-
-    match lines need a receipt to exist before they can be invoice-matched, and
-    whether that receipt should be system-generated automatically (vs. requiring
-    someone to walk through manual goods receiving) is controlled per commodity
-    scope by CommodityMatchingPolicy.auto_receive and/or
-    auto_receive_price_threshold (auto-receive if this line's total, unit_price *
-    quantity, is at or under the threshold) -- see resolve_match_type_and_policy_for_po_line.
+    Business rule (per user request 2026-07-31): lines with an *explicit*
+    two-way-match policy never get a receipt at all -- their invoice matches
+    straight against the PO. Every other line (three-way, or simply
+    unconfigured -- see po_line_requires_receipt) needs a receipt to exist
+    before it can be considered received, and whether that receipt should be
+    system-generated automatically (vs. requiring someone to walk through
+    manual goods receiving) is controlled per commodity scope by
+    CommodityMatchingPolicy.auto_receive and/or auto_receive_price_threshold
+    (auto-receive if this line's total, unit_price * quantity, is at or under
+    the threshold) -- see resolve_match_type_and_policy_for_po_line. Lines with
+    no policy configured at all are conservatively left for manual receiving
+    (there's no auto_receive signal to act on).
 
     One GoodsReceipt is created (if anything qualifies) covering every
     auto-receivable line, fully received (quantity_received = ordered quantity)
-    since this stands in for a real physical receiving step. Lines that are
-    three-way but don't qualify for auto-receive are left for a human to receive
-    manually later via the normal goods-receipt flow -- this function does not
-    touch them.
+    since this stands in for a real physical receiving step. Lines that need a
+    receipt but don't qualify for auto-receive are left for a human to receive
+    manually later via the normal goods-receipt flow (or the draft receipt
+    auto_create_draft_receipt_for_po scaffolds for them) -- this function does
+    not touch them.
 
-    If every line on the PO is two-way (nothing will ever need a receipt), this
-    also bumps the PO straight to fully_received, since it would otherwise sit at
-    "ordered" forever waiting on a receiving step that structurally never applies
-    to it (see the two_way-line exclusion in crud.procurement.create_goods_receipt's
-    all_fully_received computation, which this mirrors).
+    If every line on the PO has an explicit two-way policy (nothing will ever
+    need a receipt), this also bumps the PO straight to fully_received, since it
+    would otherwise sit at "ordered" forever waiting on a receiving step that
+    structurally never applies to it (see po_line_requires_receipt, which
+    crud.procurement.create_goods_receipt's all_fully_received computation also
+    uses).
     """
     purchase_order = await get_purchase_order(db, purchase_order_id, tenant_id=tenant_id)
     if purchase_order is None:
@@ -212,16 +219,19 @@ async def auto_create_receipts_for_ordered_po(
         return None
 
     auto_receive_lines: list[dict[str, Any]] = []
-    any_three_way = False
+    any_needs_receipt = False
     for line_item in line_items:
         match_type, policy = await resolve_match_type_and_policy_for_po_line(db, tenant_id, line_item)
-        if match_type != "three_way":
+        if not po_line_requires_receipt(match_type, policy):
+            # Explicit two-way policy -- this line never gets a receipt.
             continue
-        any_three_way = True
-        # match_type can only be "three_way" when a policy was actually resolved
-        # (the no-policy default in resolve_match_type_and_policy_for_po_line is
-        # always "two_way"), so `policy` is guaranteed non-None here.
-        assert policy is not None
+        any_needs_receipt = True
+        if policy is None:
+            # Unconfigured commodity: we know it needs *a* receipt eventually
+            # (po_line_requires_receipt's conservative default), but there's no
+            # policy telling us whether/when to auto-receive it, so leave it for
+            # manual receiving -- same as the original pre-matching-policy behavior.
+            continue
         quantity = line_item.quantity or Decimal("0.00")
         unit_price = line_item.unit_price or Decimal("0.00")
         line_total = quantity * unit_price
@@ -237,9 +247,11 @@ async def auto_create_receipts_for_ordered_po(
                 }
             )
 
-    if not any_three_way:
-        # Nothing on this PO will ever need a receipt -- don't leave it stuck at
-        # "ordered" waiting on a step that can never happen.
+    if not any_needs_receipt:
+        # Every line has an *explicit* two-way policy -- nothing on this PO will
+        # ever need a receipt, so don't leave it stuck at "ordered" waiting on a
+        # step that can never happen. (Unconfigured lines don't hit this branch:
+        # po_line_requires_receipt treats "no policy" as "needs a receipt".)
         purchase_order.lifecycle_status = "fully_received"
         await db.commit()
         return None
@@ -267,14 +279,15 @@ async def auto_create_draft_receipt_for_po(
     db: Any, purchase_order_id: UUID | str, *, actor_id: UUID, tenant_id: UUID | str | None = None
 ) -> Any | None:
     """Auto-create a draft receipt when a PO is ordered (Receipts Auto-Creation
-    spec sec 1.1): one receipt line per three-way-match PO line still needing
-    manual receiving, with received qty 0 and balance = PO qty.
+    spec sec 1.1): one receipt line per PO line still needing manual receiving
+    (per po_line_requires_receipt -- three-way, or simply unconfigured), with
+    received qty 0 and balance = PO qty.
 
     Lines that were already auto-received (fully received) by
-    auto_create_receipts_for_ordered_po, and two-way lines (which never get a
-    receipt), are skipped. A draft is only created when the PO has no open
-    (draft/submitted/in-review/approved) receipt yet -- spec sec 1.4 "only one
-    open receipt per PO line at a time".
+    auto_create_receipts_for_ordered_po, and lines with an explicit two-way
+    policy (which never get a receipt), are skipped. A draft is only created
+    when the PO has no open (draft/submitted/in-review/approved) receipt yet --
+    spec sec 1.4 "only one open receipt per PO line at a time".
     """
     from app.crud.procurement import create_goods_receipt
     from app.services.receipt_workflow import RECEIPT_OPEN_STATUSES
@@ -298,8 +311,8 @@ async def auto_create_draft_receipt_for_po(
 
     draft_lines: list[dict] = []
     for line_item in getattr(purchase_order, "line_items", None) or []:
-        match_type, _policy = await resolve_match_type_and_policy_for_po_line(db, tenant_id, line_item)
-        if match_type != "three_way":
+        match_type, policy = await resolve_match_type_and_policy_for_po_line(db, tenant_id, line_item)
+        if not po_line_requires_receipt(match_type, policy):
             continue
         status = await get_po_line_receipt_status(db, line_item.id)
         if status["outstanding_quantity"] > Decimal("0.00"):

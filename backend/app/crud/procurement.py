@@ -1153,16 +1153,18 @@ async def create_goods_receipt(
     goods_receipt.has_exceptions = exception_detected
     await db.flush()
 
-    # Recompute PO lifecycle status based on receipt progress. Two-way-match
-    # lines never get a receipt at all (see resolve_match_type_and_policy_for_po_line)
-    # so they must be excluded from the "fully received" requirement -- otherwise
-    # any PO with even one two-way line could never reach fully_received, since
-    # that line's accepted_quantity would permanently read 0.
+    # Recompute PO lifecycle status based on receipt progress. Lines with an
+    # *explicit* two-way-match policy never get a receipt (see
+    # po_line_requires_receipt) so they're excluded from the "fully received"
+    # requirement -- otherwise any PO with such a line could never reach
+    # fully_received, since that line's accepted_quantity would permanently
+    # read 0. Unconfigured lines (no policy at all) keep requiring a receipt,
+    # same as before matching policies existed.
     all_fully_received = True
     any_received = False
     for line_id, line_item in line_item_map.items():
-        match_type, _policy = await resolve_match_type_and_policy_for_po_line(db, tenant_id, line_item)
-        if match_type != "three_way":
+        match_type, policy = await resolve_match_type_and_policy_for_po_line(db, tenant_id, line_item)
+        if not po_line_requires_receipt(match_type, policy):
             continue
         status = await get_po_line_receipt_status(db, line_id)
         if status["accepted_quantity"] > Decimal("0.00"):
@@ -1455,6 +1457,23 @@ async def resolve_match_type_and_policy_for_po_line(
     policy = await resolve_matching_policy(db, tenant_id=tenant_id, commodity_code=commodity_code or "")
     match_type = policy.required_match_type if policy is not None else "two_way"
     return match_type, policy
+
+
+def po_line_requires_receipt(match_type: str, policy: CommodityMatchingPolicy | None) -> bool:
+    """Whether a PO line needs a goods receipt before it can count toward the
+    PO's own receiving progress (partially_received/fully_received) and before
+    its invoice can three-way match.
+
+    IMPORTANT: this is deliberately NOT simply `match_type == "three_way"`.
+    resolve_match_type_and_policy_for_po_line defaults an *unconfigured*
+    commodity (no CommodityMatchingPolicy row at all) to "two_way" -- that
+    default exists so invoice matching has a safe fallback, not to silently
+    exempt every not-yet-configured line from receiving. Only an *explicit*
+    two_way policy exempts a line; no policy at all means "unknown, assume it
+    still needs receiving" (the original, pre-matching-policy behavior every
+    existing test and PO in production already assumes).
+    """
+    return not (policy is not None and match_type == "two_way")
 
 
 async def _get_effective_match_type_for_invoice_line(
