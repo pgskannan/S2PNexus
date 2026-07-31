@@ -14,6 +14,7 @@ to be invoked periodically (e.g. by a scheduled job) or on-demand via the API.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
 
@@ -23,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow import Notification, WorkflowDefinition, WorkflowInstance, WorkflowTask
 from app.schemas.workflow import WorkflowDefinitionCreate, WorkflowInstanceStart
+from app.services.approval_audit import compute_sla_due_at, record_approval_event, record_task_sla_metric
 
 _OPERATORS = {
     "eq": lambda a, b: a == b,
@@ -63,9 +65,27 @@ async def create_workflow_definition(
         description=definition_in.description,
         steps=steps,
         is_active=definition_in.is_active,
+        status=definition_in.status or "published",
         created_by=created_by,
     )
     db.add(definition)
+    await db.commit()
+    await db.refresh(definition)
+    return definition
+
+
+async def set_workflow_definition_status(
+    db: AsyncSession, definition_id: UUID | str, *, status: str
+) -> Optional[WorkflowDefinition]:
+    """Transition a definition between draft / published / archived (spec sec 3)."""
+    definition = await get_workflow_definition(db, definition_id)
+    if definition is None:
+        return None
+    if status not in ("draft", "published", "archived"):
+        raise ValueError("status must be one of draft, published, archived")
+    definition.status = status
+    # Published definitions are active; archived are inactive.
+    definition.is_active = status == "published"
     await db.commit()
     await db.refresh(definition)
     return definition
@@ -201,15 +221,94 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
             step_index += 1
             continue
 
-        if step_type == "approval":
-            escalate_after_hours = step.get("escalate_after_hours")
-            due_at = (
-                datetime.now(timezone.utc) + timedelta(hours=escalate_after_hours)
-                if escalate_after_hours
-                else None
+        if step_type == "auto":
+            # Deterministic auto-approval node (approval workflow spec sec 3).
+            await record_approval_event(
+                db,
+                tenant_id=instance.context.get("tenant_id"),
+                document_type=instance.entity_type,
+                document_id=instance.entity_id,
+                workflow_version_id=instance.definition_id,
+                node_id=str(step_index),
+                node_type="AUTO",
+                action="AUTO_APPROVED",
+                comments=step.get("name", "Auto-approval"),
             )
-            for approver in step.get("approvers", []):
-                approver_id = _normalize_uuid(approver)
+            step_index += 1
+            continue
+
+        if step_type == "ai":
+            # AI node (spec sec 3): evaluate deterministic + AI rules.
+            from app.services.approval_rule_engine import evaluate_rules
+
+            decision = evaluate_rules(instance.entity_type, instance.context, {"rules": step.get("rules", {})})
+            if decision.get("auto_approve"):
+                await record_approval_event(
+                    db,
+                    tenant_id=instance.context.get("tenant_id"),
+                    document_type=instance.entity_type,
+                    document_id=instance.entity_id,
+                    workflow_version_id=instance.definition_id,
+                    node_id=str(step_index),
+                    node_type="AI",
+                    action="AUTO_APPROVED",
+                    comments=step.get("name", "AI auto-approval"),
+                    ai_flags=decision.get("ai_flags"),
+                    ai_explanation_ref=step.get("name"),
+                )
+                step_index += 1
+                continue
+            # Not auto-approvable: fall through to an approval node for the
+            # suggested role (or the role configured on the step).
+            step = {
+                **step,
+                "approvers": [],
+                "role_code": decision.get("suggested_role") or step.get("role_code"),
+                "name": step.get("name", "Approval"),
+            }
+            step_type = "approval"
+
+        if step_type == "approval":
+            approver_ids: list[UUID] = []
+            explicit = step.get("approvers") or []
+            if explicit:
+                approver_ids = [_normalize_uuid(a) for a in explicit]
+            elif step.get("role_code"):
+                # Rule-driven approver resolution from ApproverSeed master data
+                # (spec sec 1 + sec 3): role + limits + scope + primary/backup.
+                from app.crud.approval import resolve_approvers_for_context
+
+                resolved = await resolve_approvers_for_context(
+                    db,
+                    role_code=step["role_code"],
+                    amount=Decimal(str(instance.context.get("amount") or "0")),
+                    category=instance.context.get("category"),
+                    supplier_id=(
+                        str(instance.context["supplier_id"]) if instance.context.get("supplier_id") else None
+                    ),
+                    tenant_id=instance.context.get("tenant_id"),
+                )
+                approver_ids = [UUID(a["user_id"]) for a in resolved]
+
+            if not approver_ids:
+                # No approvers resolvable -- skip this node rather than hang.
+                step_index += 1
+                continue
+
+            escalate_after_hours = step.get("escalate_after_hours")
+            due_at = None
+            sla_due, _sla_id = await compute_sla_due_at(
+                db,
+                tenant_id=instance.context.get("tenant_id"),
+                document_type=instance.entity_type,
+                role_code=step.get("role_code"),
+            )
+            if sla_due is not None:
+                due_at = sla_due
+            elif escalate_after_hours:
+                due_at = datetime.now(timezone.utc) + timedelta(hours=escalate_after_hours)
+
+            for approver_id in approver_ids:
                 db.add(
                     WorkflowTask(
                         instance_id=instance.id,
@@ -416,6 +515,38 @@ async def complete_task(
                 details={"task_id": str(task.id), "comments": comments},
             )
         )
+
+    # Approval audit trail + SLA metric (Unified Approval Workflow spec sec 4).
+    actor_role_code = None
+    try:
+        from app.crud.approval import list_approver_seeds
+
+        seeds = await list_approver_seeds(db, role_code=None, active_only=False, limit=1)
+        from app.models.approval import ApproverSeed
+        from sqlalchemy import select as _select
+
+        seed = (
+            await db.execute(_select(ApproverSeed).where(ApproverSeed.user_id == actor_id, ApproverSeed.active_flag.is_(True)).limit(1))
+        ).scalar_one_or_none()
+        if seed is not None:
+            actor_role_code = seed.role_code
+    except Exception:
+        actor_role_code = None
+
+    await record_approval_event(
+        db,
+        tenant_id=instance.context.get("tenant_id"),
+        document_type=instance.entity_type,
+        document_id=instance.entity_id,
+        workflow_version_id=instance.definition_id,
+        node_id=str(task.step_index),
+        node_type="APPROVAL",
+        action="APPROVED" if decision == "approve" else "REJECTED",
+        actor_user_id=actor_id,
+        actor_role_code=actor_role_code,
+        comments=comments,
+    )
+    await record_task_sla_metric(db, task)
 
     await db.commit()
     await db.refresh(task)

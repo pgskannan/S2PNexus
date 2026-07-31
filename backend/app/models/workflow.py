@@ -46,6 +46,10 @@ class WorkflowDefinition(Base):
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True, comment="e.g. contract, procurement_requisition, sourcing_event")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     steps: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list, comment="Ordered list of step definitions")
+    # Definition lifecycle (approval workflow spec sec 3): draft / published /
+    # archived. `is_active` is retained for backward compatibility -- the
+    # runtime only starts instances from published + active definitions.
+    status: Mapped[str] = mapped_column(String(20), default="published", nullable=False, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

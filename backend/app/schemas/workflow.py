@@ -8,19 +8,22 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-STEP_TYPES = ("condition", "approval", "notification")
+STEP_TYPES = ("condition", "approval", "notification", "auto", "ai")
 
 
 class WorkflowStep(BaseModel):
     """One step of a workflow definition. Field relevance depends on step_type:
 
     - condition: field, operator, value, on_true_next_step, on_false_next_step
-    - approval: approvers, required_approvals, escalate_after_hours, escalate_to
+    - approval: approvers (or role_code for rule-driven resolution),
+      required_approvals, escalate_after_hours, escalate_to
+    - auto: deterministic auto-approval
+    - ai: rules (deterministic + AI) may auto-approve or fall through to a role
     - notification: recipients, message_template
     """
 
     name: str = Field(..., min_length=1, max_length=255)
-    step_type: Literal["condition", "approval", "notification"]
+    step_type: Literal["condition", "approval", "notification", "auto", "ai"]
 
     # condition
     field: Optional[str] = None
@@ -29,11 +32,13 @@ class WorkflowStep(BaseModel):
     on_true_next_step: Optional[int] = None
     on_false_next_step: Optional[int] = None
 
-    # approval
+    # approval / ai
     approvers: list[UUID] = Field(default_factory=list)
+    role_code: Optional[str] = None
     required_approvals: int = Field(default=1, ge=1)
     escalate_after_hours: Optional[int] = Field(default=None, ge=1)
     escalate_to: Optional[UUID] = None
+    rules: dict[str, Any] = Field(default_factory=dict)
 
     # notification
     recipients: list[UUID] = Field(default_factory=list)
@@ -46,6 +51,9 @@ class WorkflowDefinitionCreate(BaseModel):
     description: Optional[str] = None
     steps: list[WorkflowStep] = Field(..., min_length=1)
     is_active: bool = Field(default=True)
+    # Definition lifecycle: draft / published / archived (defaults to published
+    # for backward compatibility).
+    status: Optional[str] = Field(default=None, pattern="^(draft|published|archived)$")
 
 
 class WorkflowDefinitionResponse(BaseModel):
@@ -57,6 +65,7 @@ class WorkflowDefinitionResponse(BaseModel):
     description: Optional[str] = None
     steps: list[dict]
     is_active: bool
+    status: str = "published"
     created_by: UUID
     created_at: datetime
     updated_at: datetime

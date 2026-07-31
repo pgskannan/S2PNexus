@@ -20,6 +20,8 @@ from app.database.database import close_db, db_manager, init_db
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.routers import health, auth, users, suppliers, contracts, documents, analytics, ai, procurement, sourcing, workflow, document_numbering, org_structure
+from app.routers.approval import router as approval_router
+from app.routers.approval import workflow_router as approval_workflow_router
 from app.routers.commodity import router as commodity_router
 from app.routers.gl_accounts import router as gl_accounts_router
 from app.routers.categories import router as categories_router
@@ -312,6 +314,8 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
     app.include_router(procurement.router, prefix="/api/v1", tags=["Procurement"])
     app.include_router(sourcing.router, prefix="/api/v1/sourcing", tags=["Sourcing"])
     app.include_router(workflow.router, prefix="/api/v1/workflow", tags=["Workflow"])
+    app.include_router(approval_router, prefix="/api/v1", tags=["Approval"])
+    app.include_router(approval_workflow_router, prefix="/api/v1/workflow", tags=["Workflow"])
     app.include_router(document_numbering.router, prefix="/api/v1", tags=["Document Numbering"])
     app.include_router(commodity_router, prefix="/api/v1", tags=["Commodity Codes"])
     app.include_router(gl_accounts_router, prefix="/api/v1", tags=["GL Accounts"])
