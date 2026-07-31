@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { extractErrorMessage, listGoodsReceipts } from "@/lib/api";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
-import ProcurementTabs from "@/components/ProcurementTabs";
 import type { GoodsReceipt } from "@/lib/types";
 
 const statusColors: Record<string, string> = {
@@ -63,7 +62,6 @@ export default function ReceiptsPage() {
 
   return (
     <div className="space-y-6">
-      <ProcurementTabs />
       <div>
         <h1 className="text-2xl font-semibold">Receipts</h1>
         <p className="mt-1 text-sm text-slate-500">Track goods received against purchase orders.</p>

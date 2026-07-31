@@ -6,7 +6,6 @@ import { listRequisitions, listSuppliers, listUserDirectory, deleteRequisition, 
 import CategoryInput from "@/components/CategoryInput";
 import { StatusBadge } from "@/components/StatusBadge";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
-import ProcurementTabs from "@/components/ProcurementTabs";
 import type { Requisition, Supplier } from "@/lib/types";
 
 type StatusFilter = "" | "draft" | "submitted" | "pending_approval" | "approved" | "rejected" | "returned" | "po_created" | "closed";
@@ -292,7 +291,6 @@ export default function RequisitionsPage() {
 
   return (
     <div className="space-y-6">
-      <ProcurementTabs />
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Requisitions</h1>
         <Link href="/dashboard/requisitions/new" className="btn-primary">

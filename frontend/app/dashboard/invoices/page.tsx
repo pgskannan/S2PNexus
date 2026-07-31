@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { extractErrorMessage, listInvoices } from "@/lib/api";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
-import ProcurementTabs from "@/components/ProcurementTabs";
 import type { ProcurementInvoice } from "@/lib/types";
 
 const statusColors: Record<string, string> = {
@@ -71,7 +70,6 @@ export default function InvoicesPage() {
 
   return (
     <div className="space-y-6">
-      <ProcurementTabs />
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Invoices</h1>
