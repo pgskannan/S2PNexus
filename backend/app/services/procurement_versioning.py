@@ -280,6 +280,22 @@ def validate_line_removal(state: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _json_safe(value: Any) -> Any:
+    """Recursively coerce values into JSON-serializable form so change diffs can
+    be stored in JSON columns (UUIDs, Decimals, datetimes are common in diffs)."""
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
 def is_po_relevant_field(field: str) -> bool:
     return field in PO_RELEVANT_HEADER_FIELDS or field in PO_RELEVANT_LINE_FIELDS
 
@@ -300,12 +316,13 @@ async def record_pr_version(
     bundle this with its own transaction.
     """
     requisition.version_number = (requisition.version_number or 1) + 1
+    safe_changes = _json_safe(changes)
     db.add(
         ProcurementRequisitionVersion(
             requisition_id=requisition.id,
             version_number=requisition.version_number,
             change_type=change_type,
-            changes=changes,
+            changes=safe_changes,
             created_by=actor_id,
         )
     )
@@ -314,7 +331,7 @@ async def record_pr_version(
             requisition_id=requisition.id,
             actor_id=actor_id,
             action="version:created",
-            details={"version_number": requisition.version_number, "change_type": change_type, "changes": changes},
+            details={"version_number": requisition.version_number, "change_type": change_type, "changes": safe_changes},
         )
     )
     if commit:
@@ -513,7 +530,7 @@ async def apply_pr_changes_to_po(
             purchase_order_id=po.id,
             version_number=po.version_number,
             change_type="amendment",
-            changes={"source": f"PR-V{changes.get('pr_version', '?')}", **changes},
+            changes={"source": f"PR-V{changes.get('pr_version', '?')}", **_json_safe(changes)},
             created_by=actor_id,
         )
     )
@@ -612,7 +629,7 @@ async def split_purchase_order_from_pr(
             purchase_order_id=source.id,
             version_number=source.version_number,
             change_type="split",
-            changes={"split_into": new_po.order_number, "source": "pr_version", **changes},
+            changes={"split_into": new_po.order_number, "source": "pr_version", **_json_safe(changes)},
             created_by=actor_id,
         )
     )

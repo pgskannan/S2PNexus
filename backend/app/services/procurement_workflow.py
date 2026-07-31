@@ -14,6 +14,7 @@ from app.crud.procurement import (
     get_purchase_order,
     get_requisition,
     get_requisitions,
+    get_po_line_receipt_status,
     resolve_match_type_and_policy_for_po_line,
 )
 from app.events.publisher import EventPublisher
@@ -255,6 +256,72 @@ async def auto_create_receipts_for_ordered_po(
             "inspection_status": "pending",
             "notes": "System-generated: auto-received on PO ordered per commodity matching policy.",
             "line_items": auto_receive_lines,
+        },
+        created_by=actor_id,
+        tenant_id=tenant_id,
+    )
+    return receipt
+
+
+async def auto_create_draft_receipt_for_po(
+    db: Any, purchase_order_id: UUID | str, *, actor_id: UUID, tenant_id: UUID | str | None = None
+) -> Any | None:
+    """Auto-create a draft receipt when a PO is ordered (Receipts Auto-Creation
+    spec sec 1.1): one receipt line per three-way-match PO line still needing
+    manual receiving, with received qty 0 and balance = PO qty.
+
+    Lines that were already auto-received (fully received) by
+    auto_create_receipts_for_ordered_po, and two-way lines (which never get a
+    receipt), are skipped. A draft is only created when the PO has no open
+    (draft/submitted/in-review/approved) receipt yet -- spec sec 1.4 "only one
+    open receipt per PO line at a time".
+    """
+    from app.crud.procurement import create_goods_receipt
+    from app.services.receipt_workflow import RECEIPT_OPEN_STATUSES
+
+    purchase_order = await get_purchase_order(db, purchase_order_id, tenant_id=tenant_id)
+    if purchase_order is None:
+        return None
+
+    if db is not None and hasattr(db, "execute"):
+        from app.models.procurement import GoodsReceipt as _GR
+        from sqlalchemy import select as _select
+
+        open_result = await db.execute(
+            _select(_GR).where(
+                _GR.purchase_order_id == purchase_order.id,
+                _GR.status.in_(RECEIPT_OPEN_STATUSES),
+            )
+        )
+        if open_result.scalars().first() is not None:
+            return None
+
+    draft_lines: list[dict] = []
+    for line_item in getattr(purchase_order, "line_items", None) or []:
+        match_type, _policy = await resolve_match_type_and_policy_for_po_line(db, tenant_id, line_item)
+        if match_type != "three_way":
+            continue
+        status = await get_po_line_receipt_status(db, line_item.id)
+        if status["outstanding_quantity"] > Decimal("0.00"):
+            draft_lines.append(
+                {
+                    "purchase_order_line_item_id": line_item.id,
+                    "quantity_received": "0",
+                    "quantity_rejected": "0",
+                }
+            )
+
+    if not draft_lines:
+        return None
+
+    receipt = await create_goods_receipt(
+        db,
+        purchase_order.id,
+        {
+            "status": "draft",
+            "receipt_type": "standard",
+            "notes": "System-generated: draft receipt auto-created on PO ordered.",
+            "line_items": draft_lines,
         },
         created_by=actor_id,
         tenant_id=tenant_id,

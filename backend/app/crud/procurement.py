@@ -50,6 +50,24 @@ from app.services.procurement_versioning import (
     validate_line_change,
     validate_line_removal,
 )
+from app.services.procurement_change_control import (
+    po_has_open_dispute,
+    po_has_pending_invoice,
+    po_has_pending_receipt,
+    pr_change_requires_reapproval,
+    validate_po_cancel,
+    validate_po_change,
+    validate_po_close,
+    validate_po_reopen,
+    validate_pr_cancel,
+    validate_pr_editable,
+)
+from app.services.receipt_workflow import (
+    auto_create_next_receipt_for_balance,
+    evaluate_receipt_tolerance,
+    maybe_auto_close_po,
+    validate_receipt_transition,
+)
 
 
 def _build_search_text(requisition: ProcurementRequisition) -> str:
@@ -232,15 +250,25 @@ async def update_requisition(
     tenant_id: Optional[UUID] = None,
     actor_id: Optional[UUID] = None,
 ) -> Optional[ProcurementRequisition]:
-    """Update a requisition. When `actor_id` is supplied and a PO-relevant header
-    field changes, a new PR version (PR-V{n+1}) is recorded -- the versioning
-    engine's state-aware rules are enforced when the change is later applied to
-    the linked PO on approval (see app.services.procurement_versioning).
+    """Update a requisition with change-control enforcement.
+
+    - The PR is read-only once a PO has been created, or once it is closed /
+      cancelled / rejected (spec sec 1.1/1.4). Raises ValueError otherwise.
+    - When `actor_id` is supplied and a PO-relevant header field changes, a new
+      PR version (PR-V{n+1}) is recorded.
+    - Workflow-impacting changes (supplier/category/GL) on a non-draft PR drop
+      it back to pending_approval so it is re-approved (spec sec 1.3).
     """
     requisition = await get_requisition(db, requisition_id, tenant_id=tenant_id)
     if not requisition:
         return None
     update_data = requisition_in.model_dump(exclude_unset=True)
+    if not update_data:
+        return requisition
+
+    # Change-control gate: no edits past PO creation / close / cancel, or when
+    # a receipt or invoice already exists against a linked PO.
+    validate_pr_editable(requisition)
 
     # Diff only the PO-relevant header fields -- anything else (description,
     # priority, status flags) is internal and doesn't create a version.
@@ -252,6 +280,17 @@ async def update_requisition(
     for field, value in update_data.items():
         setattr(requisition, field, value)
     requisition.search_text = _build_search_text(requisition)
+
+    # Re-approval rules (spec 1.3): a workflow-impacting change to a PR that
+    # has left draft (submitted / in approval / approved, PO not created) sends
+    # it back to pending_approval for a fresh approval pass.
+    if changes:
+        requires_reapproval, reasons = pr_change_requires_reapproval(requisition, changes)
+        if requires_reapproval and requisition.lifecycle_status in ("submitted", "pending_approval", "approved"):
+            requisition.lifecycle_status = "pending_approval"
+            requisition.status = "pending_approval"
+            requisition.approval_status = "pending"
+            changes["_reapproval_required"] = reasons
 
     if actor_id is not None and changes:
         await record_pr_version(db, requisition, actor_id=actor_id, changes=changes, commit=False)
@@ -274,6 +313,20 @@ async def transition_requisition(
     requisition = await get_requisition(db, requisition_id, tenant_id=tenant_id)
     if not requisition:
         return None
+    if lifecycle_status == "cancelled":
+        # PR cancel restrictions (spec sec 2): cannot cancel once a PO exists
+        # (or with committed contract funds / consumed budget). The PO check is
+        # a direct query rather than the relationship so it can't be affected
+        # by identity-map/caching of the collection.
+        po_exists = (
+            await db.execute(select(PurchaseOrder.id).where(PurchaseOrder.requisition_id == requisition.id).limit(1))
+        ).first() is not None
+        validate_pr_cancel(
+            requisition,
+            has_po=po_exists,
+            committed_funds=False,
+            budget_consumed=False,
+        )
     requisition.status = new_status
     requisition.lifecycle_status = lifecycle_status
     now = datetime.now(timezone.utc)
@@ -674,6 +727,9 @@ async def amend_purchase_order(
     purchase_order = await get_purchase_order(db, purchase_order_id, tenant_id=tenant_id)
     if not purchase_order:
         return None
+    # PO change restriction (spec sec 3.3): cannot amend a PO that is fully
+    # received / invoiced / closed / cancelled, or one the supplier rejected.
+    validate_po_change(purchase_order, reason="amended")
     purchase_order.version_number += 1
     purchase_order.amendment_status = change_type
     purchase_order.change_order_reference = f"CO-{purchase_order.version_number}"
@@ -698,6 +754,9 @@ async def add_purchase_order_line_item(
     po = await get_purchase_order(db, purchase_order_id, tenant_id=tenant_id)
     if not po:
         raise ValueError("Purchase order not found")
+    # PO change restriction (spec sec 3.3): cannot add lines to a PO that is
+    # fully received / invoiced / closed / cancelled.
+    validate_po_change(po, reason="changed")
     # determine next line_number
     last_num = 0
     for l in po.line_items:
@@ -791,7 +850,9 @@ async def transition_purchase_order_lifecycle(
     po = await get_purchase_order(db, purchase_order_id, tenant_id=tenant_id)
     if not po:
         return None
-    # simple state machine validation
+    # State machine (spec lifecycle). `cancelled` / `closed` can only reopen via
+    # the dedicated "reopened" state, and a reopened PO goes back to an open
+    # (non-terminal) lifecycle.
     allowed = {
         "draft": {"pending_approval"},
         "pending_approval": {"approved", "cancelled"},
@@ -799,9 +860,12 @@ async def transition_purchase_order_lifecycle(
         "ordered": {"sent_to_supplier", "fully_received", "partially_received", "cancelled"},
         "sent_to_supplier": {"acknowledged", "cancelled"},
         "acknowledged": {"partially_received", "fully_received", "cancelled"},
-        "partially_received": {"fully_received", "cancelled"},
+        "partially_received": {"fully_received", "cancelled", "closed"},
         "fully_received": {"invoiced", "closed"},
         "invoiced": {"closed"},
+        "closed": {"reopened"},
+        "cancelled": {"reopened"},
+        "reopened": {"ordered", "sent_to_supplier", "partially_received", "fully_received", "cancelled"},
     }
     cur = po.lifecycle_status
     if cur == new_lifecycle_status:
@@ -813,10 +877,45 @@ async def transition_purchase_order_lifecycle(
             # Raises ValueError on a hard-enforcement overage, aborting the
             # transition before any state is mutated.
             budget_warnings = await _check_po_budget_on_approval(db, po, tenant_id)
+
+        # Change-control gates (spec sec 4/5/6).
+        if new_lifecycle_status == "cancelled":
+            validate_po_cancel(po)
+        elif new_lifecycle_status == "closed":
+            validate_po_close(
+                po,
+                pending_invoice=await po_has_pending_invoice(po),
+                pending_receipt=await po_has_pending_receipt(po),
+                open_dispute=await po_has_open_dispute(po),
+            )
+        elif new_lifecycle_status == "reopened":
+            validate_po_reopen(po, invoice_fully_matched=await po_has_fully_matched_invoice(po))
+
         po.lifecycle_status = new_lifecycle_status
         now = datetime.now(timezone.utc)
         if new_lifecycle_status == "approved":
             po.approved_at = now
+
+        # Audit trail (spec sec 8): record a version snapshot for every
+        # commercial lifecycle move (cancel / close / reopen).
+        if new_lifecycle_status in ("cancelled", "closed", "reopened"):
+            po.amendment_status = new_lifecycle_status
+            po.version_number += 1
+            po.change_order_reference = f"{new_lifecycle_status.upper()}-{po.version_number}"
+            db.add(
+                PurchaseOrderVersion(
+                    purchase_order_id=po.id,
+                    version_number=po.version_number,
+                    change_type=new_lifecycle_status,
+                    changes={
+                        "lifecycle": new_lifecycle_status,
+                        "previous": cur,
+                        "remaining_quantity": [str(getattr(l, "quantity", 0)) for l in po.line_items],
+                    },
+                    created_by=actor_id,
+                )
+            )
+
         await db.commit()
         await db.refresh(po)
         # Transient, non-persisted attribute -- lets callers (routers/tests)
@@ -825,6 +924,14 @@ async def transition_purchase_order_lifecycle(
         po.budget_warnings = budget_warnings
         return po
     raise ValueError(f"Invalid lifecycle transition from {cur} to {new_lifecycle_status}")
+
+
+async def po_has_fully_matched_invoice(po: PurchaseOrder) -> bool:
+    """True if any linked invoice is fully matched (spec 6.2 -- cannot reopen)."""
+    for inv in getattr(po, "invoices", None) or []:
+        if inv.match_status in ("matched", "matched_with_variance"):
+            return True
+    return False
 
 
 async def acknowledge_purchase_order(
@@ -1070,6 +1177,99 @@ async def create_goods_receipt(
     await db.commit()
     await db.refresh(goods_receipt)
     return goods_receipt
+
+
+async def submit_goods_receipt(
+    db: AsyncSession, goods_receipt_id: UUID, *, actor_id: UUID, tenant_id: Optional[UUID] = None
+) -> Optional[GoodsReceipt]:
+    """Receipt workflow: Draft -> Submitted (or In Review when tolerance is
+    exceeded / approval is required). Runs the tolerance check on submit, which
+    sets approval_required and routes the receipt to an approver when needed."""
+    receipt = await get_goods_receipt(db, goods_receipt_id, tenant_id=tenant_id)
+    if receipt is None:
+        return None
+    validate_receipt_transition(receipt.status, "submitted")
+    po = await get_purchase_order(db, receipt.purchase_order_id, tenant_id=tenant_id)
+    if po is None:
+        raise ValueError("Purchase order not found")
+    tolerance = await evaluate_receipt_tolerance(db, po, receipt, tenant_id=tenant_id)
+    receipt.approval_required = tolerance["requires_approval"]
+    receipt.status = "in_review" if tolerance["requires_approval"] else "submitted"
+    receipt.submitted_at = datetime.now(timezone.utc)
+    db.add(
+        ProcurementAuditEvent(
+            requisition_id=po.requisition_id,
+            actor_id=actor_id,
+            action=f"receipt:submitted",
+            details={"receipt_id": str(receipt.id), "requires_approval": receipt.approval_required, "exceptions": tolerance["exceptions"]},
+        )
+    )
+    await db.commit()
+    await db.refresh(receipt)
+    return receipt
+
+
+async def approve_goods_receipt(
+    db: AsyncSession, goods_receipt_id: UUID, *, actor_id: UUID, tenant_id: Optional[UUID] = None
+) -> Optional[GoodsReceipt]:
+    """Receipt workflow: Submitted / In Review -> Approved."""
+    receipt = await get_goods_receipt(db, goods_receipt_id, tenant_id=tenant_id)
+    if receipt is None:
+        return None
+    validate_receipt_transition(receipt.status, "approved")
+    receipt.status = "approved"
+    receipt.approved_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(receipt)
+    return receipt
+
+
+async def reject_goods_receipt(
+    db: AsyncSession,
+    goods_receipt_id: UUID,
+    *,
+    actor_id: UUID,
+    reason: Optional[str] = None,
+    tenant_id: Optional[UUID] = None,
+) -> Optional[GoodsReceipt]:
+    """Receipt workflow: Submitted / In Review / Approved -> Rejected."""
+    receipt = await get_goods_receipt(db, goods_receipt_id, tenant_id=tenant_id)
+    if receipt is None:
+        return None
+    validate_receipt_transition(receipt.status, "rejected")
+    receipt.status = "rejected"
+    receipt.rejected_at = datetime.now(timezone.utc)
+    receipt.rejection_reason = reason
+    await db.commit()
+    await db.refresh(receipt)
+    return receipt
+
+
+async def post_goods_receipt(
+    db: AsyncSession, goods_receipt_id: UUID, *, actor_id: UUID, tenant_id: Optional[UUID] = None
+) -> Optional[GoodsReceipt]:
+    """Receipt workflow: Approved -> Posted.
+
+    Posting is the terminal step (spec sec 3.4): inventory is updated (no
+    inventory module yet -- gap), the PO lifecycle is recomputed, the PO
+    auto-closes when fully received with no pending invoice blocks, and a new
+    draft receipt is auto-created if a balance quantity remains (spec sec 1.2).
+    """
+    receipt = await get_goods_receipt(db, goods_receipt_id, tenant_id=tenant_id)
+    if receipt is None:
+        return None
+    validate_receipt_transition(receipt.status, "posted")
+    receipt.status = "posted"
+    receipt.posted_at = datetime.now(timezone.utc)
+
+    po = await get_purchase_order(db, receipt.purchase_order_id, tenant_id=tenant_id)
+    if po is not None:
+        await maybe_auto_close_po(db, po, actor_id=actor_id, tenant_id=tenant_id)
+        await auto_create_next_receipt_for_balance(db, po, actor_id=actor_id, tenant_id=tenant_id)
+
+    await db.commit()
+    await db.refresh(receipt)
+    return receipt
 
 
 async def get_recent_goods_receipts(db: AsyncSession, *, limit: int = 5) -> list[GoodsReceipt]:

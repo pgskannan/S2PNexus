@@ -359,6 +359,14 @@ class GoodsReceiptResponse(BaseModel):
     tracking_number: Optional[str] = None
     delivery_note_reference: Optional[str] = None
     has_exceptions: bool = False
+    # Receipt workflow lifecycle (Unified Receipts spec sec 5.3): Draft ->
+    # Submitted -> In Review -> Approved -> Posted (or Rejected).
+    approval_required: bool = False
+    submitted_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    posted_at: Optional[datetime] = None
+    rejected_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
     line_items: list[GoodsReceiptLineItemResponse] = []
     created_by: UUID
     created_at: datetime

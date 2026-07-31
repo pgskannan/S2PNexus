@@ -266,6 +266,16 @@ class GoodsReceipt(Base):
     tracking_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     delivery_note_reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
     has_exceptions: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # Receipt workflow lifecycle (Unified Receipts spec): Draft -> Submitted ->
+    # In Review -> Approved -> Posted (or Rejected). `approval_required` is set
+    # by the tolerance check when a receipt must route to an approver instead of
+    # posting directly. Timestamps snapshot each step for the audit trail.
+    approval_required: Mapped[bool] = mapped_column(default=False, nullable=False)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

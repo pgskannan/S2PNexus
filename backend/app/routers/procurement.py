@@ -41,6 +41,10 @@ from app.crud.procurement import (
     transition_requisition,
     update_requisition,
     update_requisition_line_item,
+    submit_goods_receipt,
+    approve_goods_receipt,
+    reject_goods_receipt,
+    post_goods_receipt,
 )
 from app.crud.accounting_split import get_line_item_splits, set_line_item_splits
 from app.database.session import get_db
@@ -87,6 +91,7 @@ from app.services.goods_receipt_workflow import start_goods_receipt_exception_wo
 from app.services.invoice_workflow import start_invoice_exception_workflow
 from app.services.procurement_workflow import (
     apply_procurement_transition_workflow,
+    auto_create_draft_receipt_for_po,
     auto_create_po_from_requisition,
     auto_create_receipts_for_ordered_po,
     process_deferred_po_creation,
@@ -102,6 +107,7 @@ from app.services.procurement_versioning import (
     get_requisition_versions,
     split_purchase_order_from_pr,
 )
+from app.services.ok_to_pay import build_ok_to_pay
 from app.utils.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/procurement", tags=["Procurement"])
@@ -198,7 +204,12 @@ async def update_requisition_endpoint(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> ProcurementRequisitionResponse:
-    requisition = await update_requisition(db, requisition_id, requisition_update, tenant_id=current_user.tenant_id, actor_id=current_user.id)
+    try:
+        requisition = await update_requisition(db, requisition_id, requisition_update, tenant_id=current_user.tenant_id, actor_id=current_user.id)
+    except ValueError as exc:
+        # Change-control violation (e.g. PR is po_created / closed, receipt or
+        # invoice exists) -- a client-actionable 400, not a server error.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if not requisition:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     return ProcurementRequisitionResponse.model_validate(requisition)
@@ -261,7 +272,12 @@ async def transition_requisition_endpoint(
         details=transition_data.details,
         tenant_id=current_user.tenant_id,
     )
-    requisition = await handler.handle(command, db=db, actor_id=current_user.id)
+    try:
+        requisition = await handler.handle(command, db=db, actor_id=current_user.id)
+    except ValueError as exc:
+        # Change-control violation (e.g. cancelling a PR that already has a PO) --
+        # a client-actionable 400, not a server error.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if not requisition:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
 
@@ -689,14 +705,19 @@ async def amend_purchase_order_endpoint(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> PurchaseOrderResponse:
-    purchase_order = await amend_purchase_order(
-        db,
-        purchase_order_id,
-        actor_id=current_user.id,
-        change_type=str(change_data.get("change_type", "amendment")),
-        changes=change_data.get("changes", {}),
-        tenant_id=current_user.tenant_id,
-    )
+    try:
+        purchase_order = await amend_purchase_order(
+            db,
+            purchase_order_id,
+            actor_id=current_user.id,
+            change_type=str(change_data.get("change_type", "amendment")),
+            changes=change_data.get("changes", {}),
+            tenant_id=current_user.tenant_id,
+        )
+    except ValueError as exc:
+        # PO change-control violation (spec sec 3.3) -- e.g. amending a fully
+        # received/invoiced/closed/cancelled PO.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if not purchase_order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
     return PurchaseOrderResponse.model_validate(purchase_order)
@@ -712,7 +733,10 @@ async def add_po_line_item_endpoint(
     po = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
     if not po:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
-    li = await add_purchase_order_line_item(db, purchase_order_id, line_item_data, tenant_id=current_user.tenant_id)
+    try:
+        li = await add_purchase_order_line_item(db, purchase_order_id, line_item_data, tenant_id=current_user.tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return PurchaseOrderLineItemResponse.model_validate(li)
 
 
@@ -828,6 +852,16 @@ async def transition_po_lifecycle_endpoint(
             actor_id=current_user.id,
             tenant_id=current_user.tenant_id,
         )
+        # Receipts Auto-Creation spec sec 1.1: also auto-create a *draft* receipt
+        # (received qty 0) for the three-way lines still needing manual receiving.
+        # Lines already auto-received above are skipped, and two-way lines never
+        # get a receipt.
+        await auto_create_draft_receipt_for_po(
+            db,
+            po.id,
+            actor_id=current_user.id,
+            tenant_id=current_user.tenant_id,
+        )
     # Same expire-on-commit hazard as transition_requisition_endpoint above:
     # start_purchase_order_approval_workflow / auto_create_receipts_for_ordered_po
     # each commit on this session, which expires `po` (fetched earlier), and
@@ -907,6 +941,117 @@ async def list_receipts_endpoint(
 ) -> GoodsReceiptListResponse:
     receipts = await get_goods_receipts(db, tenant_id=current_user.tenant_id)
     return GoodsReceiptListResponse(items=[GoodsReceiptResponse.model_validate(item) for item in receipts])
+
+
+@router.post("/receipts/{receipt_id}/submit", response_model=GoodsReceiptResponse)
+async def submit_receipt_endpoint(
+    receipt_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> GoodsReceiptResponse:
+    """Receipt workflow: Draft -> Submitted (or In Review when tolerance is
+    exceeded and approval is required)."""
+    try:
+        receipt = await submit_goods_receipt(db, receipt_id, actor_id=current_user.id, tenant_id=current_user.tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not receipt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found")
+    return GoodsReceiptResponse.model_validate(receipt)
+
+
+@router.post("/receipts/{receipt_id}/approve", response_model=GoodsReceiptResponse)
+async def approve_receipt_endpoint(
+    receipt_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> GoodsReceiptResponse:
+    """Receipt workflow: Submitted / In Review -> Approved."""
+    try:
+        receipt = await approve_goods_receipt(db, receipt_id, actor_id=current_user.id, tenant_id=current_user.tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not receipt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found")
+    return GoodsReceiptResponse.model_validate(receipt)
+
+
+@router.post("/receipts/{receipt_id}/reject", response_model=GoodsReceiptResponse)
+async def reject_receipt_endpoint(
+    receipt_id: UUID,
+    payload: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> GoodsReceiptResponse:
+    """Receipt workflow: Submitted / In Review / Approved -> Rejected."""
+    try:
+        receipt = await reject_goods_receipt(
+            db,
+            receipt_id,
+            actor_id=current_user.id,
+            reason=payload.get("reason"),
+            tenant_id=current_user.tenant_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not receipt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found")
+    return GoodsReceiptResponse.model_validate(receipt)
+
+
+@router.post("/receipts/{receipt_id}/post", response_model=GoodsReceiptResponse)
+async def post_receipt_endpoint(
+    receipt_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> GoodsReceiptResponse:
+    """Receipt workflow: Approved -> Posted. Posting recomputes the PO lifecycle,
+    auto-closes the PO when fully received, and auto-creates the next draft
+    receipt when a balance quantity remains."""
+    try:
+        receipt = await post_goods_receipt(db, receipt_id, actor_id=current_user.id, tenant_id=current_user.tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not receipt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found")
+    return GoodsReceiptResponse.model_validate(receipt)
+
+
+@router.post("/ok-to-pay/generate", summary="Generate an OK-to-Pay file")
+async def generate_ok_to_pay_endpoint(
+    payload: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """OK-to-Pay (spec sec 6): validate invoices are fully verified + approved
+    and generate an OK-to-Pay file (CSV) with supplier/invoice/PO/payment
+    reference, paid amount, payment date, and bank confirmation."""
+    invoice_ids = payload.get("invoice_ids") or []
+    if not invoice_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invoice_ids is required")
+    try:
+        parsed_ids = [UUID(str(i)) for i in invoice_ids]
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invoice_ids must be a list of UUIDs")
+    try:
+        result = await build_ok_to_pay(
+            db,
+            invoice_ids=parsed_ids,
+            supplier_id=UUID(str(payload.get("supplier_id"))),
+            payment_batch=str(payload.get("payment_batch", "PAY")),
+            payment_date=str(payload.get("payment_date", "")),
+            bank_confirmation=payload.get("bank_confirmation"),
+            payment_completed=bool(payload.get("payment_completed", False)),
+            tenant_id=current_user.tenant_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"errors": result.get("errors", [])},
+        )
+    return {"ok": True, "rows": result["rows"], "file_content": result["file_content"]}
 
 
 @router.get("/invoices", response_model=ProcurementInvoiceListResponse)
