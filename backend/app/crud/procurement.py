@@ -68,6 +68,8 @@ from app.services.receipt_workflow import (
     maybe_auto_close_po,
     validate_receipt_transition,
 )
+from app.services.grir import get_grir_records, reconcile_grir_for_po
+from app.services.invoice_blocking import compute_block_status, severity_for_exception_type
 
 
 def _build_search_text(requisition: ProcurementRequisition) -> str:
@@ -1266,6 +1268,12 @@ async def post_goods_receipt(
     if po is not None:
         await maybe_auto_close_po(db, po, actor_id=actor_id, tenant_id=tenant_id)
         await auto_create_next_receipt_for_balance(db, po, actor_id=actor_id, tenant_id=tenant_id)
+        # GR/IR reconciliation (bundle spec sec 3): recompute received/invoiced
+        # balances now that this receipt is posted. Re-fetch po fresh -- the
+        # auto-close / next-receipt steps committed and expired it.
+        po = await get_purchase_order(db, receipt.purchase_order_id, tenant_id=tenant_id)
+        if po is not None:
+            await reconcile_grir_for_po(db, po, tenant_id=tenant_id, commit=False)
 
     await db.commit()
     await db.refresh(receipt)
@@ -1317,6 +1325,9 @@ async def create_invoice(
     )
     invoice.duplicate_status = "duplicate" if invoice.invoice_number.lower().endswith("dup") else "new"
     invoice.duplicate_reason = "duplicate invoice number pattern" if invoice.duplicate_status == "duplicate" else None
+    # Blocking matrix (bundle spec sec 4): a non-PO invoice is blocked for
+    # approval until someone approves it.
+    invoice.block_status = "BLOCKED_FOR_APPROVAL" if invoice.purchase_order_id is None else "NOT_BLOCKED"
     db.add(invoice)
     await db.flush()
 
@@ -1375,6 +1386,15 @@ async def create_invoice(
 
     await db.commit()
     await db.refresh(invoice)
+
+    # Invoice approval workflow (bundle spec sec 5): a non-PO invoice is blocked
+    # for approval, so spin up an approval instance (if an active
+    # invoice_approval WorkflowDefinition is configured).
+    if invoice.block_status == "BLOCKED_FOR_APPROVAL":
+        from app.services.invoice_approval_workflow import start_invoice_approval_workflow
+
+        await start_invoice_approval_workflow(db, invoice, started_by=created_by, definition_id=None)
+
     return invoice
 
 
@@ -1467,10 +1487,13 @@ async def _create_match_exception(
     variance_amount: Optional[Decimal] = None,
     variance_percent: Optional[Decimal] = None,
 ) -> None:
+    severity, code = severity_for_exception_type(exception_type)
     exception = InvoiceMatchException(
         invoice_id=invoice.id,
         invoice_line_item_id=invoice_line_item.id if invoice_line_item is not None else None,
         exception_type=exception_type,
+        severity=severity,
+        exception_code=code,
         expected_value=expected_value,
         actual_value=actual_value,
         variance_amount=variance_amount,
@@ -1600,6 +1623,155 @@ async def resolve_invoice_match_exception(
     await db.commit()
     await db.refresh(exception)
     return exception
+
+
+# Exception-engine lifecycle (bundle spec sec 6.3): OPEN -> IN_REVIEW ->
+# RESOLVED / OVERRIDDEN / CANCELLED. The existing RESOLUTION_STATUSES cover the
+# resolved outcomes; these three extra states cover the rest of the lifecycle.
+EXCEPTION_LIFECYCLE_TRANSITIONS: dict[str, set[str]] = {
+    "open": {"in_review", "overridden", "cancelled", "approved_with_variance", "corrected", "rejected"},
+    "in_review": {"overridden", "cancelled", "approved_with_variance", "corrected", "rejected"},
+}
+# Exception states that are still actionable (bulk CSV resolution only acts on these).
+EXCEPTION_ACTIVE_STATES = ("open", "in_review")
+
+
+async def set_invoice_exception_in_review(
+    db: AsyncSession,
+    exception_id: UUID,
+    *,
+    actor_id: UUID,
+    tenant_id: Optional[UUID] = None,
+) -> Optional[InvoiceMatchException]:
+    """OPEN -> IN_REVIEW (a user opens the exception for handling)."""
+    exception = await get_invoice_exception(db, exception_id, tenant_id=tenant_id)
+    if exception is None:
+        return None
+    if exception.resolution_status not in EXCEPTION_LIFECYCLE_TRANSITIONS:
+        raise ValueError(f"Exception cannot move to in_review from {exception.resolution_status}")
+    if "in_review" not in EXCEPTION_LIFECYCLE_TRANSITIONS[exception.resolution_status]:
+        raise ValueError(f"Exception cannot move to in_review from {exception.resolution_status}")
+    exception.resolution_status = "in_review"
+    exception.resolution_notes = None
+    await db.commit()
+    await db.refresh(exception)
+    return exception
+
+
+async def override_invoice_exception(
+    db: AsyncSession,
+    exception_id: UUID,
+    *,
+    actor_id: UUID,
+    justification: Optional[str] = None,
+    tenant_id: Optional[UUID] = None,
+) -> Optional[InvoiceMatchException]:
+    """IN_REVIEW / OPEN -> OVERRIDDEN (override with justification, spec sec 6.3)."""
+    exception = await get_invoice_exception(db, exception_id, tenant_id=tenant_id)
+    if exception is None:
+        return None
+    if "overridden" not in EXCEPTION_LIFECYCLE_TRANSITIONS.get(exception.resolution_status, set()):
+        raise ValueError(f"Exception cannot be overridden from {exception.resolution_status}")
+    exception.resolution_status = "overridden"
+    exception.resolved_by = actor_id
+    exception.resolved_at = datetime.now(timezone.utc)
+    exception.resolution_notes = justification
+    await db.flush()
+    await _recompute_invoice_match_status(db, exception.invoice)
+    await db.commit()
+    await db.refresh(exception)
+    return exception
+
+
+async def cancel_invoice_exception(
+    db: AsyncSession,
+    exception_id: UUID,
+    *,
+    actor_id: UUID,
+    tenant_id: Optional[UUID] = None,
+) -> Optional[InvoiceMatchException]:
+    """OPEN / IN_REVIEW -> CANCELLED (exception no longer valid)."""
+    exception = await get_invoice_exception(db, exception_id, tenant_id=tenant_id)
+    if exception is None:
+        return None
+    if "cancelled" not in EXCEPTION_LIFECYCLE_TRANSITIONS.get(exception.resolution_status, set()):
+        raise ValueError(f"Exception cannot be cancelled from {exception.resolution_status}")
+    exception.resolution_status = "cancelled"
+    exception.resolved_by = actor_id
+    exception.resolved_at = datetime.now(timezone.utc)
+    await db.flush()
+    await _recompute_invoice_match_status(db, exception.invoice)
+    await db.commit()
+    await db.refresh(exception)
+    return exception
+
+
+async def bulk_resolve_invoice_exceptions(
+    db: AsyncSession,
+    *,
+    rows: list[dict],
+    actor_id: UUID,
+    tenant_id: Optional[UUID] = None,
+) -> dict:
+    """CSV-based bulk resolution (spec sec 6.6).
+
+    Each row: invoice_number, exception_code, resolution_type (OVERRIDE /
+    CORRECT), new_value (optional), comments (optional). OVERRIDE marks the
+    exception OVERRIDDEN (and records new_value/comments); CORRECT marks it
+    corrected. Returns {"processed", "skipped", "errors"}.
+    """
+    processed = 0
+    skipped = 0
+    errors: list[str] = []
+    for row in rows:
+        invoice_number = (row.get("invoice_number") or "").strip()
+        exception_code = (row.get("exception_code") or "").strip().upper()
+        resolution_type = (row.get("resolution_type") or "").strip().upper()
+        new_value = row.get("new_value")
+        comments = row.get("comments")
+
+        if not invoice_number or not exception_code or resolution_type not in ("OVERRIDE", "CORRECT"):
+            skipped += 1
+            errors.append(f"Invalid row: {row}")
+            continue
+
+        invoice_query = select(ProcurementInvoice).where(ProcurementInvoice.invoice_number == invoice_number)
+        if tenant_id is not None:
+            invoice_query = invoice_query.where(ProcurementInvoice.tenant_id == tenant_id)
+        invoice = (await db.execute(invoice_query)).scalar_one_or_none()
+        if invoice is None:
+            skipped += 1
+            errors.append(f"Invoice {invoice_number} not found")
+            continue
+
+        exception = (
+            await db.execute(
+                select(InvoiceMatchException).where(
+                    InvoiceMatchException.invoice_id == invoice.id,
+                    InvoiceMatchException.exception_code == exception_code,
+                    InvoiceMatchException.resolution_status.in_(EXCEPTION_ACTIVE_STATES),
+                )
+            )
+        ).scalars().first()
+        if exception is None:
+            skipped += 1
+            errors.append(f"Active exception {exception_code} not found on invoice {invoice_number}")
+            continue
+
+        if resolution_type == "OVERRIDE":
+            exception.resolution_status = "overridden"
+            exception.resolution_notes = f"Bulk override. new_value={new_value}. {comments or ''}".strip()
+        else:
+            exception.resolution_status = "corrected"
+            exception.resolution_notes = f"Bulk correct. new_value={new_value}. {comments or ''}".strip()
+        exception.resolved_by = actor_id
+        exception.resolved_at = datetime.now(timezone.utc)
+        await db.flush()
+        await _recompute_invoice_match_status(db, invoice)
+        processed += 1
+
+    await db.commit()
+    return {"processed": processed, "skipped": skipped, "errors": errors}
 
 
 async def match_invoice(
@@ -1733,6 +1905,21 @@ async def match_invoice(
     invoice.match_status = "exception" if has_exceptions else "matched"
     invoice.status = "matched" if invoice.match_status == "matched" else "pending"
 
+    # Blocking matrix (bundle spec sec 4): recompute block status from the
+    # exceptions just created.
+    active_exceptions = (
+        await db.execute(select(InvoiceMatchException).where(InvoiceMatchException.invoice_id == invoice.id))
+    ).scalars().all()
+    invoice.block_status = compute_block_status(invoice, list(active_exceptions))
+
     await db.commit()
     await db.refresh(invoice)
+
+    # GR/IR reconciliation (bundle spec sec 3): invoiced quantities changed, so
+    # recompute GR/IR balances for the PO this invoice is against.
+    if invoice.purchase_order_id is not None:
+        po = await get_purchase_order(db, invoice.purchase_order_id, tenant_id=tenant_id)
+        if po is not None:
+            await reconcile_grir_for_po(db, po, tenant_id=tenant_id, commit=True)
+
     return invoice

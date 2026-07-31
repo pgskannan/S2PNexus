@@ -327,6 +327,10 @@ class InvoiceMatchException(Base):
     invoice_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("procurement_invoices.id", ondelete="CASCADE"), nullable=False, index=True)
     invoice_line_item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("procurement_invoice_line_items.id", ondelete="SET NULL"), nullable=True, index=True)
     exception_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Exception severity (bundle spec sec 4/6): Critical / High / Medium / Low,
+    # and a stable machine-readable code (e.g. PRICE_VAR, QTY_VAR, DUP_INV).
+    severity: Mapped[str] = mapped_column(String(20), default="medium", nullable=False)
+    exception_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     expected_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     actual_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     variance_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
@@ -370,6 +374,11 @@ class ProcurementInvoice(Base):
     reference_invoice_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     matching_tolerance_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     matching_tolerance_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    # Invoice blocking (bundle spec sec 4): NOT_BLOCKED / BLOCKED_FOR_MATCHING /
+    # BLOCKED_FOR_APPROVAL / BLOCKED_FOR_EXCEPTION / BLOCKED_FOR_GRIR /
+    # BLOCKED_FOR_COMPLIANCE. Computed by the exception engine from active
+    # exceptions + supplier risk + document type; released via role-based rules.
+    block_status: Mapped[str] = mapped_column(String(50), default="NOT_BLOCKED", nullable=False, index=True)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -382,3 +391,26 @@ class ProcurementInvoice(Base):
     exceptions: Mapped[list["InvoiceMatchException"]] = relationship(
         "InvoiceMatchException", back_populates="invoice", cascade="all, delete-orphan", lazy="selectin"
     )
+
+
+class GRIRRecord(Base):
+    """GR/IR reconciliation record per PO line (bundle spec sec 3.2).
+
+    Tracks ordered vs received vs invoiced quantities and the resulting balance,
+    and is reconciled on receipt post / invoice match. Status follows the spec:
+    OPEN / PARTIALLY_CLEARED / CLEARED / CLEARED_WITH_ADJUSTMENT / EXCEPTION.
+    """
+
+    __tablename__ = "grir_records"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    purchase_order_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    purchase_order_line_item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("purchase_order_line_items.id", ondelete="SET NULL"), nullable=True, index=True)
+    total_ordered_qty: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
+    total_received_qty: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
+    total_invoiced_qty: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
+    balance_qty: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
+    balance_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="OPEN", nullable=False, index=True)
+    last_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

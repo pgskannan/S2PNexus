@@ -38,6 +38,10 @@ from app.crud.procurement import (
     match_invoice,
     remove_requisition_line_item,
     resolve_invoice_match_exception,
+    set_invoice_exception_in_review,
+    override_invoice_exception,
+    cancel_invoice_exception,
+    bulk_resolve_invoice_exceptions,
     transition_requisition,
     update_requisition,
     update_requisition_line_item,
@@ -698,6 +702,27 @@ async def get_po_line_states_endpoint(
     return states
 
 
+@router.get(
+    "/purchase-orders/{purchase_order_id}/grir",
+    summary="GR/IR reconciliation records for a PO",
+    description="Per-line GR/IR records (bundle spec sec 3): ordered/received/"
+    "invoiced quantities, balance quantity + amount, and status "
+    "(OPEN/PARTIALLY_CLEARED/CLEARED/CLEARED_WITH_ADJUSTMENT/EXCEPTION).",
+)
+async def get_po_grir_endpoint(
+    purchase_order_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    from app.services.grir import get_grir_records, grir_record_to_dict
+
+    purchase_order = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
+    if not purchase_order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
+    records = await get_grir_records(db, purchase_order_id, tenant_id=current_user.tenant_id)
+    return [grir_record_to_dict(r) for r in records]
+
+
 @router.post("/purchase-orders/{purchase_order_id}/amend", response_model=PurchaseOrderResponse)
 async def amend_purchase_order_endpoint(
     purchase_order_id: UUID,
@@ -1096,6 +1121,189 @@ async def match_invoice_endpoint(
     return ProcurementInvoiceResponse.model_validate(matched_invoice)
 
 
+@router.get(
+    "/invoices/{invoice_id}/match-result",
+    summary="Invoice matching result (per-line + overall)",
+    description="Structured MatchResult from the matching engine (bundle spec sec 1): "
+    "per-line status (MATCHED/PARTIAL/UNMATCHED/OVERMATCH/UNDERMATCH), variances "
+    "(price/quantity/tax), UOM/currency mismatch flags, and the overall status "
+    "(FULLY_MATCHED/MATCHED_WITH_EXCEPTIONS/FAILED_MATCH). Read-only and "
+    "idempotent -- run POST /invoices/{id}/match first to (re)generate exceptions.",
+)
+async def get_invoice_match_result_endpoint(
+    invoice_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.invoice_matching import build_match_result, match_result_to_dict
+
+    invoice = await get_invoice(db, invoice_id, tenant_id=current_user.tenant_id)
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+    result = await build_match_result(db, invoice, tenant_id=current_user.tenant_id)
+    return match_result_to_dict(result)
+
+
+@router.get(
+    "/invoices/{invoice_id}/block",
+    summary="Invoice blocking status",
+    description="Blocking matrix view (bundle spec sec 4): the invoice's block "
+    "status, the exceptions driving it (with severity + code), and the roles "
+    "allowed to release it.",
+)
+async def get_invoice_block_endpoint(
+    invoice_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from sqlalchemy import select
+
+    from app.models.procurement import InvoiceMatchException
+    from app.services.invoice_blocking import RELEASE_MATRIX, can_release_block, compute_block_status
+
+    invoice = await get_invoice(db, invoice_id, tenant_id=current_user.tenant_id)
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+    exceptions = (
+        await db.execute(select(InvoiceMatchException).where(InvoiceMatchException.invoice_id == invoice.id))
+    ).scalars().all()
+    block_status = compute_block_status(invoice, list(exceptions))
+    return {
+        "invoice_id": str(invoice.id),
+        "block_status": block_status,
+        "exceptions": [
+            {
+                "id": str(e.id),
+                "exception_type": e.exception_type,
+                "exception_code": e.exception_code,
+                "severity": e.severity,
+                "resolution_status": e.resolution_status,
+            }
+            for e in exceptions
+        ],
+        "releasable_by": [
+            role
+            for role, rules in RELEASE_MATRIX.items()
+            if can_release_block(block_status, role, "Low")[0]
+        ],
+    }
+
+
+@router.post(
+    "/invoices/{invoice_id}/release",
+    summary="Release an invoice block",
+    description="Role-based release (bundle spec sec 4.5/4.6). Pass role "
+    "(AP_PROCESSOR/AP_MANAGER/FINANCE_CONTROLLER/COMPLIANCE_OFFICER) and a "
+    "reason. Raises 400 on a rule violation.",
+)
+async def release_invoice_block_endpoint(
+    invoice_id: UUID,
+    payload: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.invoice_blocking import release_invoice_block
+
+    invoice = await get_invoice(db, invoice_id, tenant_id=current_user.tenant_id)
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+    role = payload.get("role") or ""
+    if not role:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="role is required")
+    try:
+        released = await release_invoice_block(
+            db,
+            invoice,
+            role=role,
+            reason=payload.get("reason"),
+            actor_id=current_user.id,
+            tenant_id=current_user.tenant_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return {"invoice_id": str(released.id), "block_status": released.block_status}
+
+
+@router.post(
+    "/invoices/{invoice_id}/approve",
+    summary="Approve an invoice (approval workflow)",
+    description="APPROVE action on the invoice approval workflow (bundle spec "
+    "sec 5.4): closes the active invoice_approval instance and clears a "
+    "BLOCKED_FOR_APPROVAL block.",
+)
+async def approve_invoice_endpoint(
+    invoice_id: UUID,
+    payload: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.invoice_approval_workflow import approve_invoice_workflow
+
+    invoice = await get_invoice(db, invoice_id, tenant_id=current_user.tenant_id)
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+    approved = await approve_invoice_workflow(
+        db, invoice, actor_id=current_user.id, notes=payload.get("notes")
+    )
+    return {"invoice_id": str(approved.id), "block_status": approved.block_status}
+
+
+@router.post(
+    "/invoices/{invoice_id}/reject",
+    summary="Reject an invoice (approval workflow)",
+    description="REJECT action on the invoice approval workflow (bundle spec "
+    "sec 5.4/6.4): rejects the active instance, blocks the invoice for exception, "
+    "and records an APPROVAL_REJECTED exception.",
+)
+async def reject_invoice_endpoint(
+    invoice_id: UUID,
+    payload: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.invoice_approval_workflow import reject_invoice_workflow
+
+    invoice = await get_invoice(db, invoice_id, tenant_id=current_user.tenant_id)
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+    rejected = await reject_invoice_workflow(
+        db, invoice, actor_id=current_user.id, notes=payload.get("notes")
+    )
+    return {"invoice_id": str(rejected.id), "block_status": rejected.block_status}
+
+
+@router.post(
+    "/invoices/parse",
+    summary="Parse an invoice document into structured data",
+    description="AI invoice parsing pipeline (bundle spec sec 2): extracts header "
+    "fields, line items, and totals with per-field confidence scores and error "
+    "flags (LOW_CONFIDENCE/MISSING_FIELD/INCONSISTENT_TOTALS). Pass raw invoice "
+    "text (already OCR'd / extracted from PDF).",
+)
+async def parse_invoice_endpoint(
+    payload: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    from app.schemas.invoice_parsing import ParsedInvoiceResponse
+    from app.services.invoice_parsing import parse_invoice
+
+    text = payload.get("text") or ""
+    if not text.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="'text' is required")
+    parsed = parse_invoice(text, source_document_id=payload.get("source_document_id"))
+    return ParsedInvoiceResponse(
+        parsed=parsed,
+        summary={
+            "invoice_number": parsed.header.invoice_number,
+            "currency": parsed.header.currency,
+            "line_count": len(parsed.lines),
+            "grand_total": str(parsed.grand_total) if parsed.grand_total is not None else None,
+            "error_flags": parsed.parsing_metadata.get("error_flags", []),
+        },
+    )
+
+
 @router.get("/invoices/{invoice_id}/exceptions", response_model=list[InvoiceMatchExceptionResponse])
 async def list_invoice_exceptions(
     invoice_id: UUID,
@@ -1132,3 +1340,97 @@ async def resolve_invoice_exception_endpoint(
     # exists, expiring `exception`. Re-fetch before serializing.
     exception = await get_invoice_exception(db, exception_id, tenant_id=current_user.tenant_id)
     return InvoiceMatchExceptionResponse.model_validate(exception)
+
+
+@router.post(
+    "/invoices/exceptions/{exception_id}/in-review",
+    response_model=InvoiceMatchExceptionResponse,
+    summary="Move an exception to IN_REVIEW",
+    description="Exception engine lifecycle (bundle spec sec 6.3): OPEN -> IN_REVIEW.",
+)
+async def set_exception_in_review_endpoint(
+    exception_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> InvoiceMatchExceptionResponse:
+    try:
+        exception = await set_invoice_exception_in_review(
+            db, exception_id, actor_id=current_user.id, tenant_id=current_user.tenant_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not exception:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice exception not found")
+    return InvoiceMatchExceptionResponse.model_validate(exception)
+
+
+@router.post(
+    "/invoices/exceptions/{exception_id}/override",
+    response_model=InvoiceMatchExceptionResponse,
+    summary="Override an exception",
+    description="Exception engine lifecycle (bundle spec sec 6.3): OPEN/IN_REVIEW "
+    "-> OVERRIDDEN with justification.",
+)
+async def override_exception_endpoint(
+    exception_id: UUID,
+    payload: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> InvoiceMatchExceptionResponse:
+    try:
+        exception = await override_invoice_exception(
+            db,
+            exception_id,
+            actor_id=current_user.id,
+            justification=payload.get("justification"),
+            tenant_id=current_user.tenant_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not exception:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice exception not found")
+    return InvoiceMatchExceptionResponse.model_validate(exception)
+
+
+@router.post(
+    "/invoices/exceptions/{exception_id}/cancel",
+    response_model=InvoiceMatchExceptionResponse,
+    summary="Cancel an exception",
+    description="Exception engine lifecycle (bundle spec sec 6.3): OPEN/IN_REVIEW -> CANCELLED.",
+)
+async def cancel_exception_endpoint(
+    exception_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> InvoiceMatchExceptionResponse:
+    try:
+        exception = await cancel_invoice_exception(
+            db, exception_id, actor_id=current_user.id, tenant_id=current_user.tenant_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not exception:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice exception not found")
+    return InvoiceMatchExceptionResponse.model_validate(exception)
+
+
+@router.post(
+    "/invoices/exceptions/bulk-resolve",
+    summary="Bulk-resolve exceptions from CSV rows",
+    description="CSV-based bulk resolution (bundle spec sec 6.6). Payload: "
+    "{\"rows\": [{\"invoice_number\", \"exception_code\", \"resolution_type\" "
+    "(OVERRIDE/CORRECT), \"new_value\", \"comments\"}...]}. Returns "
+    "{processed, skipped, errors}.",
+)
+async def bulk_resolve_exceptions_endpoint(
+    payload: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    rows = payload.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="'rows' list is required")
+    result = await bulk_resolve_invoice_exceptions(
+        db, rows=rows, actor_id=current_user.id, tenant_id=current_user.tenant_id
+    )
+    return result
