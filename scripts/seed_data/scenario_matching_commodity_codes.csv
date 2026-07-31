@@ -1,0 +1,21 @@
+segment,segment_title,family,family_title,class,class_title,commodity,commodity_title
+10,IT Hardware,1001,Computers,100101,Laptops,10010103,Business laptop - 3-way match
+10,IT Hardware,1001,Computers,100101,Laptops,10010104,Business laptop - auto-receive
+10,IT Hardware,1001,Computers,100101,Laptops,10010105,Business laptop - 2-way match
+10,IT Hardware,1001,Computers,100101,Laptops,10010106,Business laptop - threshold auto-receive
+11,IT Software & Services,1101,Software licenses,110101,Productivity software,11010103,Office suite license - 3-way match
+11,IT Software & Services,1101,Software licenses,110101,Productivity software,11010104,Collaboration suite license - auto-receive
+11,IT Software & Services,1101,Software licenses,110101,Productivity software,11010105,Endpoint protection license - 2-way match
+11,IT Software & Services,1101,Software licenses,110101,Productivity software,11010106,Office suite license - threshold auto-receive
+12,Office Supplies,1201,Paper products,120101,Printer paper,12010103,Copy paper - 3-way match
+12,Office Supplies,1201,Paper products,120101,Printer paper,12010104,Cardstock - auto-receive
+12,Office Supplies,1201,Paper products,120101,Printer paper,12010105,Ballpoint pens - 2-way match
+13,Furniture,1301,Office furniture,130101,Desks,13010103,Standing desk - 3-way match
+13,Furniture,1301,Office furniture,130101,Desks,13010104,Task chair - auto-receive
+13,Furniture,1301,Office furniture,130101,Desks,13010105,Conference chair - 2-way match
+14,Facilities & Maintenance,1401,Janitorial supplies,140101,Cleaning chemicals,14010103,Air filter - 3-way match
+14,Facilities & Maintenance,1401,Janitorial supplies,140101,Cleaning chemicals,14010104,Thermostat - auto-receive
+14,Facilities & Maintenance,1401,Janitorial supplies,140101,Cleaning chemicals,14010105,Disinfectant - 2-way match
+15,Professional Services - Consulting,1501,Management consulting,150101,Strategy advisory,15010103,Strategy engagement - 3-way match
+15,Professional Services - Consulting,1501,Management consulting,150101,Strategy advisory,15010104,Market analysis engagement - auto-receive
+15,Professional Services - Consulting,1501,Management consulting,150101,Strategy advisory,15010105,Contract review - 2-way match
