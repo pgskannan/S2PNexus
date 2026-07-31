@@ -147,12 +147,14 @@ class ProcurementComment(Base):
     __tablename__ = "procurement_comments"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    requisition_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("procurement_requisitions.id", ondelete="CASCADE"), nullable=False, index=True)
+    requisition_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("procurement_requisitions.id", ondelete="CASCADE"), nullable=True, index=True)
+    purchase_order_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=True, index=True)
     author_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=False)
     comment: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    requisition: Mapped["ProcurementRequisition"] = relationship("ProcurementRequisition", back_populates="comments", lazy="selectin")
+    requisition: Mapped["ProcurementRequisition | None"] = relationship("ProcurementRequisition", back_populates="comments", lazy="selectin")
+    purchase_order: Mapped["PurchaseOrder | None"] = relationship("PurchaseOrder", back_populates="comments", lazy="selectin")
 
 
 class ProcurementAttachment(Base):
@@ -228,6 +230,7 @@ class PurchaseOrder(Base):
     invoices: Mapped[list["ProcurementInvoice"]] = relationship("ProcurementInvoice", back_populates="purchase_order", lazy="selectin")
     versions: Mapped[list["PurchaseOrderVersion"]] = relationship("PurchaseOrderVersion", back_populates="purchase_order", cascade="all, delete-orphan", lazy="selectin")
     line_items: Mapped[list["PurchaseOrderLineItem"]] = relationship("PurchaseOrderLineItem", back_populates="purchase_order", cascade="all, delete-orphan", lazy="selectin")
+    comments: Mapped[list["ProcurementComment"]] = relationship("ProcurementComment", back_populates="purchase_order", cascade="all, delete-orphan", lazy="selectin")
 
 
 class PurchaseOrderVersion(Base):

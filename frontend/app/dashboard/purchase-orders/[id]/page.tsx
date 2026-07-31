@@ -1,18 +1,28 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   getPurchaseOrder,
   getRequisition,
+  getWorkflowDefinition,
+  listWorkflowInstances,
+  getPurchaseOrderVersions,
+  listPurchaseOrderComments,
+  addPurchaseOrderComment,
+  listUserDirectory,
   transitionPurchaseOrderLifecycle,
   acknowledgePurchaseOrder,
   getSupplier,
   extractErrorMessage,
 } from "@/lib/api";
-import type { PurchaseOrder } from "@/lib/types";
+import type { PurchaseOrder, WorkflowInstance } from "@/lib/types";
 import AccountingSplitEditor from "@/components/AccountingSplitEditor";
-import DocumentTabs from "@/components/DocumentTabs";
+import DocumentTabs, { type DocumentSectionKey } from "@/components/DocumentTabs";
+import CommentsPanel from "@/components/CommentsPanel";
+import { ApprovalFlowDiagram, type ApprovalStep } from "@/components/ApprovalFlowDiagram";
+import { buildApprovalSteps, resolveApproverNames } from "@/lib/approvalFlow";
 import {
   fetchDocumentTabSignals,
   PR_APPROVED_LIFECYCLES,
@@ -64,6 +74,14 @@ export default function PurchaseOrderDetailPage() {
     hasSubmittedInvoice: false,
     hasPayment: false,
   });
+  const [activeSection, setActiveSection] = useState<DocumentSectionKey | null>(null);
+  const [workflowInstance, setWorkflowInstance] = useState<WorkflowInstance | null>(null);
+  const [approvalSteps, setApprovalSteps] = useState<ApprovalStep[]>([]);
+  const [poVersions, setPoVersions] = useState<import("@/lib/types").PurchaseOrderVersion[]>([]);
+  const [actorNames, setActorNames] = useState<Record<string, string>>({});
+  const [comments, setComments] = useState<import("@/lib/types").ProcurementComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(true);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -86,6 +104,38 @@ export default function PurchaseOrderDetailPage() {
       ]);
       setDocSignals(signals);
       setPrApproved(requisition ? PR_APPROVED_LIFECYCLES.has(requisition.lifecycle_status) : false);
+      // Approval Flow / History / Comments panels for the PO: the PO's own
+      // workflow instance, its version history, and its comment thread.
+      const [wfRes, versions, directory] = await Promise.all([
+        listWorkflowInstances({ entity_type: "purchase_order", entity_id: data.id }),
+        getPurchaseOrderVersions(data.id),
+        listUserDirectory({ limit: 1000 }).catch(() => null),
+      ]);
+      const instance = wfRes.items[0] ?? null;
+      setWorkflowInstance(instance);
+      setPoVersions(versions);
+      setActorNames(
+        directory
+          ? Object.fromEntries(directory.items.map((user) => [user.id, user.full_name || user.email]))
+          : {}
+      );
+      if (instance) {
+        const [definition, approverNames] = await Promise.all([
+          getWorkflowDefinition(instance.definition_id),
+          resolveApproverNames(instance),
+        ]);
+        setApprovalSteps(buildApprovalSteps(instance, definition.steps, approverNames));
+      } else {
+        setApprovalSteps([]);
+      }
+      try {
+        setComments(await listPurchaseOrderComments(data.id));
+        setCommentsError(null);
+      } catch (err2) {
+        setCommentsError(extractErrorMessage(err2));
+      } finally {
+        setCommentsLoading(false);
+      }
     } catch (err) {
       setError(extractErrorMessage(err));
     }
@@ -123,6 +173,11 @@ export default function PurchaseOrderDetailPage() {
     }
   }
 
+  async function handleAddComment(text: string) {
+    const added = await addPurchaseOrderComment(params.id, text);
+    setComments((current) => [added, ...current]);
+  }
+
   if (error && !po) {
     return <p className="text-sm text-red-600">{error}</p>;
   }
@@ -136,7 +191,14 @@ export default function PurchaseOrderDetailPage() {
 
   return (
     <div className="max-w-4xl space-y-6">
-      <DocumentTabs prId={prId} poId={po.id} prApproved={prApproved} signals={docSignals} />
+      <DocumentTabs
+        prId={prId}
+        poId={po.id}
+        prApproved={prApproved}
+        signals={docSignals}
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
+      />
       <button
         onClick={() => router.push("/dashboard/purchase-orders")}
         className="text-sm text-brand-600 hover:underline"
@@ -236,6 +298,71 @@ export default function PurchaseOrderDetailPage() {
 
         {error && <p className="text-sm text-red-600">{error}</p>}
       </div>
+
+      {activeSection === "approval" && (
+        <div className="space-y-2">
+          {workflowInstance ? (
+            <>
+              <ApprovalFlowDiagram
+                docNumber={po.order_number}
+                title={supplierName ?? "Purchase order"}
+                steps={approvalSteps}
+              />
+              <Link
+                href={`/dashboard/workflow/instances/${workflowInstance.id}`}
+                className="text-xs text-slate-400 hover:text-brand-600 hover:underline"
+              >
+                View raw workflow instance &rarr;
+              </Link>
+            </>
+          ) : (
+            <div className="card">
+              <p className="text-sm text-slate-400">
+                No approval workflow instance for this document.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeSection === "history" && (
+        <div className="card">
+          <h2 className="text-lg font-semibold">History · Versions</h2>
+          {poVersions.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-400">No version history yet.</p>
+          ) : (
+            <ul className="mt-3 divide-y divide-slate-100">
+              {poVersions.map((v) => (
+                <li key={v.id} className="py-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-slate-700">
+                      V{v.version_number} ·{" "}
+                      <span className="capitalize">{v.change_type.replace(/_/g, " ")}</span>
+                    </span>
+                    <time className="text-xs text-slate-400">{new Date(v.created_at).toLocaleString()}</time>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-400">By {actorNames[v.created_by] || "System"}</p>
+                  {v.changes && Object.keys(v.changes).length > 0 && (
+                    <pre className="mt-2 overflow-x-auto rounded bg-slate-50 p-2 text-xs text-slate-600">
+                      {JSON.stringify(v.changes, null, 2)}
+                    </pre>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {activeSection === "comments" && (
+        <CommentsPanel
+          items={comments}
+          loading={commentsLoading}
+          error={commentsError}
+          authorNames={actorNames}
+          onAdd={handleAddComment}
+        />
+      )}
 
       <div className="card space-y-3">
         <h2 className="text-lg font-semibold">Line items</h2>

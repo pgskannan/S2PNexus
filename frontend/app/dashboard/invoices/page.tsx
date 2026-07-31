@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { extractErrorMessage, listInvoices } from "@/lib/api";
+import { extractErrorMessage, getPurchaseOrder, listInvoices } from "@/lib/api";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
 import type { ProcurementInvoice } from "@/lib/types";
 
@@ -27,6 +27,7 @@ export default function InvoicesPage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const [poFilter, setPoFilter] = useState<string | null>(null);
+  const [poFilterNumber, setPoFilterNumber] = useState<string | null>(null);
 
   useEffect(() => {
     listInvoices()
@@ -37,7 +38,14 @@ export default function InvoicesPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setPoFilter(params.get("po"));
+    const po = params.get("po");
+    setPoFilter(po);
+    setPoFilterNumber(null);
+    if (po) {
+      getPurchaseOrder(po)
+        .then((p) => setPoFilterNumber(p.order_number))
+        .catch(() => setPoFilterNumber(null));
+    }
   }, []);
 
   function invoiceValue(item: ProcurementInvoice): number {
@@ -82,7 +90,8 @@ export default function InvoicesPage() {
       {poFilter && (
         <div className="flex items-center justify-between rounded-md border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-700">
           <span>
-            Showing invoices for purchase order <span className="font-mono">{poFilter}</span>
+            Showing invoices for purchase order{" "}
+            <span className="font-mono">{poFilterNumber ?? poFilter}</span>
           </span>
           <button type="button" onClick={() => setPoFilter(null)} className="text-xs font-medium underline">
             Clear filter

@@ -510,11 +510,54 @@ async def add_requisition_comment(
     author_id: UUID,
     comment_in: ProcurementCommentCreate,
 ) -> ProcurementComment:
-    comment = ProcurementComment(requisition_id=requisition_id, author_id=author_id, comment=comment_in.comment)
+    return await add_procurement_comment(
+        db, requisition_id=requisition_id, author_id=author_id, comment_in=comment_in
+    )
+
+
+async def add_procurement_comment(
+    db: AsyncSession,
+    *,
+    requisition_id: Optional[UUID] = None,
+    purchase_order_id: Optional[UUID] = None,
+    author_id: UUID,
+    comment_in: ProcurementCommentCreate,
+) -> ProcurementComment:
+    """Add a comment to a requisition OR a purchase order (not both). Used by the
+    shared PR/PO comment threads so behavior is identical on both documents."""
+    if (requisition_id is None) == (purchase_order_id is None):
+        raise ValueError("exactly one of requisition_id / purchase_order_id is required")
+    comment = ProcurementComment(
+        requisition_id=requisition_id,
+        purchase_order_id=purchase_order_id,
+        author_id=author_id,
+        comment=comment_in.comment,
+    )
     db.add(comment)
     await db.commit()
     await db.refresh(comment)
     return comment
+
+
+async def list_procurement_comments(
+    db: AsyncSession,
+    *,
+    requisition_id: Optional[UUID] = None,
+    purchase_order_id: Optional[UUID] = None,
+) -> list[ProcurementComment]:
+    """List comments for a requisition OR a purchase order, newest first.
+    Requisition-scoped queries exclude PO-scoped comments (and vice versa) so
+    comments never cross-contaminate documents."""
+    query = select(ProcurementComment).order_by(ProcurementComment.created_at.desc())
+    if requisition_id is not None:
+        query = query.where(
+            ProcurementComment.requisition_id == requisition_id,
+            ProcurementComment.purchase_order_id.is_(None),
+        )
+    elif purchase_order_id is not None:
+        query = query.where(ProcurementComment.purchase_order_id == purchase_order_id)
+    result = await db.execute(query)
+    return list(result.scalars().all())
 
 
 async def add_requisition_attachment(

@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.crud.procurement import (
     add_requisition_attachment,
     add_requisition_comment,
+    add_procurement_comment,
+    list_procurement_comments,
     add_requisition_line_item,
     amend_purchase_order,
     add_purchase_order_line_item,
@@ -521,6 +523,55 @@ async def add_comment_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     comment = await add_requisition_comment(db, requisition_id, current_user.id, comment_data)
     return ProcurementCommentResponse.model_validate(comment)
+
+
+@router.get(
+    "/requisitions/{requisition_id}/comments",
+    response_model=list[ProcurementCommentResponse],
+    summary="List requisition comments",
+)
+async def list_requisition_comments_endpoint(
+    requisition_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[ProcurementCommentResponse]:
+    comments = await list_procurement_comments(db, requisition_id=requisition_id)
+    return [ProcurementCommentResponse.model_validate(c) for c in comments]
+
+
+@router.post(
+    "/purchase-orders/{purchase_order_id}/comments",
+    response_model=ProcurementCommentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add a purchase order comment",
+)
+async def add_purchase_order_comment_endpoint(
+    purchase_order_id: UUID,
+    comment_data: ProcurementCommentCreate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> ProcurementCommentResponse:
+    po = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
+    if not po:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
+    comment = await add_procurement_comment(
+        db, purchase_order_id=purchase_order_id, author_id=current_user.id, comment_in=comment_data
+    )
+    return ProcurementCommentResponse.model_validate(comment)
+
+
+@router.get(
+    "/purchase-orders/{purchase_order_id}/comments",
+    response_model=list[ProcurementCommentResponse],
+    summary="List purchase order comments",
+)
+async def list_purchase_order_comments_endpoint(
+    purchase_order_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[ProcurementCommentResponse]:
+    comments = await list_procurement_comments(db, purchase_order_id=purchase_order_id)
+    return [ProcurementCommentResponse.model_validate(c) for c in comments]
 
 
 @router.post(

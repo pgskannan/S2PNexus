@@ -627,6 +627,25 @@ export interface ProcurementAuditEvent {
   created_at: string;
 }
 
+export interface ProcurementComment {
+  id: string;
+  requisition_id?: string | null;
+  purchase_order_id?: string | null;
+  author_id: string;
+  comment: string;
+  created_at: string;
+}
+
+export interface PurchaseOrderVersion {
+  id: string;
+  purchase_order_id: string;
+  version_number: number;
+  change_type: string;
+  changes?: Record<string, unknown> | null;
+  created_by: string;
+  created_at: string;
+}
+
 export interface Notification {
   id: string;
   recipient_id: string;

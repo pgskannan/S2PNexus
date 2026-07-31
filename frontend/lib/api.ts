@@ -386,6 +386,31 @@ export async function createInvoice(payload: InvoiceCreate): Promise<import("@/l
   return data;
 }
 
+export async function listRequisitionComments(id: string): Promise<import("@/lib/types").ProcurementComment[]> {
+  const { data } = await api.get<import("@/lib/types").ProcurementComment[]>(`/procurement/requisitions/${id}/comments`);
+  return data;
+}
+
+export async function addRequisitionComment(id: string, comment: string): Promise<import("@/lib/types").ProcurementComment> {
+  const { data } = await api.post<import("@/lib/types").ProcurementComment>(`/procurement/requisitions/${id}/comments`, { comment });
+  return data;
+}
+
+export async function listPurchaseOrderComments(id: string): Promise<import("@/lib/types").ProcurementComment[]> {
+  const { data } = await api.get<import("@/lib/types").ProcurementComment[]>(`/procurement/purchase-orders/${id}/comments`);
+  return data;
+}
+
+export async function addPurchaseOrderComment(id: string, comment: string): Promise<import("@/lib/types").ProcurementComment> {
+  const { data } = await api.post<import("@/lib/types").ProcurementComment>(`/procurement/purchase-orders/${id}/comments`, { comment });
+  return data;
+}
+
+export async function getPurchaseOrderVersions(id: string): Promise<import("@/lib/types").PurchaseOrderVersion[]> {
+  const { data } = await api.get<import("@/lib/types").PurchaseOrderVersion[]>(`/procurement/purchase-orders/${id}/versions`);
+  return data;
+}
+
 export async function getPurchaseOrder(id: string): Promise<PurchaseOrder> {
   const { data } = await api.get<PurchaseOrder>(
     `/procurement/purchase-orders/${id}`

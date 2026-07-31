@@ -12,6 +12,8 @@ import {
   listInvoices,
   listWorkflowInstances,
   listRequisitionAuditEvents,
+  listRequisitionComments,
+  addRequisitionComment,
   listUserDirectory,
   transitionRequisition,
   extractErrorMessage,
@@ -19,7 +21,8 @@ import {
 import type { PurchaseOrder, Requisition, WorkflowInstance } from "@/lib/types";
 import { ApprovalFlowDiagram, type ApprovalStep } from "@/components/ApprovalFlowDiagram";
 import { buildApprovalSteps, resolveApproverNames } from "@/lib/approvalFlow";
-import DocumentTabs from "@/components/DocumentTabs";
+import DocumentTabs, { type DocumentSectionKey } from "@/components/DocumentTabs";
+import CommentsPanel from "@/components/CommentsPanel";
 import {
   fetchDocumentTabSignals,
   PR_APPROVED_LIFECYCLES,
@@ -50,8 +53,11 @@ export default function RequisitionDetailPage() {
   const [workflowInstance, setWorkflowInstance] = useState<WorkflowInstance | null>(null);
   const [approvalSteps, setApprovalSteps] = useState<ApprovalStep[]>([]);
   const [auditEvents, setAuditEvents] = useState<import("@/lib/types").ProcurementAuditEvent[]>([]);
-  const [activeTab, setActiveTab] = useState<"overview" | "audit">("overview");
+  const [activeSection, setActiveSection] = useState<DocumentSectionKey | null>(null);
   const [actorNames, setActorNames] = useState<Record<string, string>>({});
+  const [comments, setComments] = useState<import("@/lib/types").ProcurementComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(true);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
   const [docSignals, setDocSignals] = useState<DocumentTabSignals>({
     hasReceipts: false,
     hasInvoices: false,
@@ -74,6 +80,14 @@ export default function RequisitionDetailPage() {
       // Ariba-style tab visibility: receipts/invoices existence drives which
       // document tabs are shown once the PO exists.
       setDocSignals(await fetchDocumentTabSignals(poRes.items[0]?.id ?? null));
+      try {
+        setComments(await listRequisitionComments(params.id));
+        setCommentsError(null);
+      } catch (err2) {
+        setCommentsError(extractErrorMessage(err2));
+      } finally {
+        setCommentsLoading(false);
+      }
       const directory = await listUserDirectory({ limit: 1000 });
       setActorNames(Object.fromEntries(directory.items.map((user) => [user.id, user.full_name || user.email])));
       // Surface the approval flow inline (Ariba-style stepper) if a workflow
@@ -102,6 +116,11 @@ export default function RequisitionDetailPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
+
+  async function handleAddComment(text: string) {
+    const added = await addRequisitionComment(params.id, text);
+    setComments((current) => [added, ...current]);
+  }
 
   async function handleTransition(newStatus: string, lifecycleStatus: string) {
     setBusy(true);
@@ -180,6 +199,8 @@ export default function RequisitionDetailPage() {
         poId={purchaseOrders[0]?.id ?? null}
         prApproved={PR_APPROVED_LIFECYCLES.has(requisition.lifecycle_status)}
         signals={docSignals}
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
       />
       <button
         onClick={() => router.push("/dashboard/requisitions")}
@@ -238,32 +259,33 @@ export default function RequisitionDetailPage() {
         {error && <p className="text-sm text-red-600">{error}</p>}
       </div>
 
-      <div className="flex gap-2 border-b border-slate-200">
-        <button type="button" className={`px-3 py-2 text-sm font-medium ${activeTab === "overview" ? "border-b-2 border-brand-600 text-brand-700" : "text-slate-500"}`} onClick={() => setActiveTab("overview")}>
-          Overview
-        </button>
-        <button type="button" className={`px-3 py-2 text-sm font-medium ${activeTab === "audit" ? "border-b-2 border-brand-600 text-brand-700" : "text-slate-500"}`} onClick={() => setActiveTab("audit")}>
-          Audit log ({auditEvents.length})
-        </button>
-      </div>
-
-      {activeTab === "overview" && workflowInstance && (
+      {activeSection === "approval" && (
         <div className="space-y-2">
-          <ApprovalFlowDiagram
-            docNumber={requisition.requisition_number || undefined}
-            title={requisition.title}
-            steps={approvalSteps}
-          />
-          <Link
-            href={`/dashboard/workflow/instances/${workflowInstance.id}`}
-            className="text-xs text-slate-400 hover:text-brand-600 hover:underline"
-          >
-            View raw workflow instance &rarr;
-          </Link>
+          {workflowInstance ? (
+            <>
+              <ApprovalFlowDiagram
+                docNumber={requisition.requisition_number || undefined}
+                title={requisition.title}
+                steps={approvalSteps}
+              />
+              <Link
+                href={`/dashboard/workflow/instances/${workflowInstance.id}`}
+                className="text-xs text-slate-400 hover:text-brand-600 hover:underline"
+              >
+                View raw workflow instance &rarr;
+              </Link>
+            </>
+          ) : (
+            <div className="card">
+              <p className="text-sm text-slate-400">
+                No approval workflow instance for this document.
+              </p>
+            </div>
+          )}
         </div>
       )}
 
-      {activeTab === "audit" && (
+      {activeSection === "history" && (
         <div className="card">
           <h2 className="text-lg font-semibold">Audit log</h2>
           {auditEvents.length === 0 ? (
@@ -283,6 +305,16 @@ export default function RequisitionDetailPage() {
             </ul>
           )}
         </div>
+      )}
+
+      {activeSection === "comments" && (
+        <CommentsPanel
+          items={comments}
+          loading={commentsLoading}
+          error={commentsError}
+          authorNames={actorNames}
+          onAdd={handleAddComment}
+        />
       )}
 
       <div className="card space-y-3">

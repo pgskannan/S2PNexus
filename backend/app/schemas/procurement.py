@@ -161,7 +161,8 @@ class ProcurementCommentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    requisition_id: UUID
+    requisition_id: Optional[UUID] = None
+    purchase_order_id: Optional[UUID] = None
     author_id: UUID
     comment: str
     created_at: datetime
