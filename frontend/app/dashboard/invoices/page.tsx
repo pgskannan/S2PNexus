@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { extractErrorMessage, listInvoices } from "@/lib/api";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
 import ProcurementTabs from "@/components/ProcurementTabs";
@@ -71,9 +72,14 @@ export default function InvoicesPage() {
   return (
     <div className="space-y-6">
       <ProcurementTabs />
-      <div>
-        <h1 className="text-2xl font-semibold">Invoices</h1>
-        <p className="mt-1 text-sm text-slate-500">Monitor invoice status and three-way match progress.</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Invoices</h1>
+          <p className="mt-1 text-sm text-slate-500">Monitor invoice status and three-way match progress.</p>
+        </div>
+        <Link href="/dashboard/invoices/new" className="btn-primary">
+          + New Invoice
+        </Link>
       </div>
       {poFilter && (
         <div className="flex items-center justify-between rounded-md border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-700">

@@ -361,6 +361,31 @@ export async function listInvoices(): Promise<{ items: import("@/lib/types").Pro
   return data;
 }
 
+export interface InvoiceLineItemCreate {
+  purchase_order_line_item_id?: string | null;
+  description: string;
+  quantity?: string | number;
+  unit_price?: string | number | null;
+  line_total?: string | number | null;
+  tax_amount?: string | number | null;
+}
+
+export interface InvoiceCreate {
+  supplier_id?: string | null;
+  purchase_order_id?: string | null;
+  amount: string | number;
+  tax_amount?: string | number | null;
+  total_amount?: string | number | null;
+  currency?: string;
+  description?: string | null;
+  line_items?: InvoiceLineItemCreate[] | null;
+}
+
+export async function createInvoice(payload: InvoiceCreate): Promise<import("@/lib/types").ProcurementInvoice> {
+  const { data } = await api.post<import("@/lib/types").ProcurementInvoice>("/procurement/invoices", payload);
+  return data;
+}
+
 export async function getPurchaseOrder(id: string): Promise<PurchaseOrder> {
   const { data } = await api.get<PurchaseOrder>(
     `/procurement/purchase-orders/${id}`
