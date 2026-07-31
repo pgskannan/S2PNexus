@@ -15,6 +15,7 @@ const statusColors: Record<string, string> = {
   fully_received: "bg-green-100 text-green-700",
   closed: "bg-slate-100 text-slate-700",
   cancelled: "bg-red-100 text-red-700",
+  invoiced: "bg-indigo-100 text-indigo-700",
 };
 
 export default function PurchaseOrdersPage() {
@@ -74,6 +75,7 @@ export default function PurchaseOrdersPage() {
           <option value="acknowledged">Acknowledged</option>
           <option value="partially_received">Partially received</option>
           <option value="fully_received">Fully received</option>
+          <option value="invoiced">Invoiced</option>
           <option value="closed">Closed</option>
           <option value="cancelled">Cancelled</option>
         </select>

@@ -32,7 +32,8 @@ const nextLifecycleSteps: Record<string, { value: string; label: string }[]> = {
     { value: "fully_received", label: "Mark fully received" },
     { value: "cancelled", label: "Cancel" },
   ],
-  fully_received: [{ value: "closed", label: "Close" }],
+  fully_received: [{ value: "invoiced", label: "Mark invoiced" }],
+  invoiced: [{ value: "closed", label: "Close" }],
 };
 
 export default function PurchaseOrderDetailPage() {

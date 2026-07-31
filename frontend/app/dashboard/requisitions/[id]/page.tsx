@@ -23,8 +23,14 @@ const nextSteps: Record<string, { new_status: string; lifecycle_status: string; 
     { new_status: "submitted", lifecycle_status: "submitted", label: "Submit for approval" },
   ],
   submitted: [
+    { new_status: "pending_approval", lifecycle_status: "pending_approval", label: "Send to approval" },
+  ],
+  pending_approval: [
     { new_status: "approved", lifecycle_status: "approved", label: "Approve" },
     { new_status: "rejected", lifecycle_status: "rejected", label: "Reject" },
+  ],
+  po_created: [
+    { new_status: "closed", lifecycle_status: "closed", label: "Close PR" },
   ],
 };
 

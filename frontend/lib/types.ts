@@ -202,6 +202,7 @@ export type PurchaseOrderLifecycleStatus =
   | "acknowledged"
   | "partially_received"
   | "fully_received"
+  | "invoiced"
   | "closed"
   | "cancelled";
 

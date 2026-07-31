@@ -149,6 +149,8 @@ async def auto_create_po_from_requisition(db: Any, requisition_id: UUID | str, s
         tenant_id=tenant_id,
     )
     if db is not None and hasattr(db, "add"):
+        requisition.status = "po_created"
+        requisition.lifecycle_status = "po_created"
         db.add(
             ProcurementAuditEvent(
                 requisition_id=requisition.id,

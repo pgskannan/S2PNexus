@@ -8,15 +8,19 @@ import { StatusBadge } from "@/components/StatusBadge";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
 import type { Requisition, Supplier } from "@/lib/types";
 
-type StatusFilter = "" | "draft" | "submitted" | "approved" | "rejected";
+type StatusFilter = "" | "draft" | "submitted" | "pending_approval" | "approved" | "rejected" | "returned" | "po_created" | "closed";
 type SortField = "requisition_number" | "title" | "priority" | "estimated_value" | "created_at";
 
 const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: "", label: "All" },
   { key: "draft", label: "Draft" },
   { key: "submitted", label: "Submitted" },
+  { key: "pending_approval", label: "Pending approval" },
   { key: "approved", label: "Approved" },
   { key: "rejected", label: "Rejected" },
+  { key: "returned", label: "Needs rework" },
+  { key: "po_created", label: "PO created" },
+  { key: "closed", label: "Closed" },
 ];
 
 const HIGH_VALUE_THRESHOLD = 10000;
@@ -147,7 +151,7 @@ export default function RequisitionsPage() {
 
   async function loadCounts() {
     try {
-      const statuses: StatusFilter[] = ["draft", "submitted", "approved", "rejected"];
+      const statuses: StatusFilter[] = ["draft", "submitted", "pending_approval", "approved", "rejected", "returned", "po_created", "closed"];
       const [all, ...perStatus] = await Promise.all([
         listRequisitions(baseParams({ status: undefined, limit: 1 })),
         ...statuses.map((s) => listRequisitions(baseParams({ status: s, limit: 1 }))),
@@ -267,7 +271,11 @@ export default function RequisitionsPage() {
     }
   }
 
-  const pendingCount = statusCounts["submitted"] ?? 0;
+  // "submitted" is now a brief transitional state -- the backend advances a
+  // requisition to "pending_approval" as soon as its workflow instance is
+  // created (same request as Submit), so counting "submitted" alone almost
+  // always reads 0 even when approvals are genuinely waiting.
+  const pendingCount = (statusCounts["submitted"] ?? 0) + (statusCounts["pending_approval"] ?? 0);
   const draftCount = statusCounts["draft"] ?? 0;
   const recommendation =
     pendingCount > 0

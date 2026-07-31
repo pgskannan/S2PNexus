@@ -646,7 +646,8 @@ async def transition_purchase_order_lifecycle(
         "sent_to_supplier": {"acknowledged", "cancelled"},
         "acknowledged": {"partially_received", "fully_received", "cancelled"},
         "partially_received": {"fully_received", "cancelled"},
-        "fully_received": {"closed"},
+        "fully_received": {"invoiced", "closed"},
+        "invoiced": {"closed"},
     }
     cur = po.lifecycle_status
     if cur == new_lifecycle_status:
@@ -930,6 +931,7 @@ async def create_invoice(
     # Don't trust a client-supplied purchase_order_id blindly -- without this check
     # a client could link their invoice to another tenant's PO, and it would then
     # appear in that PO's own invoices list for the other tenant to see.
+    linked_po = None
     if invoice_in.purchase_order_id is not None:
         linked_po = await get_purchase_order(db, invoice_in.purchase_order_id, tenant_id=tenant_id)
         if linked_po is None:
@@ -1006,6 +1008,9 @@ async def create_invoice(
         # Memo/ad-hoc invoice lines with no PO link have no GL account on the
         # ProcurementInvoiceLineItem model to default a split from, so they are
         # intentionally left without an auto-created split row.
+
+    if linked_po is not None:
+        linked_po.lifecycle_status = "invoiced"
 
     await db.commit()
     await db.refresh(invoice)

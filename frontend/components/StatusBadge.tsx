@@ -15,13 +15,17 @@ const semantic: Record<string, { background: string; color: string }> = {
   ACKNOWLEDGED: { background: "#e0e7ff", color: "#3730a3" },
   SCHEDULED: { background: "#ede9fe", color: "#5b21b6" },
   DRAFT: { background: "#f1f5f9", color: "#475569" },
+  RETURNED: { background: "#ffedd5", color: "#9a3412" },
+  PO_CREATED: { background: "#e0e7ff", color: "#3730a3" },
 };
 
 const displayLabels: Record<string, string> = {
-  SUBMITTED: "In Approval",
-  PENDING_APPROVAL: "In Approval",
+  SUBMITTED: "Submitted",
+  PENDING_APPROVAL: "Pending Approval",
   IN_APPROVAL: "In Approval",
   PENDING: "In Approval",
+  RETURNED: "Needs Rework",
+  PO_CREATED: "PO Created",
 };
 
 export function StatusBadge({ status }: { status: string }) {

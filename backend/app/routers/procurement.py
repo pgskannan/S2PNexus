@@ -261,11 +261,17 @@ async def transition_requisition_endpoint(
         tenant_id=current_user.tenant_id,
     )
     if transition_data.lifecycle_status == "submitted":
-        await start_requisition_approval_workflow(
+        workflow_instance = await start_requisition_approval_workflow(
             requisition,
             db,
             started_by=current_user.id,
         )
+        # The submit action is recorded above; once the workflow exists, the
+        # business lifecycle is explicitly waiting for approvers.
+        if workflow_instance is not None:
+            requisition.status = "pending_approval"
+            requisition.lifecycle_status = "pending_approval"
+            await db.commit()
     # Auto-create the PO here too, not just on workflow-instance completion --
     # the requisition detail page's "Approve" button calls this endpoint
     # directly with lifecycle_status="approved" and never touches the
