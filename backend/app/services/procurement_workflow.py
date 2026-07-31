@@ -144,7 +144,7 @@ async def auto_create_po_from_requisition(db: Any, requisition_id: UUID | str, s
 
     payload = PurchaseOrderCreate(
         supplier_id=getattr(requisition, "supplier_id", None),
-        status="pending_approval",
+        status="ordered",
         currency=getattr(requisition, "currency", "USD") or "USD",
         notes=getattr(requisition, "notes", None),
         line_items=derived_line_items,
@@ -158,13 +158,14 @@ async def auto_create_po_from_requisition(db: Any, requisition_id: UUID | str, s
         tenant_id=tenant_id,
     )
     # The PR that triggered this already completed its approval workflow, so the
-    # generated PO is auto-submitted straight into the PO approval queue rather
-    # than starting back at draft (which forced a redundant "Submit for
-    # approval" step and read as a confusing status regression after the PR was
-    # approved). Keep both status and lifecycle_status in lockstep.
+    # generated PO goes straight to the Ordered state -- there is no separate PO
+    # approval step (per business requirement: orders don't need approval).
+    # Starting it at draft forced a redundant "Submit for approval" step and
+    # read as a status regression after the PR was approved. Keep both status
+    # and lifecycle_status in lockstep.
     if created_po is not None:
-        created_po.lifecycle_status = "pending_approval"
-        created_po.status = "pending_approval"
+        created_po.lifecycle_status = "ordered"
+        created_po.status = "ordered"
     if db is not None and hasattr(db, "add"):
         requisition.status = "po_created"
         requisition.lifecycle_status = "po_created"
@@ -177,6 +178,17 @@ async def auto_create_po_from_requisition(db: Any, requisition_id: UUID | str, s
             )
         )
         await db.commit()
+    # Mirror the manual "Mark ordered" transition behavior now that the PO is
+    # created directly in the ordered state: auto-create receipts for
+    # auto-receive lines and a draft receipt for the 3-way lines still needing
+    # manual receiving.
+    if created_po is not None and db is not None and hasattr(db, "execute"):
+        await auto_create_receipts_for_ordered_po(
+            db, created_po.id, actor_id=started_by, tenant_id=tenant_id
+        )
+        await auto_create_draft_receipt_for_po(
+            db, created_po.id, actor_id=started_by, tenant_id=tenant_id
+        )
     return created_po
 
 

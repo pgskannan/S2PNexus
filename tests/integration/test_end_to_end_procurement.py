@@ -96,15 +96,10 @@ async def test_end_to_end_procurement_lifecycle(client, db_session, three_way_po
     po_id = po["id"]
     po_line_id = po["line_items"][0]["id"]
 
-    # 5. Move the PO through approval to Ordered (auto-drafts a receipt for the
-    # 3-way line on ordered).
-    for lifecycle in ("pending_approval", "approved", "ordered"):
-        r = await client.post(
-            f"/api/v1/procurement/purchase-orders/{po_id}/lifecycle/transition",
-            json={"lifecycle_status": lifecycle},
-        )
-        assert r.status_code == 200, r.text
-    assert r.json()["lifecycle_status"] == "ordered"
+    # 5. The PO is auto-created already in the Ordered state -- the approved PR
+    # skips a separate PO approval step (orders don't need approval). A draft
+    # receipt is auto-created for the 3-way line on ordering.
+    assert po["lifecycle_status"] == "ordered"
 
     # 6. Manually receive the full quantity.
     r = await client.post(

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { extractErrorMessage, listInvoices } from "@/lib/api";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
+import ProcurementTabs from "@/components/ProcurementTabs";
 import type { ProcurementInvoice } from "@/lib/types";
 
 const statusColors: Record<string, string> = {
@@ -61,6 +62,7 @@ export default function InvoicesPage() {
 
   return (
     <div className="space-y-6">
+      <ProcurementTabs />
       <div>
         <h1 className="text-2xl font-semibold">Invoices</h1>
         <p className="mt-1 text-sm text-slate-500">Monitor invoice status and three-way match progress.</p>

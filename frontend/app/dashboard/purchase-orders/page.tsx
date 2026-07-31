@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { listPurchaseOrders, listSuppliers, extractErrorMessage } from "@/lib/api";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
+import ProcurementTabs from "@/components/ProcurementTabs";
 import type { PurchaseOrder, Supplier } from "@/lib/types";
 
 const statusColors: Record<string, string> = {
@@ -105,6 +106,7 @@ export default function PurchaseOrdersPage() {
 
   return (
     <div className="space-y-6">
+      <ProcurementTabs />
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Purchase Orders</h1>
       </div>
