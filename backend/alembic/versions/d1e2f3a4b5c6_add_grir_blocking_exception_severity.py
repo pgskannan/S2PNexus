@@ -1,6 +1,6 @@
 """Add GR/IR records, invoice block_status, and exception severity/code
 
-Revision ID: c3d4e5f6a7b8
+Revision ID: d1e2f3a4b5c6
 Revises: b2c3d4e5f6a8
 Create Date: 2026-07-31 00:00:00.000000
 
@@ -15,6 +15,9 @@ Implements the data-model pieces of bundle spec sections 3, 4, and 6:
 - invoice_match_exceptions.severity + exception_code: exception severity
   (Critical/High/Medium/Low) and stable machine-readable code for the exception
   engine lifecycle.
+
+NOTE: original revision id c3d4e5f6a7b8 collided with the existing contract
+lifecycle migration, so this file was renamed/renumbered to d1e2f3a4b5c6.
 """
 from typing import Sequence, Union
 
@@ -22,7 +25,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "c3d4e5f6a7b8"
+revision: str = "d1e2f3a4b5c6"
 down_revision: Union[str, Sequence[str], None] = "b2c3d4e5f6a8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
