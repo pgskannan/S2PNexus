@@ -11,11 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.crud.commodity import (
     bulk_upsert_commodity_account_mappings,
     bulk_upsert_commodity_codes,
+    bulk_upsert_commodity_matching_policies,
     count_commodity_codes,
     delete_all_commodity_account_mappings,
     delete_all_commodity_codes,
+    delete_all_commodity_matching_policies,
     list_commodity_account_mappings,
     list_commodity_codes,
+    list_commodity_matching_policies,
     resolve_gl_account,
     resolve_matching_policy,
     search_commodity_codes,
@@ -28,8 +31,10 @@ from app.services.master_data_import import (
     MasterDataCSVError,
     build_commodity_codes_csv,
     build_gl_mapping_csv,
+    build_matching_policy_csv,
     parse_commodity_codes_csv,
     parse_gl_mapping_csv,
+    parse_matching_policy_csv,
 )
 from app.utils.dependencies import get_current_active_user
 
@@ -87,6 +92,7 @@ async def resolved(code: str, current_user: Annotated[User, Depends(get_current_
             "scope_code": policy.scope_code,
             "required_match_type": policy.required_match_type,
             "auto_receive": policy.auto_receive,
+            "auto_receive_price_threshold": policy.auto_receive_price_threshold,
         },
     }
 
@@ -117,9 +123,99 @@ async def upsert_policy(scope_level: str, scope_code: str, payload: dict, curren
         scope_code=scope_code,
         required_match_type=payload.get("required_match_type", "two_way"),
         auto_receive=bool(payload.get("auto_receive", False)),
+        auto_receive_price_threshold=payload.get("auto_receive_price_threshold"),
         updated_by=current_user.id,
     )
     return {"id": str(row.id), "scope_level": row.scope_level, "scope_code": row.scope_code}
+
+
+# ---------------------------------------------------------------------------
+# Master data management: commodity matching policy (upload / delete-all / list)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/policies")
+async def list_policies_endpoint(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    items = await list_commodity_matching_policies(db, tenant_id=current_user.tenant_id)
+    return [
+        {
+            "scope_level": p.scope_level,
+            "scope_code": p.scope_code,
+            "required_match_type": p.required_match_type,
+            "auto_receive": p.auto_receive,
+            "auto_receive_price_threshold": p.auto_receive_price_threshold,
+        }
+        for p in items
+    ]
+
+
+@router.post("/policies/upload")
+async def upload_policies(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+):
+    """Upload a commodity matching-policy CSV: which scopes require two-way vs
+    three-way match, and when to auto-receive (flag and/or a line-total price
+    ceiling). See app.services.procurement_workflow.auto_create_receipts_for_ordered_po
+    for how this drives auto-receipt creation."""
+    _require_admin(current_user)
+    csv_text = await _read_csv_text(file)
+    try:
+        rows = parse_matching_policy_csv(csv_text)
+    except MasterDataCSVError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": exc.errors}) from exc
+
+    loaded = await bulk_upsert_commodity_matching_policies(
+        db,
+        tenant_id=current_user.tenant_id,
+        rows=[
+            {
+                "scope_level": r.scope_level,
+                "scope_code": r.scope_code,
+                "required_match_type": r.required_match_type,
+                "auto_receive": r.auto_receive,
+                "auto_receive_price_threshold": r.auto_receive_price_threshold,
+            }
+            for r in rows
+        ],
+        updated_by=current_user.id,
+    )
+    return {"loaded": loaded}
+
+
+@router.delete("/policies")
+async def delete_all_policies_endpoint(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    """Soft delete: marks this tenant's matching policies inactive (see
+    app.crud.commodity.delete_all_commodity_matching_policies)."""
+    _require_admin(current_user)
+    deleted = await delete_all_commodity_matching_policies(db, tenant_id=current_user.tenant_id)
+    return {"deleted": deleted}
+
+
+@router.get("/policies/export")
+async def export_policies(current_user: Annotated[User, Depends(get_current_active_user)], db: AsyncSession = Depends(get_db)):
+    """Download the currently active matching policies as a CSV in the same shape
+    /policies/upload accepts -- edit and re-upload to update in place."""
+    _require_admin(current_user)
+    items = await list_commodity_matching_policies(db, tenant_id=current_user.tenant_id)
+    csv_text = build_matching_policy_csv(
+        [
+            {
+                "scope_level": p.scope_level,
+                "scope_code": p.scope_code,
+                "required_match_type": p.required_match_type,
+                "auto_receive": p.auto_receive,
+                "auto_receive_price_threshold": p.auto_receive_price_threshold,
+            }
+            for p in items
+        ]
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=commodity_matching_policies.csv"},
+    )
 
 
 # ---------------------------------------------------------------------------

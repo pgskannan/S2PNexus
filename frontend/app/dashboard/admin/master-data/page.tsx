@@ -20,6 +20,10 @@ import {
   uploadCommodityGlMapping,
   downloadCommodityGlMapping,
   deleteAllCommodityGlMapping,
+  getCommodityMatchingPolicyCount,
+  uploadCommodityMatchingPolicy,
+  downloadCommodityMatchingPolicy,
+  deleteAllCommodityMatchingPolicy,
   uploadDepartments,
   downloadDepartments,
   deleteAllDepartments,
@@ -454,6 +458,17 @@ export default function MasterDataAdminPage() {
           upload={uploadCommodityGlMapping}
           download={downloadCommodityGlMapping}
           deleteAll={deleteAllCommodityGlMapping}
+        />
+
+        <MasterDataCard
+          title="Matching Policy"
+          description="Two-way vs. three-way match per commodity scope, and when receipts auto-generate: always (auto_receive) and/or for line items at or under a price threshold. Two-way scopes never get a receipt at all -- their invoice matches straight against the PO. Drives receipt creation when a PO reaches Ordered status."
+          columnsHint="scope_level, scope_code, required_match_type (two_way/three_way), auto_receive (true/false), auto_receive_price_threshold"
+          isAdmin={isAdmin}
+          getCount={getCommodityMatchingPolicyCount}
+          upload={uploadCommodityMatchingPolicy}
+          download={downloadCommodityMatchingPolicy}
+          deleteAll={deleteAllCommodityMatchingPolicy}
         />
 
         <MasterDataCard

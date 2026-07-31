@@ -17,7 +17,7 @@ from app.crud.accounting_split import copy_splits, ensure_default_split
 from app.crud.address import get_address_for_lookup
 from app.crud.budget import check_budget_availability, resolve_split_amount
 from app.models.accounting_split import LineItemAccountingSplit
-from app.models.commodity import CommodityCode
+from app.models.commodity import CommodityCode, CommodityMatchingPolicy
 from app.models.procurement import (
     GoodsReceipt,
     GoodsReceiptLineItem,
@@ -642,7 +642,8 @@ async def transition_purchase_order_lifecycle(
     allowed = {
         "draft": {"pending_approval"},
         "pending_approval": {"approved", "cancelled"},
-        "approved": {"sent_to_supplier", "cancelled"},
+        "approved": {"ordered", "sent_to_supplier", "cancelled"},
+        "ordered": {"sent_to_supplier", "fully_received", "partially_received", "cancelled"},
         "sent_to_supplier": {"acknowledged", "cancelled"},
         "acknowledged": {"partially_received", "fully_received", "cancelled"},
         "partially_received": {"fully_received", "cancelled"},
@@ -890,10 +891,17 @@ async def create_goods_receipt(
     goods_receipt.has_exceptions = exception_detected
     await db.flush()
 
-    # Recompute PO lifecycle status based on receipt progress.
+    # Recompute PO lifecycle status based on receipt progress. Two-way-match
+    # lines never get a receipt at all (see resolve_match_type_and_policy_for_po_line)
+    # so they must be excluded from the "fully received" requirement -- otherwise
+    # any PO with even one two-way line could never reach fully_received, since
+    # that line's accepted_quantity would permanently read 0.
     all_fully_received = True
     any_received = False
     for line_id, line_item in line_item_map.items():
+        match_type, _policy = await resolve_match_type_and_policy_for_po_line(db, tenant_id, line_item)
+        if match_type != "three_way":
+            continue
         status = await get_po_line_receipt_status(db, line_id)
         if status["accepted_quantity"] > Decimal("0.00"):
             any_received = True
@@ -1050,6 +1058,32 @@ async def _get_po_line_item(db: AsyncSession, line_item: ProcurementInvoiceLineI
     return result.scalar_one_or_none()
 
 
+async def resolve_match_type_and_policy_for_po_line(
+    db: AsyncSession,
+    tenant_id: Optional[UUID],
+    po_line: PurchaseOrderLineItem | None,
+) -> tuple[str, CommodityMatchingPolicy | None]:
+    """Resolve (match_type, policy) for a single PO line item via its commodity
+    code -> CommodityMatchingPolicy. Shared by invoice matching
+    (_get_effective_match_type_for_invoice_line) and PO-ordered auto-receipt
+    creation (app.services.procurement_workflow.auto_create_receipts_for_ordered_po)
+    so both paths agree on what "three-way match" means for a given line.
+    Defaults to two-way / no policy when nothing is configured for this commodity.
+    """
+    commodity_code = None
+    if po_line is not None:
+        if po_line.commodity_code_id is not None:
+            result = await db.execute(select(CommodityCode).where(CommodityCode.id == po_line.commodity_code_id))
+            commodity_row = result.scalar_one_or_none()
+            commodity_code = commodity_row.code if commodity_row is not None else None
+        if commodity_code is None:
+            commodity_code = po_line.commodity_code_free_text
+
+    policy = await resolve_matching_policy(db, tenant_id=tenant_id, commodity_code=commodity_code or "")
+    match_type = policy.required_match_type if policy is not None else "two_way"
+    return match_type, policy
+
+
 async def _get_effective_match_type_for_invoice_line(
     db: AsyncSession,
     invoice: ProcurementInvoice,
@@ -1060,17 +1094,8 @@ async def _get_effective_match_type_for_invoice_line(
         return match_type_override
 
     po_line = await _get_po_line_item(db, line_item)
-    commodity_code = None
-    if po_line is not None:
-        if po_line.commodity_code_id is not None:
-            result = await db.execute(select(CommodityCode).where(CommodityCode.id == po_line.commodity_code_id))
-            commodity_row = result.scalar_one_or_none()
-            commodity_code = commodity_row.code if commodity_row is not None else None
-        if commodity_code is None:
-            commodity_code = po_line.commodity_code_free_text
-
-    policy = await resolve_matching_policy(db, tenant_id=invoice.tenant_id, commodity_code=commodity_code or "")
-    return policy.required_match_type if policy is not None else "two_way"
+    match_type, _policy = await resolve_match_type_and_policy_for_po_line(db, invoice.tenant_id, po_line)
+    return match_type
 
 
 async def _delete_existing_match_exceptions(db: AsyncSession, invoice_id: UUID) -> None:

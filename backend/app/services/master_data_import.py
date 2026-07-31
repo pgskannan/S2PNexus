@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import io
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 
 VALID_SCOPE_LEVELS = ("segment", "family", "class", "commodity")
 
@@ -298,6 +299,102 @@ def _parse_bool(value: str | None) -> bool | None:
     if normalized in ("0", "false", "no", "n", "f"):
         return False
     return None
+
+
+VALID_MATCH_TYPES = ("two_way", "three_way")
+
+
+@dataclass
+class MatchingPolicyRow:
+    scope_level: str
+    scope_code: str
+    required_match_type: str
+    auto_receive: bool
+    auto_receive_price_threshold: Decimal | None
+
+
+def parse_matching_policy_csv(csv_text: str) -> list[MatchingPolicyRow]:
+    reader = _reader_for(csv_text)
+    fieldnames = reader.fieldnames or []
+    level_col = _find_column(fieldnames, ("scope_level", "level"))
+    code_col = _find_column(fieldnames, ("scope_code", "code"))
+    match_col = _find_column(fieldnames, ("required_match_type", "match_type"))
+    auto_col = _find_column(fieldnames, ("auto_receive",))
+    threshold_col = _find_column(fieldnames, ("auto_receive_price_threshold", "price_threshold", "threshold"))
+
+    if level_col is None or code_col is None:
+        raise MasterDataCSVError(
+            [
+                "Expected columns scope_level, scope_code (required_match_type, auto_receive, "
+                f"auto_receive_price_threshold optional). Found headers: {fieldnames}"
+            ]
+        )
+
+    rows: list[MatchingPolicyRow] = []
+    errors: list[str] = []
+    for line_num, raw in enumerate(reader, start=2):
+        scope_level = (raw.get(level_col) or "").strip().lower()
+        scope_code = (raw.get(code_col) or "").strip()
+        if not scope_level and not scope_code:
+            continue
+        if scope_level not in VALID_SCOPE_LEVELS:
+            errors.append(f"Row {line_num}: scope_level must be one of {VALID_SCOPE_LEVELS}, got '{scope_level}'")
+            continue
+        if not scope_code:
+            errors.append(f"Row {line_num}: missing scope_code")
+            continue
+
+        match_type = (raw.get(match_col) or "").strip().lower() if match_col else ""
+        if not match_type:
+            match_type = "two_way"
+        elif match_type not in VALID_MATCH_TYPES:
+            errors.append(f"Row {line_num}: required_match_type must be one of {VALID_MATCH_TYPES}, got '{match_type}'")
+            continue
+
+        auto_receive = _parse_bool(raw.get(auto_col)) if auto_col else False
+        if auto_receive is None:
+            auto_receive = False
+
+        threshold: Decimal | None = None
+        threshold_raw = (raw.get(threshold_col) or "").strip() if threshold_col else ""
+        if threshold_raw:
+            try:
+                threshold = Decimal(threshold_raw)
+            except InvalidOperation:
+                errors.append(f"Row {line_num}: auto_receive_price_threshold '{threshold_raw}' is not a valid number")
+                continue
+
+        rows.append(
+            MatchingPolicyRow(
+                scope_level=scope_level,
+                scope_code=scope_code,
+                required_match_type=match_type,
+                auto_receive=auto_receive,
+                auto_receive_price_threshold=threshold,
+            )
+        )
+
+    if errors:
+        raise MasterDataCSVError(errors)
+    return rows
+
+
+def build_matching_policy_csv(rows: list[dict]) -> str:
+    """Export helper, symmetric with parse_matching_policy_csv."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["scope_level", "scope_code", "required_match_type", "auto_receive", "auto_receive_price_threshold"])
+    for r in rows:
+        writer.writerow(
+            [
+                r.get("scope_level") or "",
+                r.get("scope_code") or "",
+                r.get("required_match_type") or "",
+                "true" if r.get("auto_receive") else "false",
+                r.get("auto_receive_price_threshold") if r.get("auto_receive_price_threshold") is not None else "",
+            ]
+        )
+    return buf.getvalue()
 
 
 @dataclass

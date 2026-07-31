@@ -19,6 +19,11 @@ const nextLifecycleSteps: Record<string, { value: string; label: string }[]> = {
     { value: "cancelled", label: "Cancel" },
   ],
   approved: [
+    { value: "ordered", label: "Mark ordered" },
+    { value: "sent_to_supplier", label: "Send to supplier" },
+    { value: "cancelled", label: "Cancel" },
+  ],
+  ordered: [
     { value: "sent_to_supplier", label: "Send to supplier" },
     { value: "cancelled", label: "Cancel" },
   ],

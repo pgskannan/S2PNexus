@@ -8,9 +8,16 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from app.crud.procurement import create_purchase_order, get_requisition, get_requisitions
+from app.crud.procurement import (
+    create_goods_receipt,
+    create_purchase_order,
+    get_purchase_order,
+    get_requisition,
+    get_requisitions,
+    resolve_match_type_and_policy_for_po_line,
+)
 from app.events.publisher import EventPublisher
-from app.models.procurement import ProcurementAuditEvent, PurchaseOrder
+from app.models.procurement import GoodsReceipt, ProcurementAuditEvent, PurchaseOrder
 from app.schemas.procurement import PurchaseOrderCreate
 
 
@@ -161,6 +168,98 @@ async def auto_create_po_from_requisition(db: Any, requisition_id: UUID | str, s
         )
         await db.commit()
     return created_po
+
+
+async def auto_create_receipts_for_ordered_po(
+    db: Any, purchase_order_id: UUID | str, *, actor_id: UUID, tenant_id: UUID | str | None = None
+) -> Any | None:
+    """Called when a PO transitions to lifecycle_status "ordered".
+
+    Business rule (per user request 2026-07-31): two-way-match PO lines never get
+    a receipt at all -- their invoice matches straight against the PO. Three-way-
+    match lines need a receipt to exist before they can be invoice-matched, and
+    whether that receipt should be system-generated automatically (vs. requiring
+    someone to walk through manual goods receiving) is controlled per commodity
+    scope by CommodityMatchingPolicy.auto_receive and/or
+    auto_receive_price_threshold (auto-receive if this line's total, unit_price *
+    quantity, is at or under the threshold) -- see resolve_match_type_and_policy_for_po_line.
+
+    One GoodsReceipt is created (if anything qualifies) covering every
+    auto-receivable line, fully received (quantity_received = ordered quantity)
+    since this stands in for a real physical receiving step. Lines that are
+    three-way but don't qualify for auto-receive are left for a human to receive
+    manually later via the normal goods-receipt flow -- this function does not
+    touch them.
+
+    If every line on the PO is two-way (nothing will ever need a receipt), this
+    also bumps the PO straight to fully_received, since it would otherwise sit at
+    "ordered" forever waiting on a receiving step that structurally never applies
+    to it (see the two_way-line exclusion in crud.procurement.create_goods_receipt's
+    all_fully_received computation, which this mirrors).
+    """
+    purchase_order = await get_purchase_order(db, purchase_order_id, tenant_id=tenant_id)
+    if purchase_order is None:
+        return None
+
+    if db is not None and hasattr(db, "execute"):
+        existing_receipt_result = await db.execute(select(GoodsReceipt).where(GoodsReceipt.purchase_order_id == purchase_order.id))
+        if existing_receipt_result.scalars().first() is not None:
+            return None
+
+    line_items = getattr(purchase_order, "line_items", None) or []
+    if not line_items:
+        return None
+
+    auto_receive_lines: list[dict[str, Any]] = []
+    any_three_way = False
+    for line_item in line_items:
+        match_type, policy = await resolve_match_type_and_policy_for_po_line(db, tenant_id, line_item)
+        if match_type != "three_way":
+            continue
+        any_three_way = True
+        # match_type can only be "three_way" when a policy was actually resolved
+        # (the no-policy default in resolve_match_type_and_policy_for_po_line is
+        # always "two_way"), so `policy` is guaranteed non-None here.
+        assert policy is not None
+        quantity = line_item.quantity or Decimal("0.00")
+        unit_price = line_item.unit_price or Decimal("0.00")
+        line_total = quantity * unit_price
+        qualifies = policy.auto_receive or (
+            policy.auto_receive_price_threshold is not None and line_total <= policy.auto_receive_price_threshold
+        )
+        if qualifies:
+            auto_receive_lines.append(
+                {
+                    "purchase_order_line_item_id": line_item.id,
+                    "quantity_received": str(quantity),
+                    "quantity_rejected": "0",
+                }
+            )
+
+    if not any_three_way:
+        # Nothing on this PO will ever need a receipt -- don't leave it stuck at
+        # "ordered" waiting on a step that can never happen.
+        purchase_order.lifecycle_status = "fully_received"
+        await db.commit()
+        return None
+
+    if not auto_receive_lines:
+        return None
+
+    receipt = await create_goods_receipt(
+        db,
+        purchase_order.id,
+        {
+            "status": "received",
+            "receipt_type": "standard",
+            "inspection_status": "pending",
+            "notes": "System-generated: auto-received on PO ordered per commodity matching policy.",
+            "line_items": auto_receive_lines,
+        },
+        created_by=actor_id,
+        tenant_id=tenant_id,
+    )
+    return receipt
 
 
 async def process_deferred_po_creation(db: Any, *, tenant_id: UUID | str | None = None) -> list[Any]:

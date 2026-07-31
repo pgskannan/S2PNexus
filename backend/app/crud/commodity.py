@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
@@ -81,6 +82,7 @@ async def resolve_matching_policy(db: AsyncSession, tenant_id: Optional[UUID], c
                     CommodityMatchingPolicy.tenant_id == candidate_tenant,
                     CommodityMatchingPolicy.scope_level == level,
                     CommodityMatchingPolicy.scope_code == scope_code,
+                    CommodityMatchingPolicy.is_active.is_(True),
                 )
             )
             policy = result.scalar_one_or_none()
@@ -133,6 +135,7 @@ async def upsert_commodity_matching_policy(
     scope_code: str,
     required_match_type: str,
     auto_receive: bool,
+    auto_receive_price_threshold: Optional[Decimal] = None,
     updated_by: Optional[UUID],
 ):
     eff = _effective_tenant_id(tenant_id)
@@ -150,11 +153,73 @@ async def upsert_commodity_matching_policy(
 
     row.required_match_type = required_match_type
     row.auto_receive = auto_receive
+    row.auto_receive_price_threshold = auto_receive_price_threshold
     row.updated_by = updated_by
+    row.is_active = True
 
     await db.commit()
     await db.refresh(row)
     return row
+
+
+async def list_commodity_matching_policies(
+    db: AsyncSession, tenant_id: Optional[UUID] = None, include_inactive: bool = False
+) -> list[CommodityMatchingPolicy]:
+    eff = _effective_tenant_id(tenant_id)
+    stmt = (
+        select(CommodityMatchingPolicy)
+        .where(CommodityMatchingPolicy.tenant_id == eff)
+        .order_by(CommodityMatchingPolicy.scope_level, CommodityMatchingPolicy.scope_code)
+    )
+    if not include_inactive:
+        stmt = stmt.where(CommodityMatchingPolicy.is_active.is_(True))
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def bulk_upsert_commodity_matching_policies(
+    db: AsyncSession,
+    *,
+    tenant_id: Optional[UUID],
+    rows: list[dict],  # scope_level, scope_code, required_match_type, auto_receive, auto_receive_price_threshold
+    updated_by: Optional[UUID],
+) -> int:
+    """Upsert a batch of matching policies. Unlike GL mappings, there's nothing external
+    to validate against (match type/auto-receive are self-contained flags), so every
+    well-formed row loads -- errors only come from CSV parsing itself."""
+    eff = _effective_tenant_id(tenant_id)
+    existing_result = await db.execute(select(CommodityMatchingPolicy).where(CommodityMatchingPolicy.tenant_id == eff))
+    existing_by_key = {(p.scope_level, p.scope_code): p for p in existing_result.scalars().all()}
+
+    for r in rows:
+        key = (r["scope_level"], r["scope_code"])
+        row = existing_by_key.get(key)
+        if row is None:
+            row = CommodityMatchingPolicy(tenant_id=eff, scope_level=r["scope_level"], scope_code=r["scope_code"])
+            db.add(row)
+            existing_by_key[key] = row
+        row.required_match_type = r.get("required_match_type") or "two_way"
+        row.auto_receive = bool(r.get("auto_receive", False))
+        row.auto_receive_price_threshold = r.get("auto_receive_price_threshold")
+        row.updated_by = updated_by
+        row.is_active = True
+
+    await db.commit()
+    return len(rows)
+
+
+async def delete_all_commodity_matching_policies(db: AsyncSession, tenant_id: Optional[UUID] = None) -> int:
+    """Soft delete: mark this tenant's policies inactive (same rationale as
+    delete_all_commodity_account_mappings). resolve_matching_policy already filters
+    on is_active, so a deactivated policy stops applying immediately."""
+    eff = _effective_tenant_id(tenant_id)
+    result = await db.execute(
+        update(CommodityMatchingPolicy)
+        .where(CommodityMatchingPolicy.tenant_id == eff, CommodityMatchingPolicy.is_active.is_(True))
+        .values(is_active=False)
+    )
+    await db.commit()
+    return result.rowcount or 0
 
 
 async def search_commodity_codes(db: AsyncSession, query: Optional[str], limit: int = 25) -> list[CommodityCode]:

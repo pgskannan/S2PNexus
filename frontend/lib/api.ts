@@ -938,6 +938,24 @@ export async function downloadCommodityGlMapping(): Promise<void> {
   return downloadCsv("/commodity-codes/mappings/export", "commodity_gl_mapping.csv");
 }
 
+export async function getCommodityMatchingPolicyCount(): Promise<number> {
+  const { data } = await api.get<unknown[]>("/commodity-codes/policies");
+  return data.length;
+}
+
+export async function uploadCommodityMatchingPolicy(file: File): Promise<{ loaded: number; errors?: string[] }> {
+  return uploadCsv<{ loaded: number; errors?: string[] }>("/commodity-codes/policies/upload", file);
+}
+
+export async function downloadCommodityMatchingPolicy(): Promise<void> {
+  return downloadCsv("/commodity-codes/policies/export", "commodity_matching_policies.csv");
+}
+
+export async function deleteAllCommodityMatchingPolicy(): Promise<{ deleted: number }> {
+  const { data } = await api.delete<{ deleted: number }>("/commodity-codes/policies");
+  return data;
+}
+
 export async function getDepartmentsCount(): Promise<{ count: number }> {
   const { data } = await api.get<{ count: number }>("/departments/master-data/count");
   return data;

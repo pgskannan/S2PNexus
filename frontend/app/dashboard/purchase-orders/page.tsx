@@ -10,6 +10,7 @@ const statusColors: Record<string, string> = {
   draft: "bg-slate-100 text-slate-700",
   pending_approval: "bg-amber-100 text-amber-700",
   approved: "bg-green-100 text-green-700",
+  ordered: "bg-teal-100 text-teal-700",
   sent_to_supplier: "bg-blue-100 text-blue-700",
   acknowledged: "bg-blue-100 text-blue-700",
   partially_received: "bg-purple-100 text-purple-700",
@@ -24,6 +25,7 @@ const STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
   { value: "pending_approval", label: "Pending approval" },
   { value: "approved", label: "Approved" },
+  { value: "ordered", label: "Ordered" },
   { value: "sent_to_supplier", label: "Sent to supplier" },
   { value: "acknowledged", label: "Acknowledged" },
   { value: "partially_received", label: "Partially received" },
@@ -34,7 +36,7 @@ const STATUS_OPTIONS = [
 ];
 
 const HIGH_VALUE_THRESHOLD = 10000;
-const OPEN_FOR_RECEIVING = new Set(["approved", "sent_to_supplier", "acknowledged", "partially_received"]);
+const OPEN_FOR_RECEIVING = new Set(["approved", "ordered", "sent_to_supplier", "acknowledged", "partially_received"]);
 
 export default function PurchaseOrdersPage() {
   const [items, setItems] = useState<PurchaseOrder[]>([]);

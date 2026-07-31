@@ -83,6 +83,7 @@ from app.services.invoice_workflow import start_invoice_exception_workflow
 from app.services.procurement_workflow import (
     apply_procurement_transition_workflow,
     auto_create_po_from_requisition,
+    auto_create_receipts_for_ordered_po,
     process_deferred_po_creation,
     start_purchase_order_approval_workflow,
     start_requisition_approval_workflow,
@@ -637,11 +638,22 @@ async def transition_po_lifecycle_endpoint(
         db,
         started_by=current_user.id,
     )
+    if new_status.get("lifecycle_status") == "ordered":
+        # Two-way-match lines never get a receipt; three-way-match lines that
+        # qualify per CommodityMatchingPolicy (auto_receive flag and/or a
+        # line-total price threshold) get one auto-created here. See
+        # app.services.procurement_workflow.auto_create_receipts_for_ordered_po.
+        await auto_create_receipts_for_ordered_po(
+            db,
+            po.id,
+            actor_id=current_user.id,
+            tenant_id=current_user.tenant_id,
+        )
     # Same expire-on-commit hazard as transition_requisition_endpoint above:
-    # start_purchase_order_approval_workflow commits on this session, which
-    # expires `po` (fetched earlier), and serializing it via Pydantic
-    # afterward raises MissingGreenlet on the next lazy-loaded attribute.
-    # Re-fetch a fresh, eager-loaded copy before returning.
+    # start_purchase_order_approval_workflow / auto_create_receipts_for_ordered_po
+    # each commit on this session, which expires `po` (fetched earlier), and
+    # serializing it via Pydantic afterward raises MissingGreenlet on the next
+    # lazy-loaded attribute. Re-fetch a fresh, eager-loaded copy before returning.
     po = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
     return PurchaseOrderResponse.model_validate(po)
 

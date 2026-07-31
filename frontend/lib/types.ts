@@ -198,6 +198,7 @@ export type PurchaseOrderLifecycleStatus =
   | "draft"
   | "pending_approval"
   | "approved"
+  | "ordered"
   | "sent_to_supplier"
   | "acknowledged"
   | "partially_received"
