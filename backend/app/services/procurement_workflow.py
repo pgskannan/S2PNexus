@@ -144,7 +144,7 @@ async def auto_create_po_from_requisition(db: Any, requisition_id: UUID | str, s
 
     payload = PurchaseOrderCreate(
         supplier_id=getattr(requisition, "supplier_id", None),
-        status="draft",
+        status="pending_approval",
         currency=getattr(requisition, "currency", "USD") or "USD",
         notes=getattr(requisition, "notes", None),
         line_items=derived_line_items,
@@ -157,6 +157,14 @@ async def auto_create_po_from_requisition(db: Any, requisition_id: UUID | str, s
         created_by=started_by,
         tenant_id=tenant_id,
     )
+    # The PR that triggered this already completed its approval workflow, so the
+    # generated PO is auto-submitted straight into the PO approval queue rather
+    # than starting back at draft (which forced a redundant "Submit for
+    # approval" step and read as a confusing status regression after the PR was
+    # approved). Keep both status and lifecycle_status in lockstep.
+    if created_po is not None:
+        created_po.lifecycle_status = "pending_approval"
+        created_po.status = "pending_approval"
     if db is not None and hasattr(db, "add"):
         requisition.status = "po_created"
         requisition.lifecycle_status = "po_created"
@@ -253,6 +261,7 @@ async def auto_create_receipts_for_ordered_po(
         # step that can never happen. (Unconfigured lines don't hit this branch:
         # po_line_requires_receipt treats "no policy" as "needs a receipt".)
         purchase_order.lifecycle_status = "fully_received"
+        purchase_order.status = "fully_received"
         await db.commit()
         return None
 

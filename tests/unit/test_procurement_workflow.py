@@ -208,6 +208,11 @@ def test_auto_create_po_from_requisition_uses_requisition_data(monkeypatch):
 
         result = await auto_create_po_from_requisition(db=None, requisition_id=requisition_id, started_by=uuid4())
         assert result is created_po
+        # A PO generated from an already-approved PR must not regress to draft:
+        # it is auto-submitted into the PO approval queue so the next UI step is
+        # "Approve", not a redundant "Submit for approval".
+        assert created_po.status == "pending_approval"
+        assert created_po.lifecycle_status == "pending_approval"
 
     asyncio.run(run_test())
 

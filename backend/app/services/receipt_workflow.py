@@ -142,8 +142,10 @@ async def maybe_auto_close_po(
     if any_three_way and all_fully_received:
         if po.lifecycle_status in ("ordered", "sent_to_supplier", "acknowledged", "partially_received", "reopened", "approved"):
             po.lifecycle_status = "fully_received"
+            po.status = "fully_received"
         if not await po_has_pending_invoice(po):
             po.lifecycle_status = "closed"
+            po.status = "closed"
             po.amendment_status = "auto_close"
             po.version_number = (po.version_number or 1) + 1
             po.change_order_reference = f"AUTO-CLOSE-{po.version_number}"

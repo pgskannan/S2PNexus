@@ -894,6 +894,7 @@ async def transition_purchase_order_lifecycle(
             validate_po_reopen(po, invoice_fully_matched=await po_has_fully_matched_invoice(po))
 
         po.lifecycle_status = new_lifecycle_status
+        po.status = new_lifecycle_status
         now = datetime.now(timezone.utc)
         if new_lifecycle_status == "approved":
             po.approved_at = now
@@ -1177,6 +1178,7 @@ async def create_goods_receipt(
             purchase_order.lifecycle_status = "fully_received"
         else:
             purchase_order.lifecycle_status = "partially_received"
+        purchase_order.status = purchase_order.lifecycle_status
 
     await db.commit()
     await db.refresh(goods_receipt)
@@ -1385,6 +1387,7 @@ async def create_invoice(
 
     if linked_po is not None:
         linked_po.lifecycle_status = "invoiced"
+        linked_po.status = "invoiced"
 
     await db.commit()
     await db.refresh(invoice)
