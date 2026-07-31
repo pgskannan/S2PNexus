@@ -15,6 +15,7 @@ from app.models.embedding import Embedding  # noqa: F401
 from app.models.procurement import (  # noqa: F401
     ProcurementInvoice,
     ProcurementRequisition,
+    ProcurementRequisitionVersion,
     PurchaseOrder,
     GoodsReceipt,
     PurchaseOrderLineItem,

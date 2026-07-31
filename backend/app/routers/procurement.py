@@ -36,9 +36,11 @@ from app.crud.procurement import (
     get_requisitions,
     get_requisitions_count,
     match_invoice,
+    remove_requisition_line_item,
     resolve_invoice_match_exception,
     transition_requisition,
     update_requisition,
+    update_requisition_line_item,
 )
 from app.crud.accounting_split import get_line_item_splits, set_line_item_splits
 from app.database.session import get_db
@@ -58,11 +60,13 @@ from app.schemas.procurement import (
     ProcurementInvoiceCreate,
     ProcurementInvoiceResponse,
     ProcurementInvoiceListResponse,
+    ProcurementLineStateResponse,
     ProcurementListResponse,
     ProcurementRequisitionCreate,
     ProcurementRequisitionLineItemCreate,
     ProcurementRequisitionLineItemResponse,
     ProcurementRequisitionResponse,
+    ProcurementRequisitionVersionResponse,
     ProcurementAuditEventResponse,
     ProcurementRequisitionTransitionRequest,
     ProcurementRequisitionUpdate,
@@ -70,6 +74,7 @@ from app.schemas.procurement import (
     PurchaseOrderResponse,
     PurchaseOrderListResponse,
     PurchaseOrderLineItemResponse,
+    PurchaseOrderVersionResponse,
 )
 from pydantic import ValidationError
 from app.commands.procurement import (
@@ -87,6 +92,15 @@ from app.services.procurement_workflow import (
     process_deferred_po_creation,
     start_purchase_order_approval_workflow,
     start_requisition_approval_workflow,
+)
+from app.services.procurement_versioning import (
+    apply_pr_changes_to_po,
+    compute_po_line_state,
+    decide_po_amend_or_split,
+    diff_pr_vs_po,
+    get_purchase_order_versions,
+    get_requisition_versions,
+    split_purchase_order_from_pr,
 )
 from app.utils.dependencies import get_current_active_user
 
@@ -184,7 +198,7 @@ async def update_requisition_endpoint(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> ProcurementRequisitionResponse:
-    requisition = await update_requisition(db, requisition_id, requisition_update, tenant_id=current_user.tenant_id)
+    requisition = await update_requisition(db, requisition_id, requisition_update, tenant_id=current_user.tenant_id, actor_id=current_user.id)
     if not requisition:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     return ProcurementRequisitionResponse.model_validate(requisition)
@@ -313,6 +327,36 @@ async def transition_requisition_endpoint(
             started_by=current_user.id,
             tenant_id=current_user.tenant_id,
         )
+        # PR/PO versioning (spec sec 2/5/7): if this requisition already has a
+        # PO (i.e. this is a re-approval after an amendment), diff the current
+        # PR state against the PO and apply the PO-relevant changes as a PO-V
+        # bump (amend) or a split PO when the state rules require it.
+        requisition = await get_requisition(db, requisition_id, tenant_id=current_user.tenant_id)
+        existing_pos, _total = await get_purchase_orders(
+            db, tenant_id=current_user.tenant_id, requisition_id=requisition.id, limit=50
+        )
+        existing_po = existing_pos[0] if existing_pos else None
+        if existing_po is not None:
+            changes = diff_pr_vs_po(requisition, existing_po)
+            if changes:
+                decision = decide_po_amend_or_split(existing_po, changes)
+                if decision["decision"] == "amend":
+                    _po, _applied = await apply_pr_changes_to_po(
+                        db,
+                        existing_po,
+                        changes,
+                        actor_id=current_user.id,
+                        tenant_id=current_user.tenant_id,
+                    )
+                else:
+                    _new_po, _applied = await split_purchase_order_from_pr(
+                        db,
+                        requisition,
+                        existing_po,
+                        changes,
+                        actor_id=current_user.id,
+                        tenant_id=current_user.tenant_id,
+                    )
     # start_requisition_approval_workflow (via start_workflow_instance) and
     # auto_create_po_from_requisition each call db.commit() on this same
     # session. With the default expire_on_commit=True, that expires every
@@ -355,8 +399,89 @@ async def add_line_item_endpoint(
     requisition = await get_requisition(db, requisition_id, tenant_id=current_user.tenant_id)
     if not requisition:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
-    line_item = await add_requisition_line_item(db, requisition_id, line_item_data)
+    line_item = await add_requisition_line_item(db, requisition_id, line_item_data, actor_id=current_user.id)
     return ProcurementRequisitionLineItemResponse.model_validate(line_item)
+
+
+@router.get(
+    "/requisitions/{requisition_id}/versions",
+    response_model=list[ProcurementRequisitionVersionResponse],
+    summary="List requisition versions (PR-V{n})",
+    description="Version history for a requisition. Every PO-relevant change bumps the "
+    "version number and appends a snapshot of the change set -- see the PR/PO "
+    "Versioning spec.",
+)
+async def list_requisition_versions_endpoint(
+    requisition_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[ProcurementRequisitionVersionResponse]:
+    requisition = await get_requisition(db, requisition_id, tenant_id=current_user.tenant_id)
+    if not requisition:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    versions = await get_requisition_versions(db, requisition_id)
+    return [ProcurementRequisitionVersionResponse.model_validate(v) for v in versions]
+
+
+@router.put(
+    "/requisitions/{requisition_id}/line-items/{line_item_id}",
+    response_model=ProcurementRequisitionLineItemResponse,
+    summary="Update a requisition line item with state-aware validation",
+    description="Quantity/price/delivery edits are validated against the linked PO line's "
+    "receiving/invoicing state (PR/PO Versioning spec): the NotReceived & "
+    "NotInvoiced state is fully flexible; received/invoiced lines are locked "
+    "per their state. A valid change records a new PR version.",
+)
+async def update_line_item_endpoint(
+    requisition_id: UUID,
+    line_item_id: UUID,
+    line_item_update: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> ProcurementRequisitionLineItemResponse:
+    try:
+        line_item = await update_requisition_line_item(
+            db,
+            requisition_id,
+            line_item_id,
+            line_item_update,
+            tenant_id=current_user.tenant_id,
+            actor_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not line_item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition or line item not found")
+    return ProcurementRequisitionLineItemResponse.model_validate(line_item)
+
+
+@router.delete(
+    "/requisitions/{requisition_id}/line-items/{line_item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remove a requisition line item",
+    description="Enforces the PR/PO Versioning spec's removal rules: a line whose linked PO "
+    "line is fully received or fully invoiced cannot be removed (it is locked).",
+)
+async def remove_line_item_endpoint(
+    requisition_id: UUID,
+    line_item_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    result = await remove_requisition_line_item(
+        db,
+        requisition_id,
+        line_item_id,
+        tenant_id=current_user.tenant_id,
+        actor_id=current_user.id,
+    )
+    if result == "not_found":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition or line item not found")
+    if result == "locked":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Line cannot be removed: it is fully received or fully invoiced (locked).",
+        )
 
 
 @router.post(
@@ -501,6 +626,60 @@ async def get_purchase_order_endpoint(
     if not purchase_order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
     return PurchaseOrderResponse.model_validate(purchase_order)
+
+
+@router.get(
+    "/purchase-orders/{purchase_order_id}/versions",
+    response_model=list[PurchaseOrderVersionResponse],
+    summary="List purchase order versions (PO-V{m})",
+    description="PO version history -- the source PO's amendment/split records. Every "
+    "PO-V{m+1} bump (from PR approval or a manual amend) appends one row.",
+)
+async def list_purchase_order_versions_endpoint(
+    purchase_order_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[PurchaseOrderVersionResponse]:
+    purchase_order = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
+    if not purchase_order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
+    versions = await get_purchase_order_versions(db, purchase_order_id)
+    return [PurchaseOrderVersionResponse.model_validate(v) for v in versions]
+
+
+@router.get(
+    "/purchase-orders/{purchase_order_id}/line-states",
+    response_model=list[ProcurementLineStateResponse],
+    summary="Per-line receiving/invoicing state",
+    description="ReceivingState (NotReceived/PartiallyReceived/FullyReceived) and "
+    "InvoicingState (NotInvoiced/PartiallyInvoiced/FullyInvoiced) per PO line, "
+    "derived from goods-receipt and invoice data (PR/PO Versioning spec sec 1). "
+    "Also returns received/invoiced quantities and the is_locked flag that drive "
+    "the state-aware edit rules.",
+)
+async def get_po_line_states_endpoint(
+    purchase_order_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[ProcurementLineStateResponse]:
+    purchase_order = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
+    if not purchase_order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase order not found")
+    states = []
+    for line in purchase_order.line_items:
+        state = await compute_po_line_state(db, line)
+        states.append(
+            ProcurementLineStateResponse(
+                purchase_order_line_item_id=line.id,
+                ordered_quantity=state["ordered_qty"],
+                received_quantity=state["received_qty"],
+                invoiced_quantity=state["invoiced_qty"],
+                receiving_state=state["receiving_state"],
+                invoicing_state=state["invoicing_state"],
+                is_locked=state["is_locked"],
+            )
+        )
+    return states
 
 
 @router.post("/purchase-orders/{purchase_order_id}/amend", response_model=PurchaseOrderResponse)

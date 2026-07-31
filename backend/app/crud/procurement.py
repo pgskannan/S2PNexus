@@ -43,6 +43,13 @@ from app.schemas.procurement import (
     ProcurementRequisitionUpdate,
     PurchaseOrderCreate,
 )
+from app.services.procurement_versioning import (
+    PO_RELEVANT_HEADER_FIELDS,
+    compute_po_line_state,
+    record_pr_version,
+    validate_line_change,
+    validate_line_removal,
+)
 
 
 def _build_search_text(requisition: ProcurementRequisition) -> str:
@@ -223,14 +230,32 @@ async def update_requisition(
     requisition_id: UUID,
     requisition_in: ProcurementRequisitionUpdate,
     tenant_id: Optional[UUID] = None,
+    actor_id: Optional[UUID] = None,
 ) -> Optional[ProcurementRequisition]:
+    """Update a requisition. When `actor_id` is supplied and a PO-relevant header
+    field changes, a new PR version (PR-V{n+1}) is recorded -- the versioning
+    engine's state-aware rules are enforced when the change is later applied to
+    the linked PO on approval (see app.services.procurement_versioning).
+    """
     requisition = await get_requisition(db, requisition_id, tenant_id=tenant_id)
     if not requisition:
         return None
     update_data = requisition_in.model_dump(exclude_unset=True)
+
+    # Diff only the PO-relevant header fields -- anything else (description,
+    # priority, status flags) is internal and doesn't create a version.
+    changes: dict[str, Any] = {}
+    for field in PO_RELEVANT_HEADER_FIELDS:
+        if field in update_data and update_data[field] != getattr(requisition, field, None):
+            changes[field] = update_data[field]
+
     for field, value in update_data.items():
         setattr(requisition, field, value)
     requisition.search_text = _build_search_text(requisition)
+
+    if actor_id is not None and changes:
+        await record_pr_version(db, requisition, actor_id=actor_id, changes=changes, commit=False)
+
     await db.commit()
     await db.refresh(requisition)
     return requisition
@@ -280,8 +305,13 @@ async def add_requisition_line_item(
     db: AsyncSession,
     requisition_id: UUID,
     line_item_in: ProcurementRequisitionLineItemCreate,
+    actor_id: Optional[UUID] = None,
 ) -> ProcurementRequisitionLineItem:
-    line_item = ProcurementRequisitionLineItem(requisition_id=requisition_id, **line_item_in.model_dump())
+    requisition = await get_requisition(db, requisition_id)
+    new_version = (requisition.version_number if requisition else 1) + 1
+    line_item = ProcurementRequisitionLineItem(
+        requisition_id=requisition_id, version_number=new_version, **line_item_in.model_dump()
+    )
     db.add(line_item)
     await db.flush()
     # Phase 5: every line item should always have at least one accounting split
@@ -291,9 +321,132 @@ async def add_requisition_line_item(
     await ensure_default_split(
         db, "requisition_line", line_item.id, line_item.account_code, line_item.line_total, commit=False
     )
+    if actor_id is not None and requisition is not None:
+        # Adding a line is a PO-relevant change (spec sec 2 "Line Add") -- bump
+        # the PR version.
+        await record_pr_version(
+            db,
+            requisition,
+            actor_id=actor_id,
+            changes={"line_items": [{"action": "add", "requisition_line_item_id": str(line_item.id), "description": line_item.description}]},
+            commit=False,
+        )
     await db.commit()
     await db.refresh(line_item)
     return line_item
+
+
+async def _get_po_line_for_requisition_line(
+    db: AsyncSession, requisition_line_item_id: UUID
+) -> Optional[PurchaseOrderLineItem]:
+    result = await db.execute(
+        select(PurchaseOrderLineItem).where(PurchaseOrderLineItem.requisition_line_item_id == requisition_line_item_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_requisition_line_item(
+    db: AsyncSession,
+    requisition_id: UUID,
+    line_item_id: UUID,
+    updates: dict[str, Any],
+    *,
+    tenant_id: Optional[UUID] = None,
+    actor_id: Optional[UUID] = None,
+) -> Optional[ProcurementRequisitionLineItem]:
+    """Update a single requisition line with state-aware validation.
+
+    Quantity/price/delivery edits are validated against the linked PO line's
+    receiving/invoicing state (the spec's fully-flexible NotReceived &
+    NotInvoiced state passes everything; locked states raise ValueError). A
+    valid change records a new PR version.
+    """
+    requisition = await get_requisition(db, requisition_id, tenant_id=tenant_id)
+    if requisition is None:
+        return None
+    line_item = next((li for li in requisition.line_items if li.id == line_item_id), None)
+    if line_item is None:
+        return None
+
+    # Resolve the linked PO line (if a PO exists for this PR yet) and its state.
+    po_line = await _get_po_line_for_requisition_line(db, line_item_id)
+    if po_line is not None:
+        state = await compute_po_line_state(db, po_line)
+    else:
+        state = {
+            "po_line_id": None,
+            "ordered_qty": line_item.quantity or Decimal("0.00"),
+            "received_qty": Decimal("0.00"),
+            "invoiced_qty": Decimal("0.00"),
+            "receiving_state": "NotReceived",
+            "invoicing_state": "NotInvoiced",
+            "is_locked": False,
+        }
+
+    changes: dict[str, Any] = {"line_items": []}
+    for field, value in updates.items():
+        old_value = getattr(line_item, field, None)
+        if field in ("quantity", "unit_price", "need_by_date"):
+            validate_line_change(state, field=field, new_value=value, old_value=old_value)
+        setattr(line_item, field, value)
+        changes["line_items"].append(
+            {
+                "action": "update",
+                "requisition_line_item_id": str(line_item.id),
+                "field": field,
+                "old_value": str(old_value) if old_value is not None else None,
+                "new_value": str(value) if value is not None else None,
+            }
+        )
+
+    if actor_id is not None:
+        await record_pr_version(db, requisition, actor_id=actor_id, changes=changes, commit=False)
+
+    await db.commit()
+    await db.refresh(line_item)
+    return line_item
+
+
+async def remove_requisition_line_item(
+    db: AsyncSession,
+    requisition_id: UUID,
+    line_item_id: UUID,
+    *,
+    tenant_id: Optional[UUID] = None,
+    actor_id: Optional[UUID] = None,
+) -> str:
+    """Remove a requisition line, enforcing the spec's line-removal rules.
+
+    Returns one of "removed" | "not_found" | "locked" so the router can pick
+    the right status code. A line whose linked PO line is fully received or
+    fully invoiced cannot be removed (validate_line_removal).
+    """
+    requisition = await get_requisition(db, requisition_id, tenant_id=tenant_id)
+    if requisition is None:
+        return "not_found"
+    line_item = next((li for li in requisition.line_items if li.id == line_item_id), None)
+    if line_item is None:
+        return "not_found"
+
+    po_line = await _get_po_line_for_requisition_line(db, line_item_id)
+    if po_line is not None:
+        state = await compute_po_line_state(db, po_line)
+        try:
+            validate_line_removal(state)
+        except ValueError:
+            return "locked"
+
+    await db.delete(line_item)
+    if actor_id is not None:
+        await record_pr_version(
+            db,
+            requisition,
+            actor_id=actor_id,
+            changes={"line_items": [{"action": "remove", "requisition_line_item_id": str(line_item_id)}]},
+            commit=False,
+        )
+    await db.commit()
+    return "removed"
 
 
 async def add_requisition_comment(

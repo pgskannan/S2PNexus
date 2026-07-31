@@ -68,6 +68,10 @@ class ProcurementRequisitionResponse(ProcurementRequisitionBase):
     requisition_number: Optional[str] = Field(
         None, description="Auto-generated human-readable number, e.g. PR2026-07-001. Null for requisitions created before this feature shipped."
     )
+    # PR versioning: rendered PR-{id}-V{n}. Every PO-relevant change bumps this
+    # and appends a ProcurementRequisitionVersion snapshot (see
+    # app.services.procurement_versioning).
+    version_number: int = 1
     created_at: datetime
     updated_at: datetime
     # ProcurementRequisition.line_items is lazy="selectin" on the model, so this
@@ -76,6 +80,44 @@ class ProcurementRequisitionResponse(ProcurementRequisitionBase):
     # defined later in this module resolves fine because of the
     # `from __future__ import annotations` import at the top of the file.
     line_items: list[ProcurementRequisitionLineItemResponse] = Field(default_factory=list)
+    versions: list["ProcurementRequisitionVersionResponse"] = Field(default_factory=list)
+
+
+class ProcurementRequisitionVersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    requisition_id: UUID
+    version_number: int
+    change_type: str = "amendment"
+    changes: Optional[dict] = None
+    created_by: UUID
+    created_at: datetime
+
+
+class PurchaseOrderVersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    purchase_order_id: UUID
+    version_number: int
+    change_type: str = "amendment"
+    changes: Optional[dict] = None
+    created_by: UUID
+    created_at: datetime
+
+
+class ProcurementLineStateResponse(BaseModel):
+    """Per-line receiving/invoicing state (spec section 1) -- derived from actual
+    goods-receipt and invoice data, never stored."""
+
+    purchase_order_line_item_id: UUID
+    ordered_quantity: Decimal
+    received_quantity: Decimal
+    invoiced_quantity: Decimal
+    receiving_state: str
+    invoicing_state: str
+    is_locked: bool
 
 
 class ProcurementRequisitionTransitionRequest(BaseModel):
@@ -99,6 +141,8 @@ class ProcurementRequisitionLineItemResponse(BaseModel):
 
     id: UUID
     requisition_id: UUID
+    # PR version this line was introduced/changed in.
+    version_number: int = 1
     description: str
     quantity: Decimal
     unit_price: Optional[Decimal] = None
@@ -205,6 +249,9 @@ class PurchaseOrderResponse(BaseModel):
     # Nested line items -- PurchaseOrder.line_items is lazy="selectin" on the
     # model, same free eager-load as ProcurementRequisitionResponse.line_items.
     line_items: list[PurchaseOrderLineItemResponse] = Field(default_factory=list)
+    # PO version history -- PurchaseOrder.versions is lazy="selectin" on the
+    # model (mirrors PurchaseOrderVersion). Empty for POs never amended.
+    versions: list[PurchaseOrderVersionResponse] = Field(default_factory=list)
     # Transient, non-persisted: only populated right after a lifecycle
     # transition to "approved" that had soft-enforcement budget overages (see
     # transition_purchase_order_lifecycle / _check_po_budget_on_approval in
@@ -241,6 +288,15 @@ class PurchaseOrderLineItemResponse(BaseModel):
     allocated_shipping_amount: Optional[Decimal] = None
     weight: Optional[Decimal] = None
     created_at: datetime
+    # Line-state fields (spec section 1) -- computed on demand from goods-receipt
+    # and invoice data and attached by the router; None on list endpoints that
+    # don't compute them. See GET /purchase-orders/{id}/line-states for the
+    # dedicated per-line state view.
+    receiving_state: Optional[str] = None
+    invoicing_state: Optional[str] = None
+    received_quantity: Optional[Decimal] = None
+    invoiced_quantity: Optional[Decimal] = None
+    is_locked: Optional[bool] = None
 
 
 class GoodsReceiptLineItemCreate(BaseModel):

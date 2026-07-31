@@ -31,6 +31,10 @@ class ProcurementRequisition(Base):
         comment="Human-readable auto-generated number, e.g. PR2026-07-001 -- see app.crud.document_numbering. "
         "Nullable so pre-existing rows created before this feature shipped aren't backfilled.",
     )
+    # PR versioning (spec: PR/PO Versioning). Any change to a PO-relevant field
+    # bumps this and records a ProcurementRequisitionVersion snapshot -- see
+    # app.services.procurement_versioning.rendered as PR-{id}-V{n} in the UI.
+    version_number: Mapped[int] = mapped_column(default=1, nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     request_type: Mapped[str] = mapped_column(String(50), default="catalog", nullable=False)
@@ -63,6 +67,7 @@ class ProcurementRequisition(Base):
 
     purchase_orders: Mapped[list["PurchaseOrder"]] = relationship("PurchaseOrder", back_populates="requisition", cascade="all, delete-orphan", lazy="selectin")
     line_items: Mapped[list["ProcurementRequisitionLineItem"]] = relationship("ProcurementRequisitionLineItem", back_populates="requisition", cascade="all, delete-orphan", lazy="selectin")
+    versions: Mapped[list["ProcurementRequisitionVersion"]] = relationship("ProcurementRequisitionVersion", back_populates="requisition", cascade="all, delete-orphan", lazy="selectin")
     comments: Mapped[list["ProcurementComment"]] = relationship("ProcurementComment", back_populates="requisition", cascade="all, delete-orphan", lazy="selectin")
     attachments: Mapped[list["ProcurementAttachment"]] = relationship("ProcurementAttachment", back_populates="requisition", cascade="all, delete-orphan", lazy="selectin")
     audit_events: Mapped[list["ProcurementAuditEvent"]] = relationship("ProcurementAuditEvent", back_populates="requisition", cascade="all, delete-orphan", lazy="selectin")
@@ -73,6 +78,8 @@ class ProcurementRequisitionLineItem(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     requisition_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("procurement_requisitions.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Version this line was introduced/changed in (PR-V{version_number}).
+    version_number: Mapped[int] = mapped_column(default=1, nullable=False)
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=1, nullable=False)
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
@@ -83,6 +90,29 @@ class ProcurementRequisitionLineItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     requisition: Mapped["ProcurementRequisition"] = relationship("ProcurementRequisition", back_populates="line_items", lazy="selectin")
+
+
+class ProcurementRequisitionVersion(Base):
+    """Snapshot of a requisition change set (PR-V{n}).
+
+    Mirrors PurchaseOrderVersion: every bump of
+    ProcurementRequisition.version_number appends one row describing what
+    changed and why. The full document isn't snapshotted -- the `changes` JSON
+    is the diff against the previous version, which is what the PO versioning
+    engine needs on approval and what the UI shows in the version history.
+    """
+
+    __tablename__ = "procurement_requisition_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    requisition_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("procurement_requisitions.id", ondelete="CASCADE"), nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(default=1, nullable=False)
+    change_type: Mapped[str] = mapped_column(String(50), default="amendment", nullable=False)
+    changes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    requisition: Mapped["ProcurementRequisition"] = relationship("ProcurementRequisition", back_populates="versions", lazy="selectin")
 
 
 class PurchaseOrderLineItem(Base):
