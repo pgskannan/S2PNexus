@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   getPurchaseOrder,
+  getRequisition,
   transitionPurchaseOrderLifecycle,
   acknowledgePurchaseOrder,
   getSupplier,
@@ -11,6 +12,12 @@ import {
 } from "@/lib/api";
 import type { PurchaseOrder } from "@/lib/types";
 import AccountingSplitEditor from "@/components/AccountingSplitEditor";
+import DocumentTabs from "@/components/DocumentTabs";
+import {
+  fetchDocumentTabSignals,
+  PR_APPROVED_LIFECYCLES,
+  type DocumentTabSignals,
+} from "@/lib/documentTabs";
 
 const nextLifecycleSteps: Record<string, { value: string; label: string }[]> = {
   draft: [{ value: "pending_approval", label: "Submit for approval" }],
@@ -49,6 +56,14 @@ export default function PurchaseOrderDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [lastBudgetWarnings, setLastBudgetWarnings] = useState<PurchaseOrder["budget_warnings"]>(null);
+  const [prId, setPrId] = useState<string | null>(null);
+  const [prApproved, setPrApproved] = useState(false);
+  const [docSignals, setDocSignals] = useState<DocumentTabSignals>({
+    hasReceipts: false,
+    hasInvoices: false,
+    hasSubmittedInvoice: false,
+    hasPayment: false,
+  });
 
   async function load() {
     try {
@@ -62,6 +77,15 @@ export default function PurchaseOrderDetailPage() {
           setSupplierName(null);
         }
       }
+      // Ariba-style tab visibility: derive the PR approval state plus
+      // receipt/invoice existence from the real documents.
+      setPrId(data.requisition_id ?? null);
+      const [signals, requisition] = await Promise.all([
+        fetchDocumentTabSignals(data.id),
+        data.requisition_id ? getRequisition(data.requisition_id) : Promise.resolve(null),
+      ]);
+      setDocSignals(signals);
+      setPrApproved(requisition ? PR_APPROVED_LIFECYCLES.has(requisition.lifecycle_status) : false);
     } catch (err) {
       setError(extractErrorMessage(err));
     }
@@ -112,6 +136,7 @@ export default function PurchaseOrderDetailPage() {
 
   return (
     <div className="max-w-4xl space-y-6">
+      <DocumentTabs prId={prId} poId={po.id} prApproved={prApproved} signals={docSignals} />
       <button
         onClick={() => router.push("/dashboard/purchase-orders")}
         className="text-sm text-brand-600 hover:underline"

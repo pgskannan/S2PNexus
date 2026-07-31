@@ -26,11 +26,18 @@ export default function InvoicesPage() {
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("");
   const [filtersOpen, setFiltersOpen] = useState(false);
 
+  const [poFilter, setPoFilter] = useState<string | null>(null);
+
   useEffect(() => {
     listInvoices()
       .then((result) => setItems(result.items))
       .catch((err) => setError(extractErrorMessage(err)))
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setPoFilter(params.get("po"));
   }, []);
 
   function invoiceValue(item: ProcurementInvoice): number {
@@ -50,13 +57,14 @@ export default function InvoicesPage() {
 
   const displayedItems = useMemo(() => {
     return items.filter((item) => {
+      if (poFilter && item.purchase_order_id !== poFilter) return false;
       if (search && !item.invoice_number.toLowerCase().includes(search.toLowerCase())) return false;
       if (statusFilter && item.status !== statusFilter) return false;
       if (quickFilter === "needs_review" && item.match_status === "matched") return false;
       if (quickFilter === "high_value" && invoiceValue(item) <= HIGH_VALUE_THRESHOLD) return false;
       return true;
     });
-  }, [items, search, statusFilter, quickFilter]);
+  }, [items, search, statusFilter, quickFilter, poFilter]);
 
   const activeFilterCount = [statusFilter, quickFilter].filter((v) => v).length;
 
@@ -67,6 +75,16 @@ export default function InvoicesPage() {
         <h1 className="text-2xl font-semibold">Invoices</h1>
         <p className="mt-1 text-sm text-slate-500">Monitor invoice status and three-way match progress.</p>
       </div>
+      {poFilter && (
+        <div className="flex items-center justify-between rounded-md border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-700">
+          <span>
+            Showing invoices for purchase order <span className="font-mono">{poFilter}</span>
+          </span>
+          <button type="button" onClick={() => setPoFilter(null)} className="text-xs font-medium underline">
+            Clear filter
+          </button>
+        </div>
+      )}
 
       <ActionRecommendationStrip
         title="Invoice actions"

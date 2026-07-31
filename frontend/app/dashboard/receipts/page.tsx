@@ -24,11 +24,18 @@ export default function ReceiptsPage() {
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("");
   const [filtersOpen, setFiltersOpen] = useState(false);
 
+  const [poFilter, setPoFilter] = useState<string | null>(null);
+
   useEffect(() => {
     listGoodsReceipts()
       .then((result) => setItems(result.items))
       .catch((err) => setError(extractErrorMessage(err)))
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setPoFilter(params.get("po"));
   }, []);
 
   const exceptionsCount = items.filter((item) => item.has_exceptions).length;
@@ -43,13 +50,14 @@ export default function ReceiptsPage() {
 
   const displayedItems = useMemo(() => {
     return items.filter((item) => {
+      if (poFilter && item.purchase_order_id !== poFilter) return false;
       if (search && !item.receipt_number.toLowerCase().includes(search.toLowerCase())) return false;
       if (statusFilter && item.status !== statusFilter) return false;
       if (quickFilter === "exceptions" && !item.has_exceptions) return false;
       if (quickFilter === "pending_inspection" && item.inspection_status !== "pending") return false;
       return true;
     });
-  }, [items, search, statusFilter, quickFilter]);
+  }, [items, search, statusFilter, quickFilter, poFilter]);
 
   const activeFilterCount = [statusFilter, quickFilter].filter((v) => v).length;
 
@@ -60,6 +68,16 @@ export default function ReceiptsPage() {
         <h1 className="text-2xl font-semibold">Receipts</h1>
         <p className="mt-1 text-sm text-slate-500">Track goods received against purchase orders.</p>
       </div>
+      {poFilter && (
+        <div className="flex items-center justify-between rounded-md border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-700">
+          <span>
+            Showing receipts for purchase order <span className="font-mono">{poFilter}</span>
+          </span>
+          <button type="button" onClick={() => setPoFilter(null)} className="text-xs font-medium underline">
+            Clear filter
+          </button>
+        </div>
+      )}
 
       <ActionRecommendationStrip
         title="Receipt actions"

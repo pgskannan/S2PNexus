@@ -8,6 +8,8 @@ import {
   getRequisition,
   getWorkflowDefinition,
   listPurchaseOrders,
+  listGoodsReceipts,
+  listInvoices,
   listWorkflowInstances,
   listRequisitionAuditEvents,
   listUserDirectory,
@@ -17,6 +19,12 @@ import {
 import type { PurchaseOrder, Requisition, WorkflowInstance } from "@/lib/types";
 import { ApprovalFlowDiagram, type ApprovalStep } from "@/components/ApprovalFlowDiagram";
 import { buildApprovalSteps, resolveApproverNames } from "@/lib/approvalFlow";
+import DocumentTabs from "@/components/DocumentTabs";
+import {
+  fetchDocumentTabSignals,
+  PR_APPROVED_LIFECYCLES,
+  type DocumentTabSignals,
+} from "@/lib/documentTabs";
 
 const nextSteps: Record<string, { new_status: string; lifecycle_status: string; label: string }[]> = {
   draft: [
@@ -44,6 +52,12 @@ export default function RequisitionDetailPage() {
   const [auditEvents, setAuditEvents] = useState<import("@/lib/types").ProcurementAuditEvent[]>([]);
   const [activeTab, setActiveTab] = useState<"overview" | "audit">("overview");
   const [actorNames, setActorNames] = useState<Record<string, string>>({});
+  const [docSignals, setDocSignals] = useState<DocumentTabSignals>({
+    hasReceipts: false,
+    hasInvoices: false,
+    hasSubmittedInvoice: false,
+    hasPayment: false,
+  });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -57,6 +71,9 @@ export default function RequisitionDetailPage() {
       ]);
       setPurchaseOrders(poRes.items);
       setAuditEvents(auditRes);
+      // Ariba-style tab visibility: receipts/invoices existence drives which
+      // document tabs are shown once the PO exists.
+      setDocSignals(await fetchDocumentTabSignals(poRes.items[0]?.id ?? null));
       const directory = await listUserDirectory({ limit: 1000 });
       setActorNames(Object.fromEntries(directory.items.map((user) => [user.id, user.full_name || user.email])));
       // Surface the approval flow inline (Ariba-style stepper) if a workflow
@@ -158,6 +175,12 @@ export default function RequisitionDetailPage() {
 
   return (
     <div className="max-w-4xl space-y-6">
+      <DocumentTabs
+        prId={params.id}
+        poId={purchaseOrders[0]?.id ?? null}
+        prApproved={PR_APPROVED_LIFECYCLES.has(requisition.lifecycle_status)}
+        signals={docSignals}
+      />
       <button
         onClick={() => router.push("/dashboard/requisitions")}
         className="text-sm text-brand-600 hover:underline"
