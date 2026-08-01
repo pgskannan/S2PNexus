@@ -29,8 +29,19 @@ this script won't pile up duplicate definitions).
 from __future__ import annotations
 
 import asyncio
+import pkgutil
 from decimal import Decimal
 from uuid import UUID
+
+# Register the COMPLETE SQLAlchemy model registry BEFORE any mapper
+# configuration runs. Standalone `python -m scripts.*` entrypoints import only
+# a subset of models, so string-named relationships (Supplier ->
+# SupplierAddress / SupplierBankAccount / ...) fail mapper resolution at the
+# first query. Importing every app.models submodule makes this script portable
+# across local dev and Cloud Shell against the deployed DB.
+import app.models as _models_pkg  # noqa: F401,E402
+for _model_module in pkgutil.iter_modules(_models_pkg.__path__):
+    __import__(f"app.models.{_model_module.name}")
 
 from sqlalchemy import select
 
