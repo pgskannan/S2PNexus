@@ -245,7 +245,7 @@ export default function RequisitionDetailPage() {
       ? [
           {
             label: "Approval flow",
-            tone: (requisition.lifecycle_status === "pending_approval" ? "warning" : "neutral") as const,
+            tone: requisition.lifecycle_status === "pending_approval" ? ("warning" as const) : ("neutral" as const),
             onClick: () => setSecondaryTab("approval"),
           },
         ]
