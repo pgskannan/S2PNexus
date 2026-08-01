@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<!--
+  S2PNexus — New User Welcome Email (Enterprise Gold Template)
+  Subject: Welcome to S2PNexus — Your Account Is Ready
+  Email type: user.welcome  (NON-redirectable — always goes to the real user)
+
+  Placeholders: userName, email, activationLink, loginUrl,
+                supportEmail, year
+  Rendered by: backend/app/services/email_service.py (var / each / if blocks)
+-->
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="x-apple-disable-message-reformatting" />
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <title>Welcome to S2PNexus</title>
+    <!--[if mso]>
+      <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+    <![endif]-->
+    <style type="text/css">
+      /* Email-safe reset */
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+      table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; border-collapse: collapse; }
+      img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+      /* Enterprise typography */
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+      h1, h2, h3 { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+      .btn { display: inline-block; border-radius: 6px; }
+      /* Accessible focus */
+      a, .btn { transition: filter 0.15s ease; }
+      a:hover, .btn:hover { filter: brightness(0.94); }
+      /* Dark-mode friendly surfaces */
+      @media (prefers-color-scheme: dark) {
+        .body-bg { background-color: #0d1b2a !important; }
+        .card { background-color: #152238 !important; }
+        .card-border { border: 1px solid #24344d !important; }
+        .text-primary { color: #f3f6fb !important; }
+        .text-secondary { color: #b9c6d8 !important; }
+        .hairline { background-color: #24344d !important; }
+      }
+      /* Mobile-first responsive */
+      @media only screen and (max-width: 600px) {
+        .container { width: 100% !important; max-width: 100% !important; }
+        .stack { display: block !important; width: 100% !important; }
+        .btn-cell { display: block !important; width: 100% !important; text-align: center !important; }
+        .btn { display: block !important; width: 100% !important; padding: 16px 24px !important; box-sizing: border-box; }
+        .px { padding-left: 20px !important; padding-right: 20px !important; }
+        .h1 { font-size: 24px !important; line-height: 30px !important; }
+      }
+      @media only screen and (max-width: 400px) {
+        .px { padding-left: 16px !important; padding-right: 16px !important; }
+      }
+    </style>
+  </head>
+  <body class="body-bg" style="margin: 0; padding: 0; background-color: #f4f6f8; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+    <!-- Hidden preheader (preview snippet in inbox) -->
+    <div style="display: none; max-height: 0; overflow: hidden; mso-hide: all;">
+      Your S2PNexus account is ready. Activate it in one click and start your Source-to-Pay journey.
+    </div>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f6f8;">
+      <tr>
+        <td align="center" style="padding: 32px 16px;">
+          <!-- Outer container -->
+          <table class="container" role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width: 600px; max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(15, 42, 67, 0.08);">
+            <!-- Header band -->
+            <tr>
+              <td style="background: linear-gradient(135deg, #0f2a43 0%, #1e3a5f 100%); padding: 32px 40px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td align="center">
+                      <!-- Brand mark -->
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
+                        <tr>
+                          <td width="12" height="12" style="width: 12px; height: 12px; background-color: #c9a227; border-radius: 3px;"></td>
+                          <td style="padding: 0 8px; font-size: 22px; font-weight: 700; color: #ffffff; letter-spacing: 0.5px;">S2PNexus</td>
+                        </tr>
+                      </table>
+                      <p style="margin: 8px 0 0 0; font-size: 13px; color: #9fb4cc; letter-spacing: 0.3px;">Source-to-Pay Procurement Platform</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <!-- Hero -->
+            <tr>
+              <td class="px" style="padding: 40px 40px 8px 40px;">
+                <h1 class="h1 text-primary" style="margin: 0 0 12px 0; font-size: 26px; line-height: 32px; font-weight: 700; color: #0f2a43;">
+                  Welcome to S2PNexus, {{userName}}
+                </h1>
+                <p class="text-secondary" style="margin: 0; font-size: 16px; line-height: 1.6; color: #5b6770;">
+                  Your account has been created. You're one click away from managing sourcing,
+                  contracts, purchase orders, and invoices — all in one place.
+                </p>
+              </td>
+            </tr>
+            <!-- Account details card -->
+            <tr>
+              <td class="px" style="padding: 24px 40px 8px 40px;">
+                <table class="card card-border" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f8fafc; border: 1px solid #e3e8ee; border-radius: 8px;">
+                  <tr>
+                    <td style="padding: 20px 24px;">
+                      <p style="margin: 0 0 12px 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #c9a227;">Your account</p>
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                        <tr>
+                          <td class="text-secondary" style="padding: 4px 0; font-size: 14px; color: #5b6770; width: 40%;">Full name</td>
+                          <td class="text-primary" style="padding: 4px 0; font-size: 14px; font-weight: 600; color: #0f2a43;">{{userName}}</td>
+                        </tr>
+                        <tr>
+                          <td class="text-secondary" style="padding: 4px 0; font-size: 14px; color: #5b6770;">Login email</td>
+                          <td class="text-primary" style="padding: 4px 0; font-size: 14px; font-weight: 600; color: #0f2a43;">{{email}}</td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <!-- CTA -->
+            <tr>
+              <td class="px btn-cell" style="padding: 28px 40px 8px 40px; text-align: center;">
+                <!--[if mso]>
+                  <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{activationLink}}" style="height:52px;v-text-anchor:middle;width:280px;" arcsize="12%" strokecolor="#c9a227" fillcolor="#c9a227">
+                    <w:anchorlock/>
+                    <center style="color:#0f2a43;font-family:sans-serif;font-size:16px;font-weight:700;">Activate Your Account</center>
+                  </v:roundrect>
+                <![endif]-->
+                <!--[if !mso]><!-->
+                <a class="btn" href="{{activationLink}}" style="display: inline-block; padding: 16px 36px; background-color: #c9a227; color: #0f2a43; font-size: 16px; font-weight: 700; text-decoration: none; border-radius: 6px;">
+                  Activate Your Account
+                </a>
+                <!--<![endif]-->
+              </td>
+            </tr>
+            <tr>
+              <td class="px" style="padding: 16px 40px 8px 40px; text-align: center;">
+                <p class="text-secondary" style="margin: 0; font-size: 13px; color: #5b6770;">
+                  Button not working? Copy this link into your browser:<br />
+                  <a href="{{activationLink}}" style="color: #1e3a5f; word-break: break-all;">{{activationLink}}</a>
+                </p>
+              </td>
+            </tr>
+            <!-- Divider -->
+            <tr>
+              <td class="px" style="padding: 24px 40px 0 40px;">
+                <table class="hairline" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="height: 1px; background-color: #e3e8ee;"><tr><td style="height: 1px; line-height: 1px;">&nbsp;</td></tr></table>
+              </td>
+            </tr>
+            <!-- What's inside -->
+            <tr>
+              <td class="px" style="padding: 24px 40px 8px 40px;">
+                <h2 class="text-primary" style="margin: 0 0 14px 0; font-size: 16px; font-weight: 700; color: #0f2a43;">What you can do in S2PNexus</h2>
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                  <tr>
+                    <td style="padding: 8px 0; font-size: 14px; color: #1f2933; width: 28px; vertical-align: top;">
+                      <span style="display:inline-block; width: 18px; height: 18px; border-radius: 50%; background-color: #eaf4ee; color: #1b7f4d; font-size: 12px; font-weight: 700; text-align: center; line-height: 18px;">&#10003;</span>
+                    </td>
+                    <td style="padding: 8px 0; font-size: 14px; color: #1f2933;">Create and route purchase requisitions through automated approval workflows</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; font-size: 14px; color: #1f2933; vertical-align: top;">
+                      <span style="display:inline-block; width: 18px; height: 18px; border-radius: 50%; background-color: #eaf4ee; color: #1b7f4d; font-size: 12px; font-weight: 700; text-align: center; line-height: 18px;">&#10003;</span>
+                    </td>
+                    <td style="padding: 8px 0; font-size: 14px; color: #1f2933;">Collaborate with suppliers across sourcing events and supplier master data</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; font-size: 14px; color: #1f2933; vertical-align: top;">
+                      <span style="display:inline-block; width: 18px; height: 18px; border-radius: 50%; background-color: #eaf4ee; color: #1b7f4d; font-size: 12px; font-weight: 700; text-align: center; line-height: 18px;">&#10003;</span>
+                    </td>
+                    <td style="padding: 8px 0; font-size: 14px; color: #1f2933;">Track invoices and payments with automated matching and three-way checks</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <!-- Secondary CTA -->
+            <tr>
+              <td class="px btn-cell" style="padding: 20px 40px 32px 40px; text-align: center;">
+                <a class="btn" href="{{loginUrl}}" style="display: inline-block; padding: 13px 32px; border: 1px solid #1e3a5f; color: #1e3a5f; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 6px;">
+                  Sign in to your account
+                </a>
+              </td>
+            </tr>
+            <!-- Footer -->
+            <tr>
+              <td style="background-color: #f8fafc; padding: 28px 40px; border-top: 1px solid #e3e8ee;">
+                <p style="margin: 0 0 8px 0; font-size: 12px; color: #8a97a5; line-height: 1.6;">
+                  You're receiving this email because an account was created for you on S2PNexus
+                  using <strong>{{email}}</strong>. If this wasn't you, contact your administrator.
+                </p>
+                <p style="margin: 0 0 8px 0; font-size: 12px; color: #8a97a5; line-height: 1.6;">
+                  Need help? <a href="mailto:{{supportEmail}}" style="color: #1e3a5f;">{{supportEmail}}</a>
+                </p>
+                <p style="margin: 0; font-size: 12px; color: #8a97a5;">
+                  &copy; {{year}} S2PNexus. All rights reserved.
+                </p>
+              </td>
+            </tr>
+          </table>
+          <!-- Legal foot -->
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td align="center" style="padding: 16px 16px 0 16px;">
+                <p style="margin: 0; font-size: 11px; color: #8a97a5;">This is a system-generated message. Please do not reply to this email.</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

@@ -6,11 +6,14 @@ All sensitive values must be provided via environment variables.
 """
 
 import json
+import logging
 from functools import lru_cache
 from typing import List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import EmailStr, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger("s2pnexus.config")
 
 
 def _parse_str_list(raw: str) -> List[str]:
@@ -150,6 +153,74 @@ class Settings(BaseSettings):
     SMTP_TLS: bool = True
     EMAIL_FROM: str = Field(default="noreply@s2pnexus.com")
     EMAIL_FROM_NAME: str = Field(default="S2PNexus")
+
+    # --- Email provider (Email Redirect spec, Section 2) -------------------
+    # Selects the concrete SMTP transport: "gmail", "smtp" (generic), or
+    # "sendgrid"/"ses" (reserved for future API-based providers).
+    EMAIL_PROVIDER: str = Field(
+        default="gmail",
+        pattern="^(gmail|smtp|sendgrid|ses)$",
+        description="SMTP provider: gmail, smtp (generic), sendgrid, ses",
+    )
+    EMAIL_USERNAME: Optional[str] = Field(
+        default=None, description="SMTP username (Gmail address for the gmail provider)"
+    )
+    EMAIL_PASSWORD: Optional[str] = Field(
+        default=None,
+        description="SMTP password. For Gmail use an App Password, never the account password.",
+    )
+
+    # --- Email redirect (DEV / QA / Sandbox only) --------------------------
+    # When enabled, every REDIRECTABLE system email is sent to EMAIL_REDIRECT_TO
+    # instead of the real recipient. Never affects welcome / initial-password /
+    # password-reset emails, and is force-disabled in production.
+    EMAIL_REDIRECT_ENABLED: bool = Field(
+        default=False,
+        description="Redirect all redirectable outbound email to EMAIL_REDIRECT_TO (non-production only).",
+    )
+    EMAIL_REDIRECT_TO: Optional[EmailStr] = Field(
+        default=None,
+        description="Catch-all inbox that receives redirected email in DEV/QA/Sandbox environments.",
+    )
+
+    @model_validator(mode="after")
+    def _guard_production_redirect(self) -> "Settings":
+        """Fail fast at startup: redirecting mail in production is never allowed.
+
+        This is a hard safety interlock (spec Section 2/3) rather than a soft
+        warning so a misconfigured production deployment cannot silently leak or
+        drop real user email.
+        """
+        if self.ENVIRONMENT == "production" and self.EMAIL_REDIRECT_ENABLED:
+            raise ValueError(
+                "EMAIL_REDIRECT_ENABLED must be false when ENVIRONMENT=production; "
+                "email redirect is for DEV/QA/Sandbox only."
+            )
+        return self
+
+    @property
+    def email_redirect_active(self) -> bool:
+        """True when the redirect pipeline should be applied to outbound email.
+
+        Combines the flag, the environment interlock, and presence of a target.
+        Non-redirectable types (welcome, initial password, password reset) are
+        additionally excluded inside the email service, not here.
+        """
+        return self.EMAIL_REDIRECT_ENABLED and not self.is_production and bool(self.EMAIL_REDIRECT_TO)
+
+    @property
+    def smtp_host_resolved(self) -> str:
+        """Resolved SMTP host, applying the provider default when unset."""
+        if self.SMTP_HOST:
+            return self.SMTP_HOST
+        return {"gmail": "smtp.gmail.com"}.get(self.EMAIL_PROVIDER, "smtp.gmail.com")
+
+    @property
+    def smtp_port_resolved(self) -> int:
+        """Resolved SMTP port, applying the provider default when unset."""
+        if self.SMTP_PORT:
+            return self.SMTP_PORT
+        return 587  # STARTTLS default; Gmail-compatible
 
     # Monitoring / Observability
     SENTRY_DSN: Optional[str] = None

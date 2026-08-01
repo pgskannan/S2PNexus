@@ -28,3 +28,6 @@ frontend/.env.local
 pytest-output.txt
 test.db
 .test_db.sqlite
+pytest-full.log
+logs/
+frontend/tsconfig.tsbuildinfo
