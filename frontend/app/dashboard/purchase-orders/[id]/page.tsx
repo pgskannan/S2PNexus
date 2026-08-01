@@ -711,8 +711,8 @@ export default function PurchaseOrderDetailPage() {
         </div>
         {poReceipts.length === 0 && (
           <p className="text-sm text-slate-400">
-            No receipts yet. Use "Receive goods" to record the first receipt — it starts as a draft and
-            routes through approval before posting.
+            No receipts yet. Use the &ldquo;Receive goods&rdquo; action to record the first receipt — it
+            starts as a draft and routes through approval before posting.
           </p>
         )}
         {poReceipts.length > 0 && (
