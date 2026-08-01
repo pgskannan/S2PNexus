@@ -14,7 +14,7 @@ to be invoked periodically (e.g. by a scheduled job) or on-demand via the API.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 from uuid import UUID
 
@@ -35,18 +35,50 @@ _OPERATORS = {
     "lte": lambda a, b: a is not None and a <= b,
     "in": lambda a, b: a in (b or []),
 }
+_NUMERIC_OPERATORS = {"gt", "gte", "lt", "lte"}
 
 
 def _normalize_uuid(value: UUID | str) -> UUID:
     return value if isinstance(value, UUID) else UUID(str(value))
 
 
+def _coerce_numeric(value: Any) -> Any:
+    """Best-effort numeric coercion for condition comparisons.
+
+    `WorkflowInstance.context` is a plain JSON column with no Decimal/UUID
+    encoder, so callers that build context from ORM entities (e.g.
+    `services/procurement_workflow.py`) stringify Decimal fields like
+    `estimated_value` before storing them (str(Decimal(...))). Comparing that
+    string against a condition step's numeric `value` with `>`/`>=`/`<`/`<=`
+    raises TypeError in Python, which `_evaluate_condition` was silently
+    swallowing to `False` -- meaning every amount-threshold condition
+    (`estimated_value >= 1000`, the standard PR/PO approval-tier pattern)
+    always took the false branch, regardless of the real amount. Only used for
+    the four ordering operators; `eq`/`neq`/`in` are left alone since they're
+    also legitimately used for non-numeric fields (category, status, etc.).
+    """
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float, Decimal)):
+        return value
+    if isinstance(value, str):
+        try:
+            return Decimal(value)
+        except (InvalidOperation, ValueError):
+            return value
+    return value
+
+
 def _evaluate_condition(step: dict[str, Any], context: dict[str, Any]) -> bool:
-    operator = _OPERATORS.get(step.get("operator", "eq"))
+    operator_key = step.get("operator", "eq")
+    operator = _OPERATORS.get(operator_key)
     if operator is None:
         return False
     actual = context.get(step.get("field"))
     expected = step.get("value")
+    if operator_key in _NUMERIC_OPERATORS:
+        actual = _coerce_numeric(actual)
+        expected = _coerce_numeric(expected)
     try:
         return bool(operator(actual, expected))
     except TypeError:
