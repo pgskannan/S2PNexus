@@ -149,6 +149,19 @@ async def transition_sourcing_event_endpoint(
     )
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sourcing event not found")
+
+    # Route publish through the generic workflow engine when a
+    # WorkflowDefinition is configured for entity_type="sourcing_event";
+    # returns None (no-op) when none is configured, so nothing regresses.
+    if action.lower() == "publish":
+        from app.services.contract_workflow import start_sourcing_approval_workflow
+
+        instance = await start_sourcing_approval_workflow(event, db, started_by=current_user.id)
+        if instance is not None:
+            # start_workflow_instance commits, expiring the event ORM object
+            # loaded above -- re-fetch before serializing (MissingGreenlet
+            # otherwise; same pattern as procurement/supplier wiring).
+            event = await get_sourcing_event(db, event_id, tenant_id=current_user.tenant_id)
     return SourcingEventDetailResponse.model_validate(event)
 
 

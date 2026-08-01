@@ -63,6 +63,10 @@ highest-leverage work is UI and admin surface, not new backend architecture.
   requisition/PO/goods-receipt/invoice/supplier route through `WorkflowInstance` today
   (confirmed by grep of `backend/app/services/*_workflow.py`). "All documents of S2P"
   isn't true yet; Contract and Sourcing bypass approval routing entirely.
+  **[CLOSED 2026-08-01, Phase 4]**: `services/contract_workflow.py` now routes contract
+  `submit` and sourcing-event `publish` through the engine when a definition is
+  configured for `entity_type="contract"` / `"sourcing_event"`, with the standard
+  no-definition fallback. Tests: `tests/integration/test_contract_sourcing_workflow_routing.py`.
 - **`VALID_STEP_TYPES` in `models/workflow.py` (line 36) only lists `condition`/`approval`/
   `notification`**, even though `auto`/`ai` work fine at runtime — it's unused dead code,
   but worth fixing so it doesn't mislead the next person who reads it as a guardrail.

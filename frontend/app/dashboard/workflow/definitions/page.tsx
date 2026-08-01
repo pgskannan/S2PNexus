@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { createWorkflowDefinition, deleteWorkflowDefinition, extractErrorMessage, listWorkflowDefinitions } from "@/lib/api";
+import { createWorkflowDefinition, deleteWorkflowDefinition, extractErrorMessage, listWorkflowDefinitions, updateWorkflowDefinition } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth-store";
 import type { WorkflowDefinition } from "@/lib/types";
 import { WorkflowCanvas, type WorkflowStepValue } from "@/components/WorkflowCanvas";
@@ -22,6 +22,7 @@ export default function WorkflowDefinitionsPage() {
   const [saving, setSaving] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [showJson, setShowJson] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const user = useAuthStore((state) => state.user);
   const isAdmin = user?.role === "administrator" || user?.is_superuser === true;
 
@@ -42,9 +43,11 @@ export default function WorkflowDefinitionsPage() {
       on_true_next_step: typeof step.on_true_next_step === "number" ? step.on_true_next_step : null,
       on_false_next_step: typeof step.on_false_next_step === "number" ? step.on_false_next_step : null,
       approvers: Array.isArray(step.approvers) ? step.approvers.map((item) => String(item)) : [],
+      role_code: typeof step.role_code === "string" && step.role_code ? step.role_code : undefined,
       required_approvals: typeof step.required_approvals === "number" ? step.required_approvals : 1,
       escalate_after_hours: typeof step.escalate_after_hours === "number" ? step.escalate_after_hours : undefined,
       escalate_to: typeof step.escalate_to === "string" ? step.escalate_to : undefined,
+      rules: step.rules && typeof step.rules === "object" && !Array.isArray(step.rules) ? (step.rules as Record<string, unknown>) : undefined,
       recipients: Array.isArray(step.recipients) ? step.recipients.map((item) => String(item)) : [],
       message_template: typeof step.message_template === "string" ? step.message_template : undefined,
     } as WorkflowStepValue;
@@ -62,6 +65,22 @@ export default function WorkflowDefinitionsPage() {
       setLoading(false);
     }
   }
+
+  const groupedDefinitions = useMemo(() => {
+    const groups = new Map<string, WorkflowDefinition[]>();
+    for (const definition of definitions) {
+      const key = `${definition.entity_type}::${definition.name}`;
+      const bucket = groups.get(key) ?? [];
+      bucket.push(definition);
+      groups.set(key, bucket);
+    }
+    return Array.from(groups.entries())
+      .map(([key, items]) => ({
+        key,
+        items: [...items].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)),
+      }))
+      .sort((a, b) => a.key.localeCompare(b.key));
+  }, [definitions]);
 
   useEffect(() => {
     load();
@@ -81,8 +100,17 @@ export default function WorkflowDefinitionsPage() {
     // page. A workflow instance simply completes when it runs out of steps,
     // so no explicit "end" marker is needed.
     const hasApproval = steps.some((step) => step.step_type === "approval");
-    if (hasApproval && steps.some((step) => step.step_type === "approval" && Array.isArray(step.approvers) && step.approvers.length === 0)) {
-      errors.push("Approval steps need at least one approver.");
+    if (
+      hasApproval &&
+      steps.some(
+        (step) =>
+          step.step_type === "approval" &&
+          Array.isArray(step.approvers) &&
+          step.approvers.length === 0 &&
+          !(typeof step.role_code === "string" && step.role_code)
+      )
+    ) {
+      errors.push("Approval steps need at least one approver, or a role to resolve approvers from.");
     }
     const hasCondition = steps.some((step) => step.step_type === "condition");
     if (hasCondition && steps.some((step) => step.step_type === "condition" && (step.on_true_next_step == null || step.on_false_next_step == null))) {
@@ -101,21 +129,45 @@ export default function WorkflowDefinitionsPage() {
     }
     setSaving(true);
     try {
-      await createWorkflowDefinition({
+      const payload = {
         name: form.name,
         entity_type: form.entity_type,
         description: form.description || undefined,
         steps: form.steps,
         is_active: form.is_active,
-      });
+      };
+      if (editingId) {
+        await updateWorkflowDefinition(editingId, payload);
+      } else {
+        await createWorkflowDefinition(payload);
+      }
       setForm({ name: "", entity_type: "requisition", description: "", steps: [], is_active: true });
       setSelectedNodeId(null);
+      setEditingId(null);
       await load();
     } catch (err) {
       setError(extractErrorMessage(err));
     } finally {
       setSaving(false);
     }
+  }
+
+  function startEditing(definition: WorkflowDefinition) {
+    setEditingId(definition.id);
+    setForm({
+      name: definition.name,
+      entity_type: definition.entity_type,
+      description: definition.description ?? "",
+      steps: definition.steps,
+      is_active: definition.is_active,
+    });
+    setSelectedNodeId(null);
+  }
+
+  function cancelEditing() {
+    setEditingId(null);
+    setForm({ name: "", entity_type: "requisition", description: "", steps: [], is_active: true });
+    setSelectedNodeId(null);
   }
 
   async function handleDelete(definition: WorkflowDefinition) {
@@ -176,30 +228,28 @@ export default function WorkflowDefinitionsPage() {
                   </td>
                 </tr>
               )}
-              {definitions.map((definition) => (
-                <tr key={definition.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium">{definition.name}</td>
-                  <td className="px-4 py-3">{definition.entity_type}</td>
-                  <td className="px-4 py-3">
-                    <span className={`badge ${definition.is_active ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-700"}`}>
-                      {definition.is_active ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  {isAdmin && (
-                    <td className="px-4 py-3">
-                      <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => handleDelete(definition)}>
-                        Delete
-                      </button>
-                    </td>
-                  )}
-                </tr>
+              {groupedDefinitions.map((group) => (
+                <GroupRows
+                  key={group.key}
+                  group={group}
+                  isAdmin={isAdmin}
+                  editingId={editingId}
+                  onEdit={startEditing}
+                  onDelete={handleDelete}
+                />
               ))}
             </tbody>
           </table>
         </div>
 
         <form onSubmit={handleSubmit} className="card space-y-4">
-          <h2 className="text-lg font-semibold">Create definition</h2>
+          <h2 className="text-lg font-semibold">{editingId ? "Edit definition (publishes a new version)" : "Create definition"}</h2>
+          {editingId && (
+            <p className="text-sm text-slate-500">
+              Saving publishes a new version and archives the current one. Workflows already in flight keep running the
+              version they started on.
+            </p>
+          )}
           <div>
             <label className="label" htmlFor="name">
               Name
@@ -273,11 +323,83 @@ export default function WorkflowDefinitionsPage() {
             </div>
           </div>
           {error && <p className="whitespace-pre-line text-sm text-red-600">{error}</p>}
-          <button type="submit" disabled={saving} className="btn-primary">
-            {saving ? "Creating..." : "Create definition"}
-          </button>
+          <div className="flex gap-3">
+            <button type="submit" disabled={saving} className="btn-primary">
+              {saving ? "Saving..." : editingId ? "Save as new version" : "Create definition"}
+            </button>
+            {editingId && (
+              <button type="button" className="btn-secondary" onClick={cancelEditing}>
+                Cancel
+              </button>
+            )}
+          </div>
         </form>
       </div>
     </div>
+  );
+}
+
+function GroupRows({
+  group,
+  isAdmin,
+  editingId,
+  onEdit,
+  onDelete,
+}: {
+  group: { key: string; items: WorkflowDefinition[] };
+  isAdmin: boolean;
+  editingId: string | null;
+  onEdit: (definition: WorkflowDefinition) => void;
+  onDelete: (definition: WorkflowDefinition) => void;
+}) {
+  const [entityType, name] = group.key.split("::");
+  return (
+    <>
+      <tr className="bg-slate-50">
+        <td className="px-4 py-2 text-xs font-semibold uppercase text-slate-500" colSpan={isAdmin ? 4 : 3}>
+          {name} <span className="font-normal normal-case">({entityType})</span>
+          {group.items.length > 1 && (
+            <span className="ml-2 font-normal normal-case text-slate-400">{group.items.length} versions</span>
+          )}
+        </td>
+      </tr>
+      {group.items.map((definition, index) => {
+        const isArchived = definition.status === "archived" || !definition.is_active;
+        return (
+          <tr key={definition.id} className={`hover:bg-slate-50 ${editingId === definition.id ? "bg-blue-50" : ""}`}>
+            <td className="px-4 py-3">
+              <span className="font-medium">{index === 0 ? "Current" : `Version ${group.items.length - index}`}</span>
+              <span className="ml-2 text-xs text-slate-400">
+                {new Date(definition.created_at).toLocaleDateString()}
+              </span>
+            </td>
+            <td className="px-4 py-3">{definition.entity_type}</td>
+            <td className="px-4 py-3">
+              <span
+                className={`badge ${
+                  isArchived ? "bg-slate-100 text-slate-600" : "bg-green-100 text-green-700"
+                }`}
+              >
+                {isArchived ? "Archived" : "Active"}
+              </span>
+            </td>
+            {isAdmin && (
+              <td className="px-4 py-3">
+                <div className="flex gap-3">
+                  {!isArchived && (
+                    <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => onEdit(definition)}>
+                      Edit
+                    </button>
+                  )}
+                  <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => onDelete(definition)}>
+                    Delete
+                  </button>
+                </div>
+              </td>
+            )}
+          </tr>
+        );
+      })}
+    </>
   );
 }

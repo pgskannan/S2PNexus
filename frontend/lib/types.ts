@@ -606,6 +606,7 @@ export interface WorkflowDefinition {
   description?: string | null;
   steps: Array<Record<string, unknown>>;
   is_active: boolean;
+  status?: string;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -653,6 +654,90 @@ export interface WorkflowInstanceListResponse {
   total: number;
   skip: number;
   limit: number;
+}
+
+// Mirrors APPROVER_ROLE_CODES in backend/app/models/approval.py -- keep in sync.
+export const APPROVER_ROLE_CODES = [
+  "MANAGER",
+  "MANAGER_MANAGER",
+  "DEPT_HEAD",
+  "CFO",
+  "FIN_CTRL",
+  "PROC_HEAD",
+  "AP_HEAD",
+  "AP_PROCESSOR",
+] as const;
+
+export type ApproverRoleCode = (typeof APPROVER_ROLE_CODES)[number];
+
+export interface ResolvedApprover {
+  user_id: string;
+  display_name: string;
+  email: string;
+  role_code: string;
+  is_primary_approver: boolean;
+  backup_approver_user_id?: string | null;
+  org_unit_id?: string | null;
+  reason: string;
+}
+
+export interface ResolveApproversResponse {
+  role_code: string;
+  approvers: ResolvedApprover[];
+  count: number;
+}
+
+// Shapes match backend/app/routers/approval.py's _seed_to_dict (there is no
+// backend/app/schemas/approval.py -- the router serializes the model directly).
+export interface ApproverSeed {
+  id: string;
+  user_id: string;
+  display_name: string;
+  email: string;
+  role_code: string;
+  org_unit_id?: string | null;
+  approval_limit_currency?: string | null;
+  approval_limit_amount?: string | null;
+  category_scope?: string | null;
+  supplier_scope?: string | null;
+  is_primary_approver: boolean;
+  backup_approver_user_id?: string | null;
+  delegation_start_date?: string | null;
+  delegation_end_date?: string | null;
+  active_flag: boolean;
+}
+
+export interface ApproverSeedUpsert {
+  user_id: string;
+  display_name?: string;
+  email?: string;
+  role_code: string;
+  org_unit_id?: string | null;
+  approval_limit_currency?: string | null;
+  approval_limit_amount?: string | null;
+  category_scope?: string | null;
+  supplier_scope?: string | null;
+  is_primary_approver?: boolean;
+  backup_approver_user_id?: string | null;
+  delegation_start_date?: string | null;
+  delegation_end_date?: string | null;
+  active_flag?: boolean;
+}
+
+export interface SlaDefinitionEntry {
+  id: string;
+  document_type: string;
+  node_type?: string | null;
+  role_code?: string | null;
+  target_duration_minutes: number;
+  severity: string;
+}
+
+export interface ApprovalAnalytics {
+  avg_approval_time_by_type: Array<{ node: string; avg_approval_hours: number; count: number }>;
+  sla_breach_rate_by_node: Array<{ node: string; breach_rate: number; total: number }>;
+  total_sla_metrics: number;
+  total_sla_breaches: number;
 }
 
 export interface ProcurementAuditEvent {

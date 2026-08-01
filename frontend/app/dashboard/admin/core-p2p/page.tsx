@@ -13,9 +13,16 @@ const cards = [
     status: "Coming soon" as const,
   },
   {
+    title: "Dynamic approval matrix",
+    description: "Who approves what: roles, amount limits, category scope, backups, delegation windows, and SLA targets.",
+    status: "Live" as const,
+    href: "/dashboard/admin/approvals",
+  },
+  {
     title: "Delegated approvals",
-    description: "Forward approvals to another user while you are out of office or unavailable.",
-    status: "Coming soon" as const,
+    description: "Backup approvers and delegation windows are managed per role in the dynamic approval matrix.",
+    status: "Live" as const,
+    href: "/dashboard/admin/approvals",
   },
   {
     title: "Active approval queues",

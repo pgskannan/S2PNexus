@@ -17,16 +17,18 @@ import "reactflow/dist/style.css";
 export interface WorkflowStepValue {
   id: string;
   name: string;
-  step_type: "condition" | "approval" | "notification" | "end";
+  step_type: "condition" | "approval" | "notification" | "auto" | "ai" | "end";
   field?: string;
   operator?: "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "in";
   value?: unknown;
   on_true_next_step?: number | null;
   on_false_next_step?: number | null;
   approvers?: string[];
+  role_code?: string;
   required_approvals?: number;
   escalate_after_hours?: number;
   escalate_to?: string;
+  rules?: Record<string, unknown>;
   recipients?: string[];
   message_template?: string;
 }
@@ -44,6 +46,8 @@ const nodeColors: Record<string, string> = {
   condition: "#7c3aed",
   approval: "#d97706",
   notification: "#0f766e",
+  auto: "#16a34a",
+  ai: "#0891b2",
   end: "#dc2626",
 };
 
@@ -117,9 +121,11 @@ function mapStepsToValue(steps: Array<Record<string, unknown>>): WorkflowStepVal
     on_true_next_step: typeof step.on_true_next_step === "number" ? step.on_true_next_step : null,
     on_false_next_step: typeof step.on_false_next_step === "number" ? step.on_false_next_step : null,
     approvers: Array.isArray(step.approvers) ? step.approvers.map((item) => String(item)) : [],
+    role_code: typeof step.role_code === "string" && step.role_code ? step.role_code : undefined,
     required_approvals: typeof step.required_approvals === "number" ? step.required_approvals : 1,
     escalate_after_hours: typeof step.escalate_after_hours === "number" ? step.escalate_after_hours : undefined,
     escalate_to: typeof step.escalate_to === "string" ? step.escalate_to : undefined,
+    rules: step.rules && typeof step.rules === "object" && !Array.isArray(step.rules) ? (step.rules as Record<string, unknown>) : undefined,
     recipients: Array.isArray(step.recipients) ? step.recipients.map((item) => String(item)) : [],
     message_template: typeof step.message_template === "string" ? step.message_template : undefined,
   }));
@@ -135,9 +141,11 @@ function mapValueToSteps(values: WorkflowStepValue[]): Array<Record<string, unkn
     on_true_next_step: step.on_true_next_step,
     on_false_next_step: step.on_false_next_step,
     approvers: step.approvers || [],
+    role_code: step.role_code,
     required_approvals: step.required_approvals || 1,
     escalate_after_hours: step.escalate_after_hours,
     escalate_to: step.escalate_to,
+    rules: step.rules,
     recipients: step.recipients || [],
     message_template: step.message_template,
   }));
@@ -202,9 +210,9 @@ export function WorkflowCanvas({ value, onChange, selectedNodeId, onSelectNode, 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
-        {(["condition", "approval", "notification"] as const).map((type) => (
+        {(["condition", "approval", "notification", "auto", "ai"] as const).map((type) => (
           <button key={type} type="button" onClick={() => addStep(type)} className="btn-secondary">
-            Add {type}
+            Add {type === "ai" ? "AI rule" : type}
           </button>
         ))}
       </div>

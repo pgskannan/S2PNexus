@@ -32,11 +32,20 @@ from app.services.approval_audit import (
     get_approval_events,
     get_sla_metrics,
 )
+from app.models.user import UserRole
 from app.services.approval_rule_engine import evaluate_rules, explain_decision
 from app.utils.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/approval", tags=["Approval"])
 workflow_router = APIRouter(prefix="/workflow", tags=["Workflow"])
+
+
+def _require_admin(current_user: User) -> None:
+    """Same admin-gate pattern as routers/budget.py and org_structure.py."""
+    if current_user.role != UserRole.ADMINISTRATOR and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Only administrators can manage approver master data"
+        )
 
 
 def _seed_to_dict(seed) -> dict:
@@ -53,6 +62,8 @@ def _seed_to_dict(seed) -> dict:
         "supplier_scope": seed.supplier_scope,
         "is_primary_approver": seed.is_primary_approver,
         "backup_approver_user_id": str(seed.backup_approver_user_id) if seed.backup_approver_user_id else None,
+        "delegation_start_date": seed.delegation_start_date.isoformat() if seed.delegation_start_date else None,
+        "delegation_end_date": seed.delegation_end_date.isoformat() if seed.delegation_end_date else None,
         "active_flag": seed.active_flag,
     }
 
@@ -113,6 +124,65 @@ async def resolve_approvers_endpoint(
         tenant_id=current_user.tenant_id,
     )
     return {"role_code": role_code, "approvers": approvers, "count": len(approvers)}
+
+
+@router.get("/approvers/{approver_seed_id}", summary="Get a single approver seed")
+async def get_approver_endpoint(
+    approver_seed_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    seed = await get_approver_seed(db, approver_seed_id, tenant_id=current_user.tenant_id)
+    if seed is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approver seed not found")
+    return _seed_to_dict(seed)
+
+
+@router.patch("/approvers/{approver_seed_id}", summary="Update an approver seed (admin only)")
+async def update_approver_endpoint(
+    approver_seed_id: UUID,
+    payload: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    _require_admin(current_user)
+    seed = await get_approver_seed(db, approver_seed_id, tenant_id=current_user.tenant_id)
+    if seed is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approver seed not found")
+    # user_id + role_code are the upsert key -- changing them here would
+    # silently create a second row instead of updating this one. Deactivate
+    # and create a new seed instead.
+    for key_field in ("user_id", "role_code"):
+        if key_field in payload and str(payload[key_field]).upper() != str(getattr(seed, key_field)).upper():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{key_field} cannot be changed; deactivate this seed and create a new one",
+            )
+    merged = {**payload, "user_id": str(seed.user_id), "role_code": seed.role_code}
+    try:
+        updated = await upsert_approver_seed(db, data=merged, actor_id=current_user.id, tenant_id=current_user.tenant_id)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return _seed_to_dict(updated)
+
+
+@router.delete("/approvers/{approver_seed_id}", summary="Deactivate an approver seed (admin only)")
+async def deactivate_approver_endpoint(
+    approver_seed_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    _require_admin(current_user)
+    seed = await get_approver_seed(db, approver_seed_id, tenant_id=current_user.tenant_id)
+    if seed is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approver seed not found")
+    # Soft-delete only: historical ApprovalEvents may reference this seed's
+    # user/role, so master data with audit history is never hard-deleted.
+    seed.active_flag = False
+    seed.updated_by = current_user.id
+    await db.commit()
+    await db.refresh(seed)
+    return _seed_to_dict(seed)
 
 
 # --- Rule engine (Section 2) ----------------------------------------------
@@ -218,6 +288,41 @@ async def list_sla_metrics_endpoint(
             for m in metrics
         ],
         "total": len(metrics),
+    }
+
+
+@router.get("/sla/definitions", summary="List SLA definitions")
+async def list_sla_definitions_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+    document_type: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+) -> dict:
+    from sqlalchemy import select
+
+    from app.models.approval import SlaDefinition
+
+    query = select(SlaDefinition)
+    if current_user.tenant_id is not None:
+        query = query.where(SlaDefinition.tenant_id == current_user.tenant_id)
+    if document_type:
+        query = query.where(SlaDefinition.document_type == document_type)
+    query = query.order_by(SlaDefinition.document_type, SlaDefinition.created_at.desc()).limit(limit)
+    result = await db.execute(query)
+    definitions = list(result.scalars().all())
+    return {
+        "items": [
+            {
+                "id": str(d.id),
+                "document_type": d.document_type,
+                "node_type": d.node_type,
+                "role_code": d.role_code,
+                "target_duration_minutes": d.target_duration_minutes,
+                "severity": d.severity,
+            }
+            for d in definitions
+        ],
+        "total": len(definitions),
     }
 
 

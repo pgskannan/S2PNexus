@@ -21,6 +21,7 @@ from app.crud.workflow import (
     get_workflow_instances,
     get_workflow_instances_count,
     mark_notification_read,
+    set_workflow_definition_status,
     start_workflow_instance,
 )
 from app.database.session import get_db
@@ -85,6 +86,34 @@ async def get_workflow_definition_endpoint(
     if not definition:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow definition not found")
     return WorkflowDefinitionResponse.model_validate(definition)
+
+
+@router.put(
+    "/definitions/{definition_id}",
+    response_model=WorkflowDefinitionResponse,
+    summary="Edit a workflow definition by publishing a new version",
+    description="Creates a new definition row with the incoming steps, archives the old "
+    "one, and leaves running/completed instances bound to the old definition_id -- the "
+    "runtime always re-reads steps via the instance's stored definition_id, so in-flight "
+    "instances keep executing the version they started on.",
+)
+async def update_workflow_definition_endpoint(
+    definition_id: UUID,
+    definition_data: WorkflowDefinitionCreate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> WorkflowDefinitionResponse:
+    existing = await get_workflow_definition(db, definition_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow definition not found")
+    if definition_data.entity_type != existing.entity_type:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="entity_type cannot change across versions; create a new definition instead",
+        )
+    new_definition = await create_workflow_definition(db, definition_data, created_by=current_user.id)
+    await set_workflow_definition_status(db, existing.id, status="archived")
+    return WorkflowDefinitionResponse.model_validate(new_definition)
 
 
 @router.delete("/definitions/{definition_id}", status_code=status.HTTP_204_NO_CONTENT)

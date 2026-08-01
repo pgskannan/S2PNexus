@@ -380,6 +380,21 @@ async def transition_contract_endpoint(
     )
     if not contract:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
+
+    # Route submit-for-approval through the generic workflow engine when a
+    # WorkflowDefinition is configured for entity_type="contract"; falls back
+    # to the plain status flip above when none is (returns None, no-op).
+    if action.lower() == "submit":
+        from app.services.contract_workflow import start_contract_approval_workflow
+
+        instance = await start_contract_approval_workflow(contract, db, started_by=current_user.id)
+        if instance is not None:
+            # start_workflow_instance commits, which expires the contract ORM
+            # object loaded above -- re-fetch before serializing or
+            # model_validate raises MissingGreenlet on expired attributes.
+            from app.crud.contract import get_contract as _get_contract
+
+            contract = await _get_contract(db, contract_id)
     return ContractResponse.model_validate(contract)
 
 

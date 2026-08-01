@@ -801,6 +801,20 @@ export async function getWorkflowDefinition(id: string): Promise<WorkflowDefinit
   return data;
 }
 
+export async function updateWorkflowDefinition(
+  id: string,
+  payload: {
+    name: string;
+    entity_type: string;
+    description?: string;
+    steps: Array<Record<string, unknown>>;
+    is_active?: boolean;
+  }
+): Promise<WorkflowDefinition> {
+  const { data } = await api.put<WorkflowDefinition>(`/workflow/definitions/${id}`, payload);
+  return data;
+}
+
 export async function deleteWorkflowDefinition(id: string): Promise<void> {
   await api.delete(`/workflow/definitions/${id}`);
 }
@@ -860,6 +874,87 @@ export async function markWorkflowNotificationRead(
   const { data } = await api.post<Notification>(
     `/workflow/notifications/${id}/read`
   );
+  return data;
+}
+
+export async function resolveApprovers(params: {
+  role_code: string;
+  amount?: string | number;
+  category?: string;
+  supplier_id?: string;
+}): Promise<import("@/lib/types").ResolveApproversResponse> {
+  const { data } = await api.get<import("@/lib/types").ResolveApproversResponse>(
+    "/approval/approvers/resolve",
+    { params }
+  );
+  return data;
+}
+
+// ---- Approval matrix admin ----
+
+export async function listApproverSeeds(params?: {
+  role_code?: string;
+  org_unit_id?: string;
+  include_inactive?: boolean;
+  skip?: number;
+  limit?: number;
+}): Promise<{ items: import("@/lib/types").ApproverSeed[]; total: number }> {
+  const { data } = await api.get<{ items: import("@/lib/types").ApproverSeed[]; total: number }>(
+    "/approval/approvers",
+    { params }
+  );
+  return data;
+}
+
+export async function getApproverSeed(id: string): Promise<import("@/lib/types").ApproverSeed> {
+  const { data } = await api.get<import("@/lib/types").ApproverSeed>(`/approval/approvers/${id}`);
+  return data;
+}
+
+export async function upsertApproverSeed(
+  payload: import("@/lib/types").ApproverSeedUpsert
+): Promise<import("@/lib/types").ApproverSeed> {
+  const { data } = await api.post<import("@/lib/types").ApproverSeed>("/approval/approvers", payload);
+  return data;
+}
+
+export async function updateApproverSeed(
+  id: string,
+  payload: Partial<import("@/lib/types").ApproverSeedUpsert>
+): Promise<import("@/lib/types").ApproverSeed> {
+  const { data } = await api.patch<import("@/lib/types").ApproverSeed>(`/approval/approvers/${id}`, payload);
+  return data;
+}
+
+export async function deactivateApproverSeed(id: string): Promise<import("@/lib/types").ApproverSeed> {
+  const { data } = await api.delete<import("@/lib/types").ApproverSeed>(`/approval/approvers/${id}`);
+  return data;
+}
+
+export async function listSlaDefinitions(params?: {
+  document_type?: string;
+  limit?: number;
+}): Promise<{ items: import("@/lib/types").SlaDefinitionEntry[]; total: number }> {
+  const { data } = await api.get<{ items: import("@/lib/types").SlaDefinitionEntry[]; total: number }>(
+    "/approval/sla/definitions",
+    { params }
+  );
+  return data;
+}
+
+export async function createSlaDefinition(payload: {
+  document_type: string;
+  role_code?: string;
+  node_type?: string;
+  target_duration_minutes: number;
+  severity?: string;
+}): Promise<import("@/lib/types").SlaDefinitionEntry> {
+  const { data } = await api.post<import("@/lib/types").SlaDefinitionEntry>("/approval/sla/definitions", payload);
+  return data;
+}
+
+export async function getApprovalAnalytics(): Promise<import("@/lib/types").ApprovalAnalytics> {
+  const { data } = await api.get<import("@/lib/types").ApprovalAnalytics>("/approval/analytics");
   return data;
 }
 
