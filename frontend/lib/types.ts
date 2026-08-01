@@ -260,15 +260,52 @@ export interface PurchaseOrderListResponse {
   limit: number;
 }
 
+export interface GoodsReceiptLineItem {
+  id: string;
+  goods_receipt_id: string;
+  purchase_order_line_item_id: string;
+  quantity_received: number;
+  quantity_rejected: number;
+  quantity_accepted: number;
+  rejection_reason?: string | null;
+  lot_number?: string | null;
+  condition_status: string;
+  notes?: string | null;
+  created_at: string;
+}
+
 export interface GoodsReceipt {
   id: string;
   purchase_order_id: string;
   receipt_number: string;
   status: string;
+  receipt_type: string;
   received_quantity: number;
+  returned_quantity: number;
   inspection_status: string;
   has_exceptions: boolean;
+  approval_required: boolean;
+  submitted_at?: string | null;
+  approved_at?: string | null;
+  posted_at?: string | null;
+  rejected_at?: string | null;
+  rejection_reason?: string | null;
+  line_items: GoodsReceiptLineItem[];
+  created_by: string;
   created_at: string;
+}
+
+export interface GrirRecord {
+  id: string;
+  purchase_order_id: string;
+  purchase_order_line_item_id: string | null;
+  total_ordered_qty: string;
+  total_received_qty: string;
+  total_invoiced_qty: string;
+  balance_qty: string;
+  balance_amount: string;
+  status: string;
+  last_updated_at: string | null;
 }
 
 export interface ProcurementInvoice {

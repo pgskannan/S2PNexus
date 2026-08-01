@@ -200,10 +200,15 @@ async def po_has_open_dispute(po: PurchaseOrder) -> bool:
 
 
 async def po_has_pending_receipt(po: PurchaseOrder) -> bool:
-    """A receipt is pending if any linked goods receipt is not yet in a terminal
-    ('received') state."""
+    """A receipt is pending if any linked goods receipt is still OPEN.
+
+    Terminal receipt statuses (posted / received / rejected, per the Unified
+    Receipts spec) plus cancelled are NOT pending. This mirrors
+    RECEIPT_TERMINAL_STATUSES so that a PO with only posted/received receipts
+    can be closed, not just the old quick-receive ('received') status.
+    """
     for receipt in getattr(po, "goods_receipts", None) or []:
-        if getattr(receipt, "status", None) not in ("received", "cancelled"):
+        if getattr(receipt, "status", None) not in ("received", "posted", "rejected", "cancelled"):
             return True
     return False
 

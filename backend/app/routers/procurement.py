@@ -49,6 +49,7 @@ from app.crud.procurement import (
     update_requisition_line_item,
     submit_goods_receipt,
     approve_goods_receipt,
+    inspect_goods_receipt,
     reject_goods_receipt,
     post_goods_receipt,
 )
@@ -94,6 +95,7 @@ from app.commands.procurement import (
     TransitionRequisitionCommandHandler,
 )
 from app.services.goods_receipt_workflow import start_goods_receipt_exception_workflow
+from app.services.receipt_workflow import maybe_auto_close_po
 from app.services.invoice_workflow import start_invoice_exception_workflow
 from app.services.procurement_workflow import (
     apply_procurement_transition_workflow,
@@ -988,7 +990,17 @@ async def create_receipt_endpoint(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    await start_goods_receipt_exception_workflow(receipt, db, started_by=current_user.id)
+
+    # Quick-receive auto-close: a terminal "received" receipt that completes the
+    # PO triggers the same auto-close rule the submit->approve->post path applies
+    # (Unified Receipts spec sec 4 / PO Auto-Close). No-op for draft receipts.
+    if receipt.status == "received":
+        po = await get_purchase_order(db, purchase_order_id, tenant_id=current_user.tenant_id)
+        if po is not None and po.lifecycle_status == "fully_received":
+            await maybe_auto_close_po(db, po, actor_id=current_user.id, tenant_id=current_user.tenant_id)
+            receipt = await get_goods_receipt(db, receipt.id, tenant_id=current_user.tenant_id)
+
+    await start_goods_receipt_exception_workflow(db, receipt, started_by=current_user.id)
     # Same expire-on-commit hazard as the requisition/PO transition endpoints
     # above: start_goods_receipt_exception_workflow commits on this session
     # once a "goods_receipt" WorkflowDefinition exists, expiring `receipt`.
@@ -1066,6 +1078,33 @@ async def reject_receipt_endpoint(
             receipt_id,
             actor_id=current_user.id,
             reason=payload.get("reason"),
+            tenant_id=current_user.tenant_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not receipt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found")
+    return GoodsReceiptResponse.model_validate(receipt)
+
+
+@router.post("/receipts/{receipt_id}/inspect", response_model=GoodsReceiptResponse)
+async def inspect_receipt_endpoint(
+    receipt_id: UUID,
+    payload: dict,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> GoodsReceiptResponse:
+    """Record the goods-inspection result (passed/failed) on a receipt.
+
+    Inspection is advisory (Ariba-style Inspect -> Accept/Reject step): a failed
+    inspection flags the receipt for review but posting still requires approval.
+    """
+    try:
+        receipt = await inspect_goods_receipt(
+            db,
+            receipt_id,
+            actor_id=current_user.id,
+            inspection_status=str(payload.get("inspection_status", "passed")),
             tenant_id=current_user.tenant_id,
         )
     except ValueError as exc:

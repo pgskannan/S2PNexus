@@ -387,6 +387,50 @@ export async function createGoodsReceipt(
   return data;
 }
 
+export async function submitGoodsReceipt(receiptId: string): Promise<import("@/lib/types").GoodsReceipt> {
+  const { data } = await api.post<import("@/lib/types").GoodsReceipt>(`/procurement/receipts/${receiptId}/submit`);
+  return data;
+}
+
+export async function approveGoodsReceipt(receiptId: string): Promise<import("@/lib/types").GoodsReceipt> {
+  const { data } = await api.post<import("@/lib/types").GoodsReceipt>(`/procurement/receipts/${receiptId}/approve`);
+  return data;
+}
+
+export async function postGoodsReceipt(receiptId: string): Promise<import("@/lib/types").GoodsReceipt> {
+  const { data } = await api.post<import("@/lib/types").GoodsReceipt>(`/procurement/receipts/${receiptId}/post`);
+  return data;
+}
+
+export async function rejectGoodsReceipt(
+  receiptId: string,
+  reason: string
+): Promise<import("@/lib/types").GoodsReceipt> {
+  const { data } = await api.post<import("@/lib/types").GoodsReceipt>(`/procurement/receipts/${receiptId}/reject`, {
+    reason,
+  });
+  return data;
+}
+
+export async function inspectGoodsReceipt(
+  receiptId: string,
+  inspectionStatus: "passed" | "failed"
+): Promise<import("@/lib/types").GoodsReceipt> {
+  const { data } = await api.post<import("@/lib/types").GoodsReceipt>(`/procurement/receipts/${receiptId}/inspect`, {
+    inspection_status: inspectionStatus,
+  });
+  return data;
+}
+
+export async function getPurchaseOrderGrir(
+  purchaseOrderId: string
+): Promise<import("@/lib/types").GrirRecord[]> {
+  const { data } = await api.get<import("@/lib/types").GrirRecord[]>(
+    `/procurement/purchase-orders/${purchaseOrderId}/grir`
+  );
+  return data;
+}
+
 export async function listInvoices(): Promise<{ items: import("@/lib/types").ProcurementInvoice[] }> {
   const { data } = await api.get<{ items: import("@/lib/types").ProcurementInvoice[] }>("/procurement/invoices");
   return data;

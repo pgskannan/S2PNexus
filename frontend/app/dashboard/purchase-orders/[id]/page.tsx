@@ -12,10 +12,17 @@ import {
   acknowledgePurchaseOrder,
   createGoodsReceipt,
   getSupplier,
+  listGoodsReceipts,
+  submitGoodsReceipt,
+  approveGoodsReceipt,
+  postGoodsReceipt,
+  rejectGoodsReceipt,
+  inspectGoodsReceipt,
+  getPurchaseOrderGrir,
   extractErrorMessage,
   type GoodsReceiptLineItemCreate,
 } from "@/lib/api";
-import type { PurchaseOrder } from "@/lib/types";
+import type { GoodsReceipt, GrirRecord, PurchaseOrder } from "@/lib/types";
 import AccountingSplitEditor from "@/components/AccountingSplitEditor";
 import DocumentTabs from "@/components/DocumentTabs";
 import CommentsPanel from "@/components/CommentsPanel";
@@ -82,6 +89,15 @@ export default function PurchaseOrderDetailPage() {
   const [receiveQty, setReceiveQty] = useState<Record<string, string>>({});
   const [receiveBusy, setReceiveBusy] = useState(false);
   const [receiveError, setReceiveError] = useState<string | null>(null);
+  const [receiveRejectedQty, setReceiveRejectedQty] = useState<Record<string, string>>({});
+  const [receiveCondition, setReceiveCondition] = useState<Record<string, string>>({});
+  const [receiveRejectionReason, setReceiveRejectionReason] = useState<Record<string, string>>({});
+  const [receiveNotes, setReceiveNotes] = useState("");
+  const [closeAfterReceipt, setCloseAfterReceipt] = useState(false);
+  const [receipts, setReceipts] = useState<GoodsReceipt[]>([]);
+  const [receiptActionId, setReceiptActionId] = useState<string | null>(null);
+  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
+  const [grirRecords, setGrirRecords] = useState<GrirRecord[]>([]);
 
   async function load() {
     try {
@@ -99,6 +115,14 @@ export default function PurchaseOrderDetailPage() {
       // receipt/invoice existence from the real documents.
       setPrId(data.requisition_id ?? null);
       setDocSignals(await fetchDocumentTabSignals(data.id));
+      // Receipts for this PO (drives the Receipts & Approval panel + progress).
+      setReceipts(
+        (await listGoodsReceipts().catch(() => ({ items: [] as GoodsReceipt[] }))).items.filter(
+          (r) => r.purchase_order_id === data.id
+        )
+      );
+      // GR/IR status per line (GRIR = goods received not yet invoiced).
+      setGrirRecords(await getPurchaseOrderGrir(data.id).catch(() => []));
       // History / Comments panels for the PO: version history + comment
       // thread. (No Approval Flow tab here -- the PO doesn't run its own
       // separate approval workflow visualization; that lives on the PR.)
@@ -165,7 +189,12 @@ export default function PurchaseOrderDetailPage() {
   function openReceiveForm() {
     if (po) {
       setReceiveQty(Object.fromEntries(po.line_items.map((li) => [li.id, li.quantity])));
+      setReceiveRejectedQty(Object.fromEntries(po.line_items.map((li) => [li.id, "0"])));
+      setReceiveCondition(Object.fromEntries(po.line_items.map((li) => [li.id, "good"])));
+      setReceiveRejectionReason({});
+      setReceiveNotes("");
     }
+    setCloseAfterReceipt(false);
     setReceiveError(null);
     setShowReceiveForm(true);
   }
@@ -173,32 +202,39 @@ export default function PurchaseOrderDetailPage() {
   async function handleSubmitReceipt() {
     if (!po) return;
     const lineItems: GoodsReceiptLineItemCreate[] = po.line_items
-      .map((li) => ({
-        purchase_order_line_item_id: li.id,
-        quantity_received: receiveQty[li.id] ?? "0",
-        condition_status: "good",
-      }))
-      .filter((li) => Number(li.quantity_received) > 0);
+      .map((li) => {
+        const rejected = Number(receiveRejectedQty[li.id] ?? "0");
+        return {
+          purchase_order_line_item_id: li.id,
+          quantity_received: receiveQty[li.id] ?? "0",
+          quantity_rejected: receiveRejectedQty[li.id] ?? "0",
+          condition_status: receiveCondition[li.id] ?? "good",
+          rejection_reason: rejected > 0 ? receiveRejectionReason[li.id]?.trim() || null : null,
+        };
+      })
+      .filter((li) => Number(li.quantity_received) > 0 || Number(li.quantity_rejected) > 0);
 
     if (lineItems.length === 0) {
-      setReceiveError("Enter a quantity received for at least one line item.");
+      setReceiveError("Enter a received or rejected quantity for at least one line item.");
       return;
     }
 
     setReceiveBusy(true);
     setReceiveError(null);
     try {
-      // status: "received" records the goods directly rather than routing
-      // through the draft/submit/approve/post receipt workflow -- this is a
-      // quick-receive entry point, matching how the auto-receipt service
-      // records system-generated receipts elsewhere in the app.
+      // Create a DRAFT so the receipt runs the approval workflow
+      // (Draft -> Submit -> Approve -> Post). Posting recomputes the PO
+      // lifecycle, auto-closes when fully received, and auto-creates the
+      // next draft receipt when a balance remains.
       await createGoodsReceipt(po.id, {
-        status: "received",
-        inspection_status: "passed",
-        notes: "Recorded from PO detail page.",
+        status: "draft",
+        receipt_type: "standard",
+        inspection_status: "pending",
+        notes: receiveNotes.trim() || "Recorded from PO detail page.",
         line_items: lineItems,
       });
       setShowReceiveForm(false);
+      setCloseAfterReceipt(false);
       await load();
     } catch (err) {
       setReceiveError(extractErrorMessage(err));
@@ -214,6 +250,83 @@ export default function PurchaseOrderDetailPage() {
   if (!po) {
     return <p className="text-sm text-slate-400">Loading...</p>;
   }
+  const currentPo = po; // narrowed, immutable capture for nested closures
+
+  // -- Receipt progress (the focus of the Receipts view) -------------------
+  const poReceipts = receipts.filter((r) => r.purchase_order_id === po.id);
+  const lineTotals = (lineId: string) => {
+    let accepted = 0;
+    let rejected = 0;
+    let received = 0;
+    for (const r of poReceipts) {
+      for (const li of r.line_items) {
+        if (li.purchase_order_line_item_id !== lineId) continue;
+        accepted += Number(li.quantity_accepted ?? 0);
+        rejected += Number(li.quantity_rejected ?? 0);
+        received += Number(li.quantity_received ?? 0);
+      }
+    }
+    return { accepted, rejected, received };
+  };
+  const receiptProgress = (() => {
+    let accepted = 0;
+    let ordered = 0;
+    for (const li of po.line_items) {
+      ordered += Number(li.quantity ?? 0);
+      accepted += lineTotals(li.id).accepted;
+    }
+    const percent = ordered > 0 ? Math.round((accepted / ordered) * 100) : 0;
+    return { accepted, ordered, percent };
+  })();
+
+  // -- Receipt approval workflow actions -----------------------------------
+  async function runReceiptAction(receipt: GoodsReceipt, action: "submit" | "approve" | "post" | "reject") {
+    setReceiptActionId(receipt.id);
+    setError(null);
+    try {
+      if (action === "submit") await submitGoodsReceipt(receipt.id);
+      else if (action === "approve") await approveGoodsReceipt(receipt.id);
+      else if (action === "post") {
+        await postGoodsReceipt(receipt.id);
+        // "Close this PO" radio: finalize the PO once the receipt is posted,
+        // even when only partially received (PO state machine allows it).
+        if (closeAfterReceipt && currentPo.lifecycle_status !== "closed") {
+          try {
+            const updated = await transitionPurchaseOrderLifecycle(params.id, "closed");
+            setPo(updated);
+            setCloseAfterReceipt(false);
+          } catch {
+            // Close can be blocked (e.g. pending invoice) -- surfaced on reload.
+          }
+        }
+      } else {
+        const reason = (rejectReasons[receipt.id] ?? "").trim() || "Rejected by reviewer";
+        await rejectGoodsReceipt(receipt.id, reason);
+        setRejectReasons((cur) => ({ ...cur, [receipt.id]: "" }));
+      }
+      await load();
+    } catch (err) {
+      setError(extractErrorMessage(err));
+    } finally {
+      setReceiptActionId(null);
+    }
+  }
+
+  // -- Receipt inspection (Inspect -> Accept/Reject, advisory) -------------
+  async function runInspection(receipt: GoodsReceipt, status: "passed" | "failed") {
+    setReceiptActionId(receipt.id);
+    setError(null);
+    try {
+      await inspectGoodsReceipt(receipt.id, status);
+      await load();
+    } catch (err) {
+      setError(extractErrorMessage(err));
+    } finally {
+      setReceiptActionId(null);
+    }
+  }
+
+  const grirByLine = new Map(grirRecords.map((r) => [r.purchase_order_line_item_id, r]));
 
   const actions = nextLifecycleSteps[po.lifecycle_status] ?? [];
   const canAcknowledge = po.lifecycle_status === "sent_to_supplier" && po.acknowledgment_status !== "acknowledged";
@@ -319,43 +432,57 @@ export default function PurchaseOrderDetailPage() {
           </div>
         </div>
 
-        <dl className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <dt className="text-slate-500">Subtotal</dt>
-            <dd>{po.currency} {po.subtotal ?? "0.00"}</dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">Shipping</dt>
-            <dd>
-              {po.currency} {po.shipping_amount ?? "0.00"}{" "}
-              <span className="text-xs text-slate-400">({po.shipping_allocation_method})</span>
-            </dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">Tax</dt>
-            <dd>{po.currency} {po.tax_total ?? "0.00"}</dd>
-          </div>
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-2 border-t border-slate-100 pt-4 text-sm sm:grid-cols-4">
           <div>
             <dt className="text-slate-500">Grand total</dt>
             <dd className="font-semibold">{po.currency} {po.grand_total ?? po.total_amount ?? "0.00"}</dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">Incoterms</dt>
-            <dd>{po.incoterms ?? "—"}</dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">Payment terms</dt>
-            <dd>{po.payment_terms ?? "—"}</dd>
           </div>
           <div>
             <dt className="text-slate-500">Acknowledgment</dt>
             <dd className="capitalize">{po.acknowledgment_status}</dd>
           </div>
           <div>
+            <dt className="text-slate-500">Payment terms</dt>
+            <dd>{po.payment_terms ?? "—"}</dd>
+          </div>
+          <div>
             <dt className="text-slate-500">Created</dt>
-            <dd>{new Date(po.created_at).toLocaleString()}</dd>
+            <dd>{new Date(po.created_at).toLocaleDateString()}</dd>
           </div>
         </dl>
+
+        {/* Receipt progress -- the primary focus of this view */}
+        <div className="border-t border-slate-100 pt-4">
+          <div className="flex items-center justify-between text-sm">
+            <span className="font-medium text-slate-700">Receipt progress</span>
+            <span className="text-slate-500">
+              {receiptProgress.accepted} / {receiptProgress.ordered} accepted · {receiptProgress.percent}%
+            </span>
+          </div>
+          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+            <div
+              className="h-full rounded-full bg-emerald-500 transition-all"
+              style={{ width: `${Math.min(receiptProgress.percent, 100)}%` }}
+            />
+          </div>
+          <div className="mt-3 space-y-1.5">
+            {po.line_items.map((li) => {
+              const t = lineTotals(li.id);
+              return (
+                <div key={li.id} className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                  <span className="truncate">
+                    #{li.line_number} {li.description}
+                  </span>
+                  <span className="shrink-0">
+                    <span className="font-semibold text-emerald-600">{t.accepted}</span> accepted
+                    {t.rejected > 0 && <span className="ml-1 font-semibold text-red-500">· {t.rejected} rejected</span>}
+                    <span className="ml-1">/ {li.quantity} ordered</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
 
         <div className="grid grid-cols-2 gap-4 border-t border-slate-100 pt-4 text-sm">
           <div>
@@ -424,7 +551,8 @@ export default function PurchaseOrderDetailPage() {
             </button>
           </div>
           <p className="text-sm text-slate-500">
-            Enter the quantity received for each line item. Leave a line at 0 to skip it.
+            Enter received and rejected quantities per line. This creates a <strong>draft</strong> receipt
+            that routes through approval before posting. Rejected quantities flag the line for approval.
           </p>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -432,35 +560,97 @@ export default function PurchaseOrderDetailPage() {
                 <tr className="border-b border-slate-100 text-left text-slate-500">
                   <th className="py-2 pr-4">#</th>
                   <th className="py-2 pr-4">Description</th>
-                  <th className="py-2 pr-4">Ordered qty</th>
+                  <th className="py-2 pr-4">Ordered</th>
                   <th className="py-2 pr-4">Qty received</th>
+                  <th className="py-2 pr-4">Qty rejected</th>
+                  <th className="py-2 pr-4">Condition</th>
+                  <th className="py-2 pr-4">Rejection reason</th>
                 </tr>
               </thead>
               <tbody>
-                {po.line_items.map((li) => (
-                  <tr key={li.id} className="border-b border-slate-50 last:border-0">
-                    <td className="py-2 pr-4">{li.line_number}</td>
-                    <td className="py-2 pr-4">{li.description}</td>
-                    <td className="py-2 pr-4">{li.quantity}</td>
-                    <td className="py-2 pr-4">
-                      <input
-                        type="number"
-                        min="0"
-                        step="any"
-                        className="input-field w-28"
-                        value={receiveQty[li.id] ?? ""}
-                        onChange={(e) => setReceiveQty((cur) => ({ ...cur, [li.id]: e.target.value }))}
-                      />
-                    </td>
-                  </tr>
-                ))}
+                {po.line_items.map((li) => {
+                  const rejected = Number(receiveRejectedQty[li.id] ?? "0");
+                  return (
+                    <tr key={li.id} className="border-b border-slate-50 last:border-0">
+                      <td className="py-2 pr-4">{li.line_number}</td>
+                      <td className="py-2 pr-4">{li.description}</td>
+                      <td className="py-2 pr-4">{li.quantity}</td>
+                      <td className="py-2 pr-4">
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          className="input-field w-24"
+                          value={receiveQty[li.id] ?? ""}
+                          onChange={(e) => setReceiveQty((cur) => ({ ...cur, [li.id]: e.target.value }))}
+                        />
+                      </td>
+                      <td className="py-2 pr-4">
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          className="input-field w-24"
+                          value={receiveRejectedQty[li.id] ?? "0"}
+                          onChange={(e) => setReceiveRejectedQty((cur) => ({ ...cur, [li.id]: e.target.value }))}
+                        />
+                      </td>
+                      <td className="py-2 pr-4">
+                        <select
+                          className="input-field w-28"
+                          value={receiveCondition[li.id] ?? "good"}
+                          onChange={(e) => setReceiveCondition((cur) => ({ ...cur, [li.id]: e.target.value }))}
+                        >
+                          <option value="good">Good</option>
+                          <option value="damaged">Damaged</option>
+                          <option value="short">Short</option>
+                        </select>
+                      </td>
+                      <td className="py-2 pr-4">
+                        {rejected > 0 ? (
+                          <input
+                            type="text"
+                            placeholder="Reason for rejection"
+                            className="input-field w-44"
+                            value={receiveRejectionReason[li.id] ?? ""}
+                            onChange={(e) => setReceiveRejectionReason((cur) => ({ ...cur, [li.id]: e.target.value }))}
+                          />
+                        ) : (
+                          <span className="text-xs text-slate-300">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+          <div>
+            <label className="block text-sm text-slate-500">Notes (optional)</label>
+            <textarea
+              className="input-field mt-1 w-full"
+              rows={2}
+              value={receiveNotes}
+              onChange={(e) => setReceiveNotes(e.target.value)}
+            />
+          </div>
+          {po.lifecycle_status === "partially_received" && (
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="radio"
+                checked={closeAfterReceipt}
+                onChange={(e) => setCloseAfterReceipt(e.target.checked)}
+              />
+              Close this PO after this receipt (even if only partially received)
+            </label>
+          )}
           {receiveError && <p className="text-sm text-red-600">{receiveError}</p>}
-          <button disabled={receiveBusy} onClick={handleSubmitReceipt} className="btn-primary">
-            {receiveBusy ? "Recording..." : "Record receipt"}
-          </button>
+          <div className="flex items-center gap-3">
+            <button disabled={receiveBusy} onClick={handleSubmitReceipt} className="btn-primary">
+              {receiveBusy ? "Creating..." : "Create receipt (draft)"}
+            </button>
+            <span className="text-xs text-slate-400">Draft → Submit → Approve → Post</span>
+          </div>
         </div>
       )}
 
@@ -510,6 +700,154 @@ export default function PurchaseOrderDetailPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Receipts &amp; approval</h2>
+          <span className="text-xs text-slate-400">{poReceipts.length} receipt(s)</span>
+        </div>
+        {poReceipts.length === 0 && (
+          <p className="text-sm text-slate-400">
+            No receipts yet. Use "Receive goods" to record the first receipt — it starts as a draft and
+            routes through approval before posting.
+          </p>
+        )}
+        {poReceipts.length > 0 && (
+          <div className="space-y-3">
+            {poReceipts.map((receipt) => {
+              const grir = receipt.line_items
+                .map((li) => grirByLine.get(li.purchase_order_line_item_id))
+                .find((r) => r && r.status !== "CLEARED");
+              return (
+                <div key={receipt.id} className="rounded-md border border-slate-100 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm">
+                      <span className="font-mono text-xs text-slate-400">{receipt.receipt_number}</span>
+                      <span className="ml-2 capitalize text-slate-700">{receipt.status}</span>
+                      {receipt.approval_required && (
+                        <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">
+                          approval required
+                        </span>
+                      )}
+                      {receipt.has_exceptions && (
+                        <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700">exceptions</span>
+                      )}
+                      <span className="ml-2 capitalize text-slate-400">inspection: {receipt.inspection_status}</span>
+                      {grir && (
+                        <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
+                          GRIR {grir.status}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {(receipt.status === "draft" ||
+                        receipt.status === "submitted" ||
+                        receipt.status === "in_review") &&
+                        receipt.inspection_status !== "passed" && (
+                          <>
+                            <button
+                              disabled={receiptActionId === receipt.id}
+                              onClick={() => runInspection(receipt, "passed")}
+                              className="btn-secondary"
+                            >
+                              Pass inspection
+                            </button>
+                            <button
+                              disabled={receiptActionId === receipt.id}
+                              onClick={() => runInspection(receipt, "failed")}
+                              className="btn-secondary"
+                            >
+                              Fail
+                            </button>
+                          </>
+                        )}
+                      {receipt.status === "draft" && (
+                        <button
+                          disabled={receiptActionId === receipt.id}
+                          onClick={() => runReceiptAction(receipt, "submit")}
+                          className="btn-primary"
+                        >
+                          {receiptActionId === receipt.id ? "..." : "Submit for approval"}
+                        </button>
+                      )}
+                      {(receipt.status === "submitted" || receipt.status === "in_review") && (
+                        <>
+                          <button
+                            disabled={receiptActionId === receipt.id}
+                            onClick={() => runReceiptAction(receipt, "approve")}
+                            className="btn-primary"
+                          >
+                            {receiptActionId === receipt.id ? "..." : "Approve"}
+                          </button>
+                          <button
+                            disabled={receiptActionId === receipt.id}
+                            onClick={() => runReceiptAction(receipt, "reject")}
+                            className="btn-secondary"
+                          >
+                            Reject
+                          </button>
+                        </>
+                      )}
+                      {receipt.status === "approved" && (
+                        <button
+                          disabled={receiptActionId === receipt.id}
+                          onClick={() => runReceiptAction(receipt, "post")}
+                          className="btn-primary"
+                        >
+                          {receiptActionId === receipt.id ? "..." : "Post receipt"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {(receipt.status === "submitted" || receipt.status === "in_review") && (
+                    <input
+                      type="text"
+                      placeholder="Reject reason (optional)"
+                      className="input-field mt-2 w-full sm:w-96"
+                      value={rejectReasons[receipt.id] ?? ""}
+                      onChange={(e) => setRejectReasons((cur) => ({ ...cur, [receipt.id]: e.target.value }))}
+                    />
+                  )}
+                  {(receipt.submitted_at || receipt.approved_at || receipt.posted_at || receipt.rejected_at) && (
+                    <p className="mt-2 text-xs text-slate-400">
+                      {receipt.submitted_at && <>Submitted {new Date(receipt.submitted_at).toLocaleString()}</>}
+                      {receipt.approved_at && <> · Approved {new Date(receipt.approved_at).toLocaleString()}</>}
+                      {receipt.posted_at && <> · Posted {new Date(receipt.posted_at).toLocaleString()}</>}
+                      {receipt.rejected_at && <> · Rejected {new Date(receipt.rejected_at).toLocaleString()}</>}
+                    </p>
+                  )}
+                  {receipt.rejection_reason && (
+                    <p className="mt-2 text-xs text-red-600">Reason: {receipt.rejection_reason}</p>
+                  )}
+                  <table className="mt-2 w-full text-xs text-slate-500">
+                    <tbody>
+                      {receipt.line_items.map((li) => {
+                        const rg = grirByLine.get(li.purchase_order_line_item_id);
+                        return (
+                          <tr key={li.id} className="border-t border-slate-50">
+                            <td className="py-1 pr-2 capitalize text-slate-700">{li.condition_status}</td>
+                            <td className="py-1 pr-2">{li.quantity_received} received</td>
+                            <td className="py-1 pr-2">
+                              {li.quantity_rejected > 0 ? (
+                                <span className="text-red-600">{li.quantity_rejected} rejected</span>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td className="py-1 pr-2">{li.quantity_accepted} accepted</td>
+                            <td className="py-1 text-slate-400">{li.rejection_reason ?? ""}</td>
+                            <td className="py-1 text-slate-400">{rg ? rg.status : ""}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

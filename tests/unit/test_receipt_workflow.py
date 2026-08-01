@@ -12,6 +12,8 @@ import pytest_asyncio
 
 from app.crud.procurement import (
     approve_goods_receipt,
+    create_goods_receipt,
+    inspect_goods_receipt,
     post_goods_receipt,
     reject_goods_receipt,
     submit_goods_receipt,
@@ -26,6 +28,7 @@ from app.models.procurement import (
     PurchaseOrderLineItem,
 )
 from app.services.ok_to_pay import build_ok_to_pay
+from app.services.procurement_change_control import po_has_pending_receipt
 from app.services.procurement_workflow import auto_create_draft_receipt_for_po
 from app.services.receipt_workflow import (
     evaluate_receipt_tolerance,
@@ -78,6 +81,37 @@ def test_receipt_transition_state_machine():
         validate_receipt_transition("draft", "posted")
     with pytest.raises(ValueError):
         validate_receipt_transition("posted", "approved")
+
+
+# ---------------------------------------------------------------------------
+# PO pending-receipt gate (Unified Receipts spec sec 5.2)
+# ---------------------------------------------------------------------------
+
+
+def _po_with_receipts(*statuses: str):
+    return SimpleNamespace(goods_receipts=[SimpleNamespace(status=s) for s in statuses])
+
+
+@pytest.mark.asyncio
+async def test_po_has_pending_receipt_false_for_terminal_statuses():
+    """Terminal receipt statuses (posted/received/rejected) + cancelled are not
+    pending, so a PO can be closed after the submit->approve->post workflow."""
+    po = _po_with_receipts("posted", "received", "rejected", "cancelled")
+    assert await po_has_pending_receipt(po) is False
+
+
+@pytest.mark.asyncio
+async def test_po_has_pending_receipt_true_for_open_statuses():
+    for status in ("draft", "submitted", "in_review", "approved"):
+        po = _po_with_receipts(status)
+        assert await po_has_pending_receipt(po) is True, status
+
+
+@pytest.mark.asyncio
+async def test_po_has_pending_receipt_mixed():
+    assert await po_has_pending_receipt(_po_with_receipts("posted", "draft")) is True
+    assert await po_has_pending_receipt(_po_with_receipts("posted", "received")) is False
+    assert await po_has_pending_receipt(_po_with_receipts()) is False
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +241,65 @@ async def _create_receipt(db, po, po_line, received, rejected="0.00", status="dr
     await db.commit()
     await db.refresh(receipt)
     return receipt
+
+
+@pytest.mark.asyncio
+async def test_create_second_receipt_blocked_while_open(db_session, three_way_po):
+    """Unified Receipts spec sec 1.4: only one open receipt per PO line at a time."""
+    po, po_line = three_way_po
+    await _create_receipt(db_session, po, po_line, received="2.00", status="draft")
+    with pytest.raises(ValueError, match="already open"):
+        await create_goods_receipt(
+            db_session,
+            po.id,
+            {
+                "status": "draft",
+                "line_items": [
+                    {
+                        "purchase_order_line_item_id": str(po_line.id),
+                        "quantity_received": "3.00",
+                        "quantity_rejected": "0.00",
+                    }
+                ],
+            },
+            created_by=USER_ID,
+        )
+
+
+@pytest.mark.asyncio
+async def test_post_auto_creates_balance_draft_that_blocks_manual(db_session, three_way_po):
+    """Posting with a balance remaining auto-creates a draft for the balance
+    (spec sec 1.2), so a second manual receipt is still blocked (sec 1.4)."""
+    po, po_line = three_way_po
+    receipt = await _create_receipt(db_session, po, po_line, received="4.00", status="approved")
+    await post_goods_receipt(db_session, receipt.id, actor_id=USER_ID)
+    with pytest.raises(ValueError, match="already open"):
+        await create_goods_receipt(
+            db_session,
+            po.id,
+            {
+                "status": "draft",
+                "line_items": [
+                    {
+                        "purchase_order_line_item_id": str(po_line.id),
+                        "quantity_received": "3.00",
+                        "quantity_rejected": "0.00",
+                    }
+                ],
+            },
+            created_by=USER_ID,
+        )
+
+
+@pytest.mark.asyncio
+async def test_inspect_goods_receipt_records_result_and_inspector(db_session, three_way_po):
+    po, po_line = three_way_po
+    receipt = await _create_receipt(db_session, po, po_line, received="5.00")
+    inspected = await inspect_goods_receipt(db_session, receipt.id, actor_id=USER_ID, inspection_status="passed")
+    assert inspected.inspection_status == "passed"
+    assert inspected.inspected_by == USER_ID
+    with pytest.raises(ValueError, match="Invalid inspection_status"):
+        await inspect_goods_receipt(db_session, receipt.id, actor_id=USER_ID, inspection_status="maybe")
 
 
 @pytest.mark.asyncio

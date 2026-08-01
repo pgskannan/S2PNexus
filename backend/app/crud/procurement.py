@@ -1164,6 +1164,27 @@ async def create_goods_receipt(
     if not requested_line_items:
         raise ValueError("Goods receipt must include at least one line item")
 
+    # One open receipt per PO line at a time (Unified Receipts spec sec 1.4).
+    # Block creating a new receipt for a line that already has an open
+    # (draft/submitted/in review/approved) receipt. Compare stringified ids so
+    # both UUID (pydantic) and string callers are handled.
+    open_line_ids = {str(x) for x in (
+        await db.execute(
+            select(GoodsReceiptLineItem.purchase_order_line_item_id)
+            .join(GoodsReceipt, GoodsReceiptLineItem.goods_receipt_id == GoodsReceipt.id)
+            .where(
+                GoodsReceipt.purchase_order_id == purchase_order_id,
+                GoodsReceipt.status.in_(("draft", "submitted", "in_review", "approved")),
+            )
+        )
+    ).scalars()}
+    for item in requested_line_items:
+        if str(item.get("purchase_order_line_item_id")) in open_line_ids:
+            raise ValueError(
+                "A receipt for this line is already open (draft/submitted/in review/approved). "
+                "Post or reject the open receipt before creating another."
+            )
+
     line_item_map = {li.id: li for li in purchase_order.line_items}
     for item in requested_line_items:
         purchase_order_line_item_id = item.get("purchase_order_line_item_id")
@@ -1228,6 +1249,53 @@ async def create_goods_receipt(
     return goods_receipt
 
 
+async def _notify_receipt_approval_required(
+    db: AsyncSession, po: PurchaseOrder, receipt: GoodsReceipt
+) -> None:
+    """Best-effort: email the PO buyer when a receipt routes to an approver.
+
+    Uses the S2PNexus email service (workflow notification). Never raises --
+    notification failures must not block the receipt workflow. In DEV/QA/Sandbox
+    this redirectable email lands in EMAIL_REDIRECT_TO (Email Redirect spec).
+    """
+    try:
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        if not (settings.EMAIL_USERNAME and settings.EMAIL_PASSWORD):
+            return
+        buyer_email: Optional[str] = None
+        if po.buyer_contact_id is not None:
+            from app.models.user import User
+
+            res = await db.execute(select(User.email).where(User.id == po.buyer_contact_id))
+            buyer_email = res.scalar_one_or_none()
+        if not buyer_email:
+            return
+        from app.services.email_service import email_service
+
+        await email_service.send_email(
+            email_type="receipt.approval_required",
+            to=buyer_email,
+            subject=f"[Approval] Receipt {receipt.receipt_number} requires approval",
+            template="approval_required",
+            context={
+                "userName": buyer_email,
+                "workflowTask": f"Receipt {receipt.receipt_number} approval",
+                "entityType": "Goods Receipt",
+                "entityNumber": receipt.receipt_number,
+                "assignedBy": "System",
+                "dueDate": "",
+                "taskUrl": "",
+                "workflowName": "Receipt approval",
+                "escalationHours": "24",
+                "year": "2026",
+            },
+        )
+    except Exception:  # noqa: BLE001 - notifications are best-effort
+        pass
+
+
 async def submit_goods_receipt(
     db: AsyncSession, goods_receipt_id: UUID, *, actor_id: UUID, tenant_id: Optional[UUID] = None
 ) -> Optional[GoodsReceipt]:
@@ -1245,6 +1313,8 @@ async def submit_goods_receipt(
     receipt.approval_required = tolerance["requires_approval"]
     receipt.status = "in_review" if tolerance["requires_approval"] else "submitted"
     receipt.submitted_at = datetime.now(timezone.utc)
+    if tolerance["requires_approval"]:
+        await _notify_receipt_approval_required(db, po, receipt)
     db.add(
         ProcurementAuditEvent(
             requisition_id=po.requisition_id,
@@ -1322,6 +1392,31 @@ async def post_goods_receipt(
         if po is not None:
             await reconcile_grir_for_po(db, po, tenant_id=tenant_id, commit=False)
 
+    await db.commit()
+    await db.refresh(receipt)
+    return receipt
+
+
+async def inspect_goods_receipt(
+    db: AsyncSession,
+    goods_receipt_id: UUID,
+    *,
+    actor_id: UUID,
+    inspection_status: str,
+    tenant_id: Optional[UUID] = None,
+) -> Optional[GoodsReceipt]:
+    """Record the goods-inspection result (passed/failed) + inspector on a receipt.
+
+    Inspection is advisory (Ariba-style Inspect -> Accept/Reject step); posting
+    still requires approval. A failed inspection flags the receipt for review.
+    """
+    receipt = await get_goods_receipt(db, goods_receipt_id, tenant_id=tenant_id)
+    if receipt is None:
+        return None
+    if inspection_status not in ("pending", "passed", "failed"):
+        raise ValueError(f"Invalid inspection_status: {inspection_status}")
+    receipt.inspection_status = inspection_status
+    receipt.inspected_by = actor_id
     await db.commit()
     await db.refresh(receipt)
     return receipt
