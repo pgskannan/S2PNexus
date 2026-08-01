@@ -50,26 +50,40 @@ export default function ReceiptsPage() {
     }
   }, []);
 
-  const exceptionsCount = items.filter((item) => item.has_exceptions).length;
-  const pendingInspectionCount = items.filter((item) => item.inspection_status === "pending").length;
+  // Scope KPI counts to this PO when a ?po= filter is active -- otherwise the
+  // strip reports system-wide totals while the page title/banner claim to be
+  // about one specific document, which reads as wrong/irrelevant.
+  const scopedItems = useMemo(
+    () => (poFilter ? items.filter((item) => item.purchase_order_id === poFilter) : items),
+    [items, poFilter]
+  );
 
-  const recommendation =
-    exceptionsCount > 0
-      ? `${exceptionsCount} receipt(s) have exceptions. Resolve these before they block invoice matching.`
+  const exceptionsCount = scopedItems.filter((item) => item.has_exceptions).length;
+  const pendingInspectionCount = scopedItems.filter((item) => item.inspection_status === "pending").length;
+
+  const recommendation = poFilter
+    ? scopedItems.length === 0
+      ? "No receipts exist yet for this purchase order."
+      : exceptionsCount > 0
+      ? `${exceptionsCount} of ${scopedItems.length} receipt(s) on this PO have exceptions.`
       : pendingInspectionCount > 0
-      ? `${pendingInspectionCount} receipt(s) are awaiting inspection. Clear the queue to keep receiving current.`
-      : "No exceptions or pending inspections. Receiving is on track.";
+      ? `${pendingInspectionCount} receipt(s) on this PO are awaiting inspection.`
+      : "No exceptions or pending inspections on this PO. Receiving is on track."
+    : exceptionsCount > 0
+    ? `${exceptionsCount} receipt(s) have exceptions. Resolve these before they block invoice matching.`
+    : pendingInspectionCount > 0
+    ? `${pendingInspectionCount} receipt(s) are awaiting inspection. Clear the queue to keep receiving current.`
+    : "No exceptions or pending inspections. Receiving is on track.";
 
   const displayedItems = useMemo(() => {
-    return items.filter((item) => {
-      if (poFilter && item.purchase_order_id !== poFilter) return false;
+    return scopedItems.filter((item) => {
       if (search && !item.receipt_number.toLowerCase().includes(search.toLowerCase())) return false;
       if (statusFilter && item.status !== statusFilter) return false;
       if (quickFilter === "exceptions" && !item.has_exceptions) return false;
       if (quickFilter === "pending_inspection" && item.inspection_status !== "pending") return false;
       return true;
     });
-  }, [items, search, statusFilter, quickFilter, poFilter]);
+  }, [scopedItems, search, statusFilter, quickFilter]);
 
   const activeFilterCount = [statusFilter, quickFilter].filter((v) => v).length;
 
@@ -93,7 +107,7 @@ export default function ReceiptsPage() {
       )}
 
       <ActionRecommendationStrip
-        title="Receipt actions"
+        title={poFilter ? `Receipt actions · PO ${poFilterNumber ?? poFilter}` : "Receipt actions"}
         description="Resolve exceptions and clear pending inspections to keep receiving on track."
         recommendation={recommendation}
         actions={[

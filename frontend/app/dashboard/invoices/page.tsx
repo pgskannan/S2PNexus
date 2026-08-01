@@ -58,26 +58,40 @@ export default function InvoicesPage() {
     return raw ? Number(raw) : 0;
   }
 
-  const needsReviewCount = items.filter((item) => item.match_status !== "matched").length;
-  const highValueCount = items.filter((item) => invoiceValue(item) > HIGH_VALUE_THRESHOLD).length;
+  // Scope KPI counts to this PO when a ?po= filter is active -- otherwise the
+  // strip reports system-wide totals while the page title/banner claim to be
+  // about one specific document, which reads as wrong/irrelevant.
+  const scopedItems = useMemo(
+    () => (poFilter ? items.filter((item) => item.purchase_order_id === poFilter) : items),
+    [items, poFilter]
+  );
 
-  const recommendation =
-    needsReviewCount > 0
-      ? `${needsReviewCount} invoice(s) need review. Resolve match exceptions to keep AP current.`
+  const needsReviewCount = scopedItems.filter((item) => item.match_status !== "matched").length;
+  const highValueCount = scopedItems.filter((item) => invoiceValue(item) > HIGH_VALUE_THRESHOLD).length;
+
+  const recommendation = poFilter
+    ? scopedItems.length === 0
+      ? "No invoices exist yet for this purchase order."
+      : needsReviewCount > 0
+      ? `${needsReviewCount} of ${scopedItems.length} invoice(s) on this PO need review.`
       : highValueCount > 0
-      ? `${highValueCount} high-value invoice(s) on the books. Double-check these before payment runs.`
-      : "All invoices are matched. Nothing blocking AP right now.";
+      ? `${highValueCount} high-value invoice(s) on this PO. Double-check before payment runs.`
+      : "All invoices on this PO are matched. Nothing blocking AP right now."
+    : needsReviewCount > 0
+    ? `${needsReviewCount} invoice(s) need review. Resolve match exceptions to keep AP current.`
+    : highValueCount > 0
+    ? `${highValueCount} high-value invoice(s) on the books. Double-check these before payment runs.`
+    : "All invoices are matched. Nothing blocking AP right now.";
 
   const displayedItems = useMemo(() => {
-    return items.filter((item) => {
-      if (poFilter && item.purchase_order_id !== poFilter) return false;
+    return scopedItems.filter((item) => {
       if (search && !item.invoice_number.toLowerCase().includes(search.toLowerCase())) return false;
       if (statusFilter && item.status !== statusFilter) return false;
       if (quickFilter === "needs_review" && item.match_status === "matched") return false;
       if (quickFilter === "high_value" && invoiceValue(item) <= HIGH_VALUE_THRESHOLD) return false;
       return true;
     });
-  }, [items, search, statusFilter, quickFilter, poFilter]);
+  }, [scopedItems, search, statusFilter, quickFilter]);
 
   const activeFilterCount = [statusFilter, quickFilter].filter((v) => v).length;
 
@@ -106,7 +120,7 @@ export default function InvoicesPage() {
       )}
 
       <ActionRecommendationStrip
-        title="Invoice actions"
+        title={poFilter ? `Invoice actions · PO ${poFilterNumber ?? poFilter}` : "Invoice actions"}
         description="Clear match exceptions and keep an eye on high-value invoices before they're paid."
         recommendation={recommendation}
         actions={[

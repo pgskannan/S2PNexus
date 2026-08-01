@@ -23,6 +23,7 @@ import { ApprovalFlowDiagram, type ApprovalStep } from "@/components/ApprovalFlo
 import { buildApprovalSteps, resolveApproverNames } from "@/lib/approvalFlow";
 import DocumentTabs from "@/components/DocumentTabs";
 import CommentsPanel from "@/components/CommentsPanel";
+import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
 import {
   fetchDocumentTabSignals,
   type DocumentTabSignals,
@@ -212,6 +213,55 @@ export default function RequisitionDetailPage() {
       .join(" · ");
   }
 
+  const prRecommendation = (() => {
+    switch (requisition.lifecycle_status) {
+      case "draft":
+        return "This requisition is still a draft. Submit it for approval when it's ready.";
+      case "submitted":
+      case "pending_approval":
+        return "Awaiting approval. Check the Approval Flow tab for who's up next.";
+      case "approved":
+        return purchaseOrders.length === 0
+          ? "Approved and ready — convert it to a PO to continue the P2P flow."
+          : `Approved and converted. ${purchaseOrders.length} purchase order(s) linked.`;
+      case "po_created":
+        return `${purchaseOrders.length} purchase order(s) linked. Track progress on the PO tab.`;
+      case "rejected":
+        return "This requisition was rejected. Check the Approval Flow tab for details.";
+      case "cancelled":
+        return "This requisition was withdrawn/cancelled.";
+      case "closed":
+        return "Closed — no further action needed.";
+      default:
+        return "No action items right now.";
+    }
+  })();
+
+  const prStripActions = [
+    ...(requisition.lifecycle_status === "approved" && purchaseOrders.length === 0
+      ? [{ label: "Convert to PO", tone: "critical" as const, href: `/dashboard/requisitions/${params.id}/convert-to-po` }]
+      : []),
+    ...(workflowInstance
+      ? [
+          {
+            label: "Approval flow",
+            tone: (requisition.lifecycle_status === "pending_approval" ? "warning" : "neutral") as const,
+            onClick: () => setSecondaryTab("approval"),
+          },
+        ]
+      : []),
+    {
+      label: `Audit log`,
+      count: auditEvents.length,
+      onClick: () => setSecondaryTab("audit"),
+    },
+    {
+      label: `Comments`,
+      count: comments.length,
+      onClick: () => setSecondaryTab("comments"),
+    },
+  ];
+
   function auditSummary(event: import("@/lib/types").ProcurementAuditEvent) {
     const details = event.details || {};
     if (event.action === "purchase_order:created") return `Purchase order ${String(details.order_number || "created")}`;
@@ -291,6 +341,13 @@ export default function RequisitionDetailPage() {
 
         {error && <p className="text-sm text-red-600">{error}</p>}
       </div>
+
+      <ActionRecommendationStrip
+        title="PR actions"
+        description="Track this requisition's progress and jump to what needs attention."
+        recommendation={prRecommendation}
+        actions={prStripActions}
+      />
 
       <div className="card space-y-3">
         <h2 className="text-lg font-semibold">Line items</h2>

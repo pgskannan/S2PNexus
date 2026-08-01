@@ -356,6 +356,37 @@ export async function listGoodsReceipts(): Promise<{ items: import("@/lib/types"
   return data;
 }
 
+export interface GoodsReceiptLineItemCreate {
+  purchase_order_line_item_id: string;
+  quantity_received: string | number;
+  quantity_rejected?: string | number;
+  rejection_reason?: string | null;
+  condition_status?: string;
+  notes?: string | null;
+}
+
+export interface GoodsReceiptCreate {
+  status?: string;
+  receipt_type?: string;
+  inspection_status?: string;
+  carrier?: string | null;
+  tracking_number?: string | null;
+  delivery_note_reference?: string | null;
+  notes?: string | null;
+  line_items: GoodsReceiptLineItemCreate[];
+}
+
+export async function createGoodsReceipt(
+  purchaseOrderId: string,
+  payload: GoodsReceiptCreate
+): Promise<import("@/lib/types").GoodsReceipt> {
+  const { data } = await api.post<import("@/lib/types").GoodsReceipt>(
+    `/procurement/purchase-orders/${purchaseOrderId}/receipts`,
+    payload
+  );
+  return data;
+}
+
 export async function listInvoices(): Promise<{ items: import("@/lib/types").ProcurementInvoice[] }> {
   const { data } = await api.get<{ items: import("@/lib/types").ProcurementInvoice[] }>("/procurement/invoices");
   return data;
