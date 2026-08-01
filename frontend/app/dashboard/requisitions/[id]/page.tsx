@@ -64,6 +64,7 @@ export default function RequisitionDetailPage() {
   });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [secondaryTab, setSecondaryTab] = useState<"approval" | "audit" | "comments">("approval");
 
   async function load() {
     try {
@@ -171,6 +172,38 @@ export default function RequisitionDetailPage() {
   }
 
   const actions = nextSteps[requisition.lifecycle_status] ?? [];
+  const actionBar = (
+    <>
+      {actions.map((action) => (
+        <button
+          key={action.new_status}
+          disabled={busy}
+          onClick={() => handleTransition(action.new_status, action.lifecycle_status)}
+          className="btn-primary"
+        >
+          {action.label}
+        </button>
+      ))}
+      {requisition.lifecycle_status === "draft" && (
+        <button
+          disabled={busy}
+          onClick={handleDelete}
+          className="btn-secondary text-red-600 hover:bg-red-50"
+        >
+          Delete draft
+        </button>
+      )}
+      {requisition.lifecycle_status === "submitted" && (
+        <button
+          disabled={busy}
+          onClick={handleWithdraw}
+          className="btn-secondary text-red-600 hover:bg-red-50"
+        >
+          Withdraw
+        </button>
+      )}
+    </>
+  );
 
   function auditLabel(action: string) {
     return action
@@ -205,7 +238,7 @@ export default function RequisitionDetailPage() {
       </button>
 
       <div className="card space-y-4">
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-4">
           <div>
             {requisition.requisition_number && (
               <p className="font-mono text-xs text-slate-400">{requisition.requisition_number}</p>
@@ -215,9 +248,14 @@ export default function RequisitionDetailPage() {
               {requisition.description || "No description"}
             </p>
           </div>
-          <span className="badge bg-slate-100 text-slate-700 capitalize">
-            {requisition.lifecycle_status}
-          </span>
+          <div className="flex flex-col items-end gap-2">
+            <span className="badge bg-slate-100 text-slate-700 capitalize">
+              {requisition.lifecycle_status}
+            </span>
+            {(actions.length > 0 || requisition.lifecycle_status === "draft" || requisition.lifecycle_status === "submitted") && (
+              <div className="flex flex-wrap justify-end gap-2">{actionBar}</div>
+            )}
+          </div>
         </div>
 
         <dl className="grid grid-cols-2 gap-4 text-sm">
@@ -253,59 +291,6 @@ export default function RequisitionDetailPage() {
 
         {error && <p className="text-sm text-red-600">{error}</p>}
       </div>
-
-      <div className="space-y-2">
-        <h2 className="text-lg font-semibold">Approval Flow</h2>
-        {workflowInstance ? (
-          <>
-            <ApprovalFlowDiagram
-              docNumber={requisition.requisition_number || undefined}
-              title={requisition.title}
-              steps={approvalSteps}
-            />
-            <Link
-              href={`/dashboard/workflow/instances/${workflowInstance.id}`}
-              className="text-xs text-slate-400 hover:text-brand-600 hover:underline"
-            >
-              View raw workflow instance &rarr;
-            </Link>
-          </>
-        ) : (
-          <div className="card">
-            <p className="text-sm text-slate-400">
-              No approval workflow instance for this document.
-            </p>
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <h2 className="text-lg font-semibold">Audit log</h2>
-        {auditEvents.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-400">No audit events recorded yet.</p>
-        ) : (
-          <ul className="mt-3 divide-y divide-slate-100">
-            {auditEvents.map((event) => (
-              <li key={event.id} className="py-3 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium text-slate-700">{auditLabel(event.action)}</span>
-                  <time className="text-xs text-slate-400">{new Date(event.created_at).toLocaleString()}</time>
-                </div>
-                <p className="mt-1 text-sm text-slate-600">{auditSummary(event)}</p>
-                <p className="mt-1 text-xs text-slate-400">By {actorNames[event.actor_id] || "System user"}</p>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <CommentsPanel
-        items={comments}
-        loading={commentsLoading}
-        error={commentsError}
-        authorNames={actorNames}
-        onAdd={handleAddComment}
-      />
 
       <div className="card space-y-3">
         <h2 className="text-lg font-semibold">Line items</h2>
@@ -389,46 +374,76 @@ export default function RequisitionDetailPage() {
         )}
       </div>
 
-      <div className="card space-y-4">
-        {(actions.length > 0 || requisition.lifecycle_status === "draft") && (
-          <div className="flex gap-3 border-t border-slate-100 pt-4">
-            {actions.map((action) => (
-              <button
-                key={action.new_status}
-                disabled={busy}
-                onClick={() =>
-                  handleTransition(action.new_status, action.lifecycle_status)
-                }
-                className="btn-primary"
-              >
-                {action.label}
-              </button>
+      <div className="card space-y-4 p-0 overflow-hidden">
+        <div className="flex gap-1 border-b border-slate-100 bg-slate-50 px-3 pt-2">
+          {([
+            { key: "approval", label: "Approval Flow" },
+            { key: "audit", label: `Audit Log${auditEvents.length ? ` (${auditEvents.length})` : ""}` },
+            { key: "comments", label: `Comments${comments.length ? ` (${comments.length})` : ""}` },
+          ] as const).map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setSecondaryTab(tab.key)}
+              className={`rounded-t-md px-3 py-2 text-sm font-medium transition ${
+                secondaryTab === tab.key
+                  ? "bg-white text-brand-700 border border-b-0 border-slate-100"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-4">
+          {secondaryTab === "approval" &&
+            (workflowInstance ? (
+              <div className="space-y-2">
+                <ApprovalFlowDiagram
+                  docNumber={requisition.requisition_number || undefined}
+                  title={requisition.title}
+                  steps={approvalSteps}
+                />
+                <Link
+                  href={`/dashboard/workflow/instances/${workflowInstance.id}`}
+                  className="text-xs text-slate-400 hover:text-brand-600 hover:underline"
+                >
+                  View raw workflow instance &rarr;
+                </Link>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">No approval workflow instance for this document.</p>
             ))}
-            {requisition.lifecycle_status === "draft" && (
-              <button
-                disabled={busy}
-                onClick={handleDelete}
-                className="btn-secondary text-red-600 hover:bg-red-50"
-              >
-                Delete draft
-              </button>
-            )}
-            {requisition.lifecycle_status === "submitted" && (
-              <button
-                disabled={busy}
-                onClick={handleWithdraw}
-                className="btn-secondary text-red-600 hover:bg-red-50"
-              >
-                Withdraw requisition
-              </button>
-            )}
-          </div>
-        )}
-        {actions.length === 0 && requisition.lifecycle_status !== "draft" && (
-          <p className="border-t border-slate-100 pt-4 text-sm text-slate-400">
-            No further transitions available from this status.
-          </p>
-        )}
+
+          {secondaryTab === "audit" &&
+            (auditEvents.length === 0 ? (
+              <p className="text-sm text-slate-400">No audit events recorded yet.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {auditEvents.map((event) => (
+                  <li key={event.id} className="py-3 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium text-slate-700">{auditLabel(event.action)}</span>
+                      <time className="text-xs text-slate-400">{new Date(event.created_at).toLocaleString()}</time>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-600">{auditSummary(event)}</p>
+                    <p className="mt-1 text-xs text-slate-400">By {actorNames[event.actor_id] || "System user"}</p>
+                  </li>
+                ))}
+              </ul>
+            ))}
+
+          {secondaryTab === "comments" && (
+            <CommentsPanel
+              items={comments}
+              loading={commentsLoading}
+              error={commentsError}
+              authorNames={actorNames}
+              onAdd={handleAddComment}
+              bare
+            />
+          )}
+        </div>
       </div>
     </div>
   );

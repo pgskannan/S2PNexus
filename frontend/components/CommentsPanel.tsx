@@ -9,6 +9,10 @@ interface CommentsPanelProps {
   error: string | null;
   authorNames?: Record<string, string>;
   onAdd: (text: string) => Promise<void>;
+  // When true, skip the card wrapper + heading -- for use inside a tab panel
+  // that already provides its own container/label (e.g. the document detail
+  // pages' Approval Flow / Audit Log / Comments tab strip).
+  bare?: boolean;
 }
 
 // Shared comment thread used by both the PR and PO detail pages so behavior is
@@ -20,6 +24,7 @@ export default function CommentsPanel({
   error,
   authorNames = {},
   onAdd,
+  bare = false,
 }: CommentsPanelProps) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,9 +41,8 @@ export default function CommentsPanel({
     }
   }
 
-  return (
-    <div className="card space-y-3">
-      <h2 className="text-lg font-semibold">Comments</h2>
+  const content = (
+    <>
       <div className="flex gap-2">
         <input
           className="input-field flex-1"
@@ -80,6 +84,17 @@ export default function CommentsPanel({
           ))}
         </ul>
       )}
+    </>
+  );
+
+  if (bare) {
+    return <div className="space-y-3">{content}</div>;
+  }
+
+  return (
+    <div className="card space-y-3">
+      <h2 className="text-lg font-semibold">Comments</h2>
+      {content}
     </div>
   );
 }
