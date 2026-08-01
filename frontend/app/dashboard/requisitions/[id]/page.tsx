@@ -21,11 +21,10 @@ import {
 import type { PurchaseOrder, Requisition, WorkflowInstance } from "@/lib/types";
 import { ApprovalFlowDiagram, type ApprovalStep } from "@/components/ApprovalFlowDiagram";
 import { buildApprovalSteps, resolveApproverNames } from "@/lib/approvalFlow";
-import DocumentTabs, { type DocumentSectionKey } from "@/components/DocumentTabs";
+import DocumentTabs from "@/components/DocumentTabs";
 import CommentsPanel from "@/components/CommentsPanel";
 import {
   fetchDocumentTabSignals,
-  PR_APPROVED_LIFECYCLES,
   type DocumentTabSignals,
 } from "@/lib/documentTabs";
 
@@ -53,7 +52,6 @@ export default function RequisitionDetailPage() {
   const [workflowInstance, setWorkflowInstance] = useState<WorkflowInstance | null>(null);
   const [approvalSteps, setApprovalSteps] = useState<ApprovalStep[]>([]);
   const [auditEvents, setAuditEvents] = useState<import("@/lib/types").ProcurementAuditEvent[]>([]);
-  const [activeSection, setActiveSection] = useState<DocumentSectionKey | null>(null);
   const [actorNames, setActorNames] = useState<Record<string, string>>({});
   const [comments, setComments] = useState<import("@/lib/types").ProcurementComment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(true);
@@ -197,10 +195,7 @@ export default function RequisitionDetailPage() {
       <DocumentTabs
         prId={params.id}
         poId={purchaseOrders[0]?.id ?? null}
-        prApproved={PR_APPROVED_LIFECYCLES.has(requisition.lifecycle_status)}
         signals={docSignals}
-        activeSection={activeSection}
-        onSectionChange={setActiveSection}
       />
       <button
         onClick={() => router.push("/dashboard/requisitions")}
@@ -259,63 +254,58 @@ export default function RequisitionDetailPage() {
         {error && <p className="text-sm text-red-600">{error}</p>}
       </div>
 
-      {activeSection === "approval" && (
-        <div className="space-y-2">
-          {workflowInstance ? (
-            <>
-              <ApprovalFlowDiagram
-                docNumber={requisition.requisition_number || undefined}
-                title={requisition.title}
-                steps={approvalSteps}
-              />
-              <Link
-                href={`/dashboard/workflow/instances/${workflowInstance.id}`}
-                className="text-xs text-slate-400 hover:text-brand-600 hover:underline"
-              >
-                View raw workflow instance &rarr;
-              </Link>
-            </>
-          ) : (
-            <div className="card">
-              <p className="text-sm text-slate-400">
-                No approval workflow instance for this document.
-              </p>
-            </div>
-          )}
-        </div>
-      )}
+      <div className="space-y-2">
+        <h2 className="text-lg font-semibold">Approval Flow</h2>
+        {workflowInstance ? (
+          <>
+            <ApprovalFlowDiagram
+              docNumber={requisition.requisition_number || undefined}
+              title={requisition.title}
+              steps={approvalSteps}
+            />
+            <Link
+              href={`/dashboard/workflow/instances/${workflowInstance.id}`}
+              className="text-xs text-slate-400 hover:text-brand-600 hover:underline"
+            >
+              View raw workflow instance &rarr;
+            </Link>
+          </>
+        ) : (
+          <div className="card">
+            <p className="text-sm text-slate-400">
+              No approval workflow instance for this document.
+            </p>
+          </div>
+        )}
+      </div>
 
-      {activeSection === "history" && (
-        <div className="card">
-          <h2 className="text-lg font-semibold">Audit log</h2>
-          {auditEvents.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-400">No audit events recorded yet.</p>
-          ) : (
-            <ul className="mt-3 divide-y divide-slate-100">
-              {auditEvents.map((event) => (
-                <li key={event.id} className="py-3 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium text-slate-700">{auditLabel(event.action)}</span>
-                    <time className="text-xs text-slate-400">{new Date(event.created_at).toLocaleString()}</time>
-                  </div>
-                  <p className="mt-1 text-sm text-slate-600">{auditSummary(event)}</p>
-                  <p className="mt-1 text-xs text-slate-400">By {actorNames[event.actor_id] || "System user"}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+      <div className="card">
+        <h2 className="text-lg font-semibold">Audit log</h2>
+        {auditEvents.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-400">No audit events recorded yet.</p>
+        ) : (
+          <ul className="mt-3 divide-y divide-slate-100">
+            {auditEvents.map((event) => (
+              <li key={event.id} className="py-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium text-slate-700">{auditLabel(event.action)}</span>
+                  <time className="text-xs text-slate-400">{new Date(event.created_at).toLocaleString()}</time>
+                </div>
+                <p className="mt-1 text-sm text-slate-600">{auditSummary(event)}</p>
+                <p className="mt-1 text-xs text-slate-400">By {actorNames[event.actor_id] || "System user"}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
-      {activeSection === "comments" && (
-        <CommentsPanel
-          items={comments}
-          loading={commentsLoading}
-          error={commentsError}
-          authorNames={actorNames}
-          onAdd={handleAddComment}
-        />
-      )}
+      <CommentsPanel
+        items={comments}
+        loading={commentsLoading}
+        error={commentsError}
+        authorNames={actorNames}
+        onAdd={handleAddComment}
+      />
 
       <div className="card space-y-3">
         <h2 className="text-lg font-semibold">Line items</h2>

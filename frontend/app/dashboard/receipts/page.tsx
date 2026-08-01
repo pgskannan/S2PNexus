@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { extractErrorMessage, getPurchaseOrder, listGoodsReceipts } from "@/lib/api";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
+import DocumentTabs from "@/components/DocumentTabs";
 import type { GoodsReceipt } from "@/lib/types";
 
 const statusColors: Record<string, string> = {
@@ -25,6 +26,7 @@ export default function ReceiptsPage() {
 
   const [poFilter, setPoFilter] = useState<string | null>(null);
   const [poFilterNumber, setPoFilterNumber] = useState<string | null>(null);
+  const [prId, setPrId] = useState<string | null>(null);
 
   useEffect(() => {
     listGoodsReceipts()
@@ -40,7 +42,10 @@ export default function ReceiptsPage() {
     setPoFilterNumber(null);
     if (po) {
       getPurchaseOrder(po)
-        .then((p) => setPoFilterNumber(p.order_number))
+        .then((p) => {
+          setPoFilterNumber(p.order_number);
+          setPrId(p.requisition_id ?? null);
+        })
         .catch(() => setPoFilterNumber(null));
     }
   }, []);
@@ -70,6 +75,7 @@ export default function ReceiptsPage() {
 
   return (
     <div className="space-y-6">
+      <DocumentTabs prId={prId} poId={poFilter} />
       <div>
         <h1 className="text-2xl font-semibold">Receipts</h1>
         <p className="mt-1 text-sm text-slate-500">Track goods received against purchase orders.</p>
