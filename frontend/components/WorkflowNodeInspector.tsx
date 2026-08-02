@@ -14,6 +14,48 @@ interface WorkflowNodeInspectorProps {
    * suggestions from GET /workflow/fields. Omit to fall back to a plain
    * text input (e.g. if the caller doesn't know the entity type yet). */
   entityType?: string;
+  /** Every step in the definition being edited, in order -- used to build
+   * the "go to" dropdowns for condition branches and parallel-group
+   * continuation targets. Without this, those controls have nothing to list
+   * and the condition-branch fields silently can't be set (the actual bug
+   * reported 2026-08-02: there was no UI for on_true_next_step/
+   * on_false_next_step at all). */
+  allSteps?: Array<Record<string, unknown>>;
+}
+
+const STEP_END_LABEL = "End workflow (approved)";
+
+function StepTargetSelect({
+  value,
+  allSteps,
+  excludeIndex,
+  onChange,
+}: {
+  value: number | null | undefined;
+  allSteps: Array<Record<string, unknown>>;
+  excludeIndex?: number;
+  onChange: (index: number | null) => void;
+}) {
+  return (
+    <select
+      className="input-field"
+      value={value === null || value === undefined ? "" : String(value)}
+      onChange={(event) => onChange(event.target.value === "" ? null : Number(event.target.value))}
+    >
+      <option value="">Select a step...</option>
+      {allSteps.map((step, index) => {
+        if (index === excludeIndex) return null;
+        const label = String(step.name || `Step ${index + 1}`);
+        const type = String(step.step_type || "approval");
+        return (
+          <option key={index} value={index}>
+            {index}: {label} ({type})
+          </option>
+        );
+      })}
+      <option value={allSteps.length}>{STEP_END_LABEL}</option>
+    </select>
+  );
 }
 
 function ConditionFieldInput({
@@ -103,6 +145,64 @@ function ConditionFieldInput({
   );
 }
 
+/** Optional "run this step alongside other steps, concurrently" control for
+ * approval/notification/auto steps (the only step types a parallel_group can
+ * contain -- see schemas/workflow.py's PARALLEL_GROUP_MEMBER_TYPES). Give
+ * two or more steps the same group name and they all activate together; the
+ * workflow only advances once every approval-type member is satisfied. */
+function ParallelGroupFields({
+  selectedNode,
+  allSteps,
+  selfIndex,
+  onUpdate,
+}: {
+  selectedNode: WorkflowStepValue;
+  allSteps: Array<Record<string, unknown>>;
+  selfIndex?: number;
+  onUpdate: (changes: Partial<WorkflowStepValue>) => void;
+}) {
+  const siblingCount = allSteps.filter(
+    (step, index) => index !== selfIndex && step.parallel_group === selectedNode.parallel_group
+  ).length;
+
+  return (
+    <div className="rounded-lg border border-slate-200 p-3">
+      <label className="label">Parallel group (optional)</label>
+      <input
+        className="input-field"
+        placeholder="e.g. finance_legal_review"
+        value={selectedNode.parallel_group || ""}
+        onChange={(event) => onUpdate({ parallel_group: event.target.value || undefined })}
+      />
+      <p className="mt-1 text-xs text-slate-500">
+        Give two or more approval/notification/auto steps the same group name to run them at the same time -- the
+        workflow only continues once every approval step in the group is satisfied (a rejection in any of them
+        rejects the whole workflow, same as a single-step rejection).
+      </p>
+      {selectedNode.parallel_group && (
+        <>
+          <p className="mt-2 text-xs text-slate-600">
+            {siblingCount > 0
+              ? `${siblingCount + 1} step(s) share this group.`
+              : "No other step uses this group name yet -- add it to at least one more step to actually run in parallel."}
+          </p>
+          <label className="label mt-2">Continue to (after the group completes)</label>
+          <StepTargetSelect
+            value={selectedNode.parallel_next_step}
+            allSteps={allSteps}
+            excludeIndex={selfIndex}
+            onChange={(index) => onUpdate({ parallel_next_step: index })}
+          />
+          <p className="mt-1 text-xs text-slate-500">
+            Every step in the same group must point to the same target -- setting it here updates just this step, so
+            set it consistently on each member.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function RoleResolutionPreview({ roleCode, amount }: { roleCode: string; amount: string }) {
   const [resolved, setResolved] = useState<ResolvedApprover[]>([]);
   const [loading, setLoading] = useState(false);
@@ -160,7 +260,7 @@ function RoleResolutionPreview({ roleCode, amount }: { roleCode: string; amount:
   );
 }
 
-export function WorkflowNodeInspector({ selectedNode, onUpdate, entityType }: WorkflowNodeInspectorProps) {
+export function WorkflowNodeInspector({ selectedNode, onUpdate, entityType, allSteps = [] }: WorkflowNodeInspectorProps) {
   const [previewAmount, setPreviewAmount] = useState("");
   const [escalateRole, setEscalateRole] = useState("");
   const [escalateResolvedName, setEscalateResolvedName] = useState<string | null>(null);
@@ -203,6 +303,7 @@ export function WorkflowNodeInspector({ selectedNode, onUpdate, entityType }: Wo
     }
   }
 
+  const selfIndex = selectedNode.id.startsWith("step-") ? Number(selectedNode.id.slice("step-".length)) : undefined;
   const rules = (selectedNode.rules || {}) as Record<string, unknown>;
   const categoryRouting = (rules.category_routing || {}) as Record<string, string>;
 
@@ -259,6 +360,28 @@ export function WorkflowNodeInspector({ selectedNode, onUpdate, entityType }: Wo
               onChange={(event) => onUpdate({ value: event.target.value })}
             />
           </div>
+          <div>
+            <label className="label">If true, go to</label>
+            <StepTargetSelect
+              value={selectedNode.on_true_next_step}
+              allSteps={allSteps}
+              excludeIndex={selfIndex}
+              onChange={(index) => onUpdate({ on_true_next_step: index })}
+            />
+          </div>
+          <div>
+            <label className="label">If false, go to</label>
+            <StepTargetSelect
+              value={selectedNode.on_false_next_step}
+              allSteps={allSteps}
+              excludeIndex={selfIndex}
+              onChange={(index) => onUpdate({ on_false_next_step: index })}
+            />
+          </div>
+          <p className="text-xs text-slate-500">
+            Both branches must be set before this definition can be saved -- pick "{STEP_END_LABEL}" if a branch should
+            end the workflow (approved) rather than continue to another step.
+          </p>
         </>
       )}
 
@@ -395,14 +518,18 @@ export function WorkflowNodeInspector({ selectedNode, onUpdate, entityType }: Wo
               </div>
             )}
           </div>
+          <ParallelGroupFields selectedNode={selectedNode} allSteps={allSteps} selfIndex={selfIndex} onUpdate={onUpdate} />
         </>
       )}
 
       {selectedNode.step_type === "auto" && (
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-          Deterministic auto-approval: this step approves automatically and records an AUTO_APPROVED audit event. No
-          configuration needed beyond the step name.
-        </div>
+        <>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+            Deterministic auto-approval: this step approves automatically and records an AUTO_APPROVED audit event. No
+            configuration needed beyond the step name.
+          </div>
+          <ParallelGroupFields selectedNode={selectedNode} allSteps={allSteps} selfIndex={selfIndex} onUpdate={onUpdate} />
+        </>
       )}
 
       {selectedNode.step_type === "ai" && (
@@ -489,6 +616,7 @@ export function WorkflowNodeInspector({ selectedNode, onUpdate, entityType }: Wo
               onChange={(event) => onUpdate({ message_template: event.target.value })}
             />
           </div>
+          <ParallelGroupFields selectedNode={selectedNode} allSteps={allSteps} selfIndex={selfIndex} onUpdate={onUpdate} />
         </>
       )}
     </div>

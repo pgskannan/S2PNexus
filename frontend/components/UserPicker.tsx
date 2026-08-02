@@ -19,8 +19,34 @@ export default function UserPicker({
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // id -> display name, so already-selected chips show "Jane Doe" instead of
+  // a raw UUID. Same pattern as lib/approvalFlow.ts's resolveApproverNames:
+  // fetch the whole directory once (id/full_name/email only, non-admin-gated)
+  // rather than adding a backend "resolve these ids" endpoint.
+  const [nameCache, setNameCache] = useState<Record<string, string>>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    listUserDirectory({ limit: 1000 })
+      .then((res) => {
+        if (cancelled) return;
+        setNameCache((prev) => {
+          const next = { ...prev };
+          res.items.forEach((u) => {
+            next[u.id] = u.full_name || u.email || u.id;
+          });
+          return next;
+        });
+      })
+      .catch(() => {
+        // Best-effort -- chips fall back to a shortened id if this fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -48,6 +74,13 @@ export default function UserPicker({
         // showing "No matches" here with no indication anything was wrong.
         const res = await listUserDirectory({ search: query, limit: 25 });
         setResults(res.items);
+        setNameCache((prev) => {
+          const next = { ...prev };
+          res.items.forEach((u) => {
+            next[u.id] = u.full_name || u.email || u.id;
+          });
+          return next;
+        });
         setOpen(true);
       } catch (err) {
         setResults([]);
@@ -75,8 +108,9 @@ export default function UserPicker({
     <div ref={containerRef} className="relative">
       <div className="flex flex-wrap gap-2">
         {value.map((id) => (
-          <span key={id} className="rounded-full bg-slate-100 px-2 py-1 text-xs">
-            {id} <button onClick={() => remove(id)} className="ml-2 text-red-600">x</button>
+          <span key={id} className="rounded-full bg-slate-100 px-2 py-1 text-xs" title={id}>
+            {nameCache[id] || `${id.slice(0, 8)}...`}{" "}
+            <button onClick={() => remove(id)} className="ml-2 text-red-600">x</button>
           </span>
         ))}
         <input

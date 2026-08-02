@@ -6,9 +6,16 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 STEP_TYPES = ("condition", "approval", "notification", "auto", "ai")
+
+# Step types allowed to carry `parallel_group` -- deliberately excludes
+# "condition" (branching + fork/join in the same step would need a real
+# nested-branch model) and "ai" (its auto-approve-or-fall-through-to-role
+# behavior would need its own approver resolution inside the group; kept out
+# of v1 to bound scope -- see crud/workflow.py's parallel-group handling).
+PARALLEL_GROUP_MEMBER_TYPES = {"approval", "notification", "auto"}
 
 
 class WorkflowStep(BaseModel):
@@ -20,6 +27,18 @@ class WorkflowStep(BaseModel):
     - auto: deterministic auto-approval
     - ai: rules (deterministic + AI) may auto-approve or fall through to a role
     - notification: recipients, message_template
+
+    True parallel branches (as opposed to the multiple-approvers-on-one-step
+    "N-of-M" pattern) are expressed by giving two or more steps the same
+    `parallel_group` value -- see crud/workflow.py::_run_from_step. All steps
+    sharing a group are activated together (tasks created / notifications
+    sent / auto-approvals recorded in the same pass) and the workflow only
+    advances past the group once every approval-type member has reached its
+    own `required_approvals`; a rejection on any member rejects the whole
+    instance, matching single-step rejection semantics. `parallel_next_step`
+    is where execution continues once the group is fully resolved (falls
+    through to the step after the highest-indexed member if unset, same
+    fallthrough convention as on_true_next_step/on_false_next_step).
     """
 
     name: str = Field(..., min_length=1, max_length=255)
@@ -44,6 +63,11 @@ class WorkflowStep(BaseModel):
     recipients: list[UUID] = Field(default_factory=list)
     message_template: Optional[str] = None
 
+    # parallel branches (approval / notification / auto only -- see
+    # PARALLEL_GROUP_MEMBER_TYPES)
+    parallel_group: Optional[str] = Field(default=None, max_length=100)
+    parallel_next_step: Optional[int] = None
+
 
 class WorkflowDefinitionCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
@@ -54,6 +78,39 @@ class WorkflowDefinitionCreate(BaseModel):
     # Definition lifecycle: draft / published / archived (defaults to published
     # for backward compatibility).
     status: Optional[str] = Field(default=None, pattern="^(draft|published|archived)$")
+
+    @model_validator(mode="after")
+    def _validate_parallel_groups(self) -> "WorkflowDefinitionCreate":
+        groups: dict[str, list[int]] = {}
+        for index, step in enumerate(self.steps):
+            if not step.parallel_group:
+                continue
+            if step.step_type not in PARALLEL_GROUP_MEMBER_TYPES:
+                raise ValueError(
+                    f"Step {index} ('{step.name}'): parallel_group is only supported on "
+                    f"{sorted(PARALLEL_GROUP_MEMBER_TYPES)} steps, not '{step.step_type}'"
+                )
+            groups.setdefault(step.parallel_group, []).append(index)
+
+        for group_key, member_indices in groups.items():
+            if len(member_indices) < 2:
+                raise ValueError(
+                    f"parallel_group '{group_key}' has only one member (step {member_indices[0]}) -- "
+                    "a parallel group needs at least two steps to branch"
+                )
+            next_steps = {self.steps[i].parallel_next_step for i in member_indices}
+            if len(next_steps) > 1:
+                raise ValueError(
+                    f"All steps in parallel_group '{group_key}' must set the same parallel_next_step "
+                    f"(got {sorted(v for v in next_steps if v is not None)})"
+                )
+            next_step = next(iter(next_steps))
+            if next_step is not None and not (0 <= next_step <= len(self.steps)):
+                raise ValueError(
+                    f"parallel_group '{group_key}': parallel_next_step {next_step} is out of range "
+                    f"(must be between 0 and {len(self.steps)})"
+                )
+        return self
 
 
 class WorkflowDefinitionResponse(BaseModel):

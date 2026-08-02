@@ -30,6 +30,13 @@ export interface WorkflowStepValue {
   rules?: Record<string, unknown>;
   recipients?: string[];
   message_template?: string;
+  // True parallel branches: two or more approval/notification/auto steps
+  // sharing the same parallel_group run concurrently; the workflow only
+  // advances once every approval-type member is satisfied (or rejects
+  // immediately if any is rejected). See backend/app/schemas/workflow.py's
+  // WorkflowStep docstring for the full semantics.
+  parallel_group?: string;
+  parallel_next_step?: number | null;
 }
 
 interface WorkflowCanvasProps {
@@ -64,12 +71,16 @@ function buildInitialFlow(steps: Array<Record<string, unknown>>) {
   steps.forEach((step, index) => {
     const id = `step-${index}`;
     const stepType = String(step.step_type || "approval");
+    const parallelGroup = typeof step.parallel_group === "string" ? step.parallel_group : "";
+    const label = parallelGroup
+      ? `‖ ${String(step.name || `Step ${index + 1}`)} (${parallelGroup})`
+      : String(step.name || `Step ${index + 1}`);
     const node = {
       id,
       type: "default",
       position: { x: 260 + Math.floor(index / 2) * 220, y: 60 + (index % 2) * 140 },
       data: {
-        label: String(step.name || `Step ${index + 1}`),
+        label,
         step_type: stepType,
         color: nodeColors[stepType] || nodeColors.approval,
       },
@@ -80,7 +91,7 @@ function buildInitialFlow(steps: Array<Record<string, unknown>>) {
       source: index === 0 ? startNode.id : `step-${index - 1}`,
       target: id,
       markerEnd: { type: MarkerType.ArrowClosed },
-      label: stepType === "condition" ? "next" : undefined,
+      label: stepType === "condition" ? "next" : parallelGroup ? "‖" : undefined,
     });
   });
 
@@ -127,6 +138,8 @@ function mapStepsToValue(steps: Array<Record<string, unknown>>): WorkflowStepVal
     rules: step.rules && typeof step.rules === "object" && !Array.isArray(step.rules) ? (step.rules as Record<string, unknown>) : undefined,
     recipients: Array.isArray(step.recipients) ? step.recipients.map((item) => String(item)) : [],
     message_template: typeof step.message_template === "string" ? step.message_template : undefined,
+    parallel_group: typeof step.parallel_group === "string" && step.parallel_group ? step.parallel_group : undefined,
+    parallel_next_step: typeof step.parallel_next_step === "number" ? step.parallel_next_step : null,
   }));
 }
 
@@ -147,6 +160,8 @@ function mapValueToSteps(values: WorkflowStepValue[]): Array<Record<string, unkn
     rules: step.rules,
     recipients: step.recipients || [],
     message_template: step.message_template,
+    parallel_group: step.parallel_group || undefined,
+    parallel_next_step: step.parallel_next_step ?? undefined,
   }));
 }
 
@@ -190,6 +205,10 @@ export function WorkflowCanvas({ value, onChange, selectedNodeId, onSelectNode, 
         ...step,
         on_true_next_step: adjust(step.on_true_next_step),
         on_false_next_step: adjust(step.on_false_next_step),
+        // parallel_next_step is an index reference too (see
+        // ParallelGroupFields in WorkflowNodeInspector.tsx) -- same
+        // shift-down / null-out-if-removed treatment applies.
+        parallel_next_step: adjust(step.parallel_next_step),
       }));
     onChange(mapValueToSteps(nextSteps));
     onSelectNode?.(null);

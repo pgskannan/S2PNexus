@@ -232,6 +232,63 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
         instance.current_step_index = step_index
         step_type = step.get("step_type")
 
+        if step.get("parallel_group"):
+            group_key = step["parallel_group"]
+            member_indices = sorted(i for i, s in enumerate(steps) if s.get("parallel_group") == group_key)
+
+            already_activated = (
+                await db.execute(
+                    select(WorkflowTask.id).where(
+                        WorkflowTask.instance_id == instance.id,
+                        WorkflowTask.step_index.in_(member_indices),
+                    )
+                )
+            ).first() is not None
+
+            if not already_activated:
+                for member_index in member_indices:
+                    member_step = steps[member_index]
+                    member_type = member_step.get("step_type")
+                    if member_type == "approval":
+                        await _create_approval_tasks(db, instance, member_step, member_index)
+                    elif member_type == "notification":
+                        template = member_step.get("message_template") or member_step.get("name") or "Workflow notification"
+                        message = (
+                            template.format(**instance.context) if _safe_format(template, instance.context) else template
+                        )
+                        for recipient in member_step.get("recipients", []):
+                            await _create_notification(
+                                db,
+                                _normalize_uuid(recipient),
+                                title=member_step.get("name", "Workflow notification"),
+                                message=message,
+                                entity_type=instance.entity_type,
+                                entity_id=instance.entity_id,
+                            )
+                    elif member_type == "auto":
+                        await record_approval_event(
+                            db,
+                            tenant_id=instance.context.get("tenant_id"),
+                            document_type=instance.entity_type,
+                            document_id=instance.entity_id,
+                            workflow_version_id=instance.definition_id,
+                            node_id=str(member_index),
+                            node_type="AUTO",
+                            action="AUTO_APPROVED",
+                            comments=member_step.get("name", "Auto-approval"),
+                        )
+                    # "condition"/"ai" aren't valid parallel_group members --
+                    # rejected at the schema level (WorkflowDefinitionCreate's
+                    # _validate_parallel_groups), so nothing to handle here.
+
+            if not await _parallel_group_is_complete(db, instance, steps, member_indices):
+                instance.status = "in_progress"
+                return  # wait for the remaining branch(es)
+
+            next_step = step.get("parallel_next_step")
+            step_index = next_step if next_step is not None else max(member_indices) + 1
+            continue
+
         if step_type == "condition":
             result = _evaluate_condition(step, instance.context)
             next_step = step.get("on_true_next_step") if result else step.get("on_false_next_step")
@@ -301,70 +358,110 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
             step_type = "approval"
 
         if step_type == "approval":
-            approver_ids: list[UUID] = []
-            explicit = step.get("approvers") or []
-            if explicit:
-                approver_ids = [_normalize_uuid(a) for a in explicit]
-            elif step.get("role_code"):
-                # Rule-driven approver resolution from ApproverSeed master data
-                # (spec sec 1 + sec 3): role + limits + scope + primary/backup.
-                from app.crud.approval import resolve_approvers_for_context
-
-                resolved = await resolve_approvers_for_context(
-                    db,
-                    role_code=step["role_code"],
-                    amount=Decimal(str(instance.context.get("amount") or "0")),
-                    category=instance.context.get("category"),
-                    supplier_id=(
-                        str(instance.context["supplier_id"]) if instance.context.get("supplier_id") else None
-                    ),
-                    tenant_id=instance.context.get("tenant_id"),
-                )
-                approver_ids = [UUID(a["user_id"]) for a in resolved]
-
-            if not approver_ids:
+            created = await _create_approval_tasks(db, instance, step, step_index)
+            if not created:
                 # No approvers resolvable -- skip this node rather than hang.
                 step_index += 1
                 continue
-
-            escalate_after_hours = step.get("escalate_after_hours")
-            due_at = None
-            sla_due, _sla_id = await compute_sla_due_at(
-                db,
-                tenant_id=instance.context.get("tenant_id"),
-                document_type=instance.entity_type,
-                role_code=step.get("role_code"),
-            )
-            if sla_due is not None:
-                due_at = sla_due
-            elif escalate_after_hours:
-                due_at = datetime.now(timezone.utc) + timedelta(hours=escalate_after_hours)
-
-            for approver_id in approver_ids:
-                db.add(
-                    WorkflowTask(
-                        instance_id=instance.id,
-                        step_index=step_index,
-                        step_name=step.get("name", "Approval"),
-                        assignee_id=approver_id,
-                        status="pending",
-                        due_at=due_at,
-                        escalate_to=_normalize_uuid(step["escalate_to"]) if step.get("escalate_to") else None,
-                    )
-                )
-                await _create_notification(
-                    db,
-                    approver_id,
-                    title=f"Approval requested: {step.get('name', 'Approval')}",
-                    message=f"Your approval is requested for {instance.entity_type} {instance.entity_id}.",
-                    entity_type=instance.entity_type,
-                    entity_id=instance.entity_id,
-                )
             instance.status = "in_progress"
             return  # wait for human input
 
         # Unknown step type: skip it rather than silently looping forever.
         step_index += 1
+
+
+async def _create_approval_tasks(
+    db: AsyncSession, instance: WorkflowInstance, step: dict[str, Any], step_index: int
+) -> bool:
+    """Resolve approvers for `step` and create one pending WorkflowTask per
+    approver at `step_index`. Shared by the top-level approval-step handling
+    and by parallel-group member activation (see _run_from_step) so both
+    paths get identical approver resolution, SLA/escalation due-date
+    computation, and notification behavior. Returns False (no tasks created)
+    if no approvers resolve -- callers treat that as "skip this node"."""
+    approver_ids: list[UUID] = []
+    explicit = step.get("approvers") or []
+    if explicit:
+        approver_ids = [_normalize_uuid(a) for a in explicit]
+    elif step.get("role_code"):
+        # Rule-driven approver resolution from ApproverSeed master data
+        # (spec sec 1 + sec 3): role + limits + scope + primary/backup.
+        from app.crud.approval import resolve_approvers_for_context
+
+        resolved = await resolve_approvers_for_context(
+            db,
+            role_code=step["role_code"],
+            amount=Decimal(str(instance.context.get("amount") or "0")),
+            category=instance.context.get("category"),
+            supplier_id=(str(instance.context["supplier_id"]) if instance.context.get("supplier_id") else None),
+            tenant_id=instance.context.get("tenant_id"),
+        )
+        approver_ids = [UUID(a["user_id"]) for a in resolved]
+
+    if not approver_ids:
+        return False
+
+    escalate_after_hours = step.get("escalate_after_hours")
+    due_at = None
+    sla_due, _sla_id = await compute_sla_due_at(
+        db,
+        tenant_id=instance.context.get("tenant_id"),
+        document_type=instance.entity_type,
+        role_code=step.get("role_code"),
+    )
+    if sla_due is not None:
+        due_at = sla_due
+    elif escalate_after_hours:
+        due_at = datetime.now(timezone.utc) + timedelta(hours=escalate_after_hours)
+
+    for approver_id in approver_ids:
+        db.add(
+            WorkflowTask(
+                instance_id=instance.id,
+                step_index=step_index,
+                step_name=step.get("name", "Approval"),
+                assignee_id=approver_id,
+                status="pending",
+                due_at=due_at,
+                escalate_to=_normalize_uuid(step["escalate_to"]) if step.get("escalate_to") else None,
+            )
+        )
+        await _create_notification(
+            db,
+            approver_id,
+            title=f"Approval requested: {step.get('name', 'Approval')}",
+            message=f"Your approval is requested for {instance.entity_type} {instance.entity_id}.",
+            entity_type=instance.entity_type,
+            entity_id=instance.entity_id,
+        )
+    return True
+
+
+async def _parallel_group_is_complete(
+    db: AsyncSession, instance: WorkflowInstance, steps: list[dict[str, Any]], member_indices: list[int]
+) -> bool:
+    """A parallel group is complete once every member that actually created
+    WorkflowTask rows (i.e. was an approval-type member with resolvable
+    approvers) has reached its own required_approvals. Members that never
+    created tasks (notification/auto, or an approval member with zero
+    resolvable approvers) are treated as instantly resolved -- same
+    "skip rather than hang" convention as the non-parallel approval path."""
+    for member_index in member_indices:
+        statuses = (
+            await db.execute(
+                select(WorkflowTask.status).where(
+                    WorkflowTask.instance_id == instance.id,
+                    WorkflowTask.step_index == member_index,
+                )
+            )
+        ).scalars().all()
+        if not statuses:
+            continue
+        required = steps[member_index].get("required_approvals", 1)
+        approved = sum(1 for s in statuses if s == "approved")
+        if approved < required:
+            return False
+    return True
 
 
 def _safe_format(template: Optional[str], context: dict[str, Any]) -> bool:
@@ -513,11 +610,17 @@ async def complete_task(
                         details={"task_id": str(task.id), "comments": comments},
                     )
                 )
-        # Cancel any other still-pending tasks in this step so they don't linger.
+        # Cancel any other still-pending tasks so they don't linger. For a
+        # parallel-group member this spans every sibling branch (a rejection
+        # anywhere in the group rejects the whole instance, same as a
+        # rejection on a lone approval step does), not just this step_index.
+        cancel_indices = [task.step_index]
+        if step.get("parallel_group"):
+            cancel_indices = [i for i, s in enumerate(definition.steps) if s.get("parallel_group") == step["parallel_group"]]
         result = await db.execute(
             select(WorkflowTask).where(
                 WorkflowTask.instance_id == instance.id,
-                WorkflowTask.step_index == task.step_index,
+                WorkflowTask.step_index.in_(cancel_indices),
                 WorkflowTask.status == "pending",
             )
         )
@@ -534,7 +637,14 @@ async def complete_task(
         approved_count = approved_count_result.scalar_one()
         required = step.get("required_approvals", 1)
         if approved_count >= required:
-            await _run_from_step(db, instance, definition.steps, task.step_index + 1)
+            # For a parallel-group member, re-enter _run_from_step AT this
+            # same member's index rather than +1 -- the parallel_group branch
+            # there re-derives the sibling member indices, sees tasks already
+            # exist (so it won't recreate them), and only advances past the
+            # whole group once _parallel_group_is_complete() is true for
+            # every member (this one now included).
+            resume_index = task.step_index if step.get("parallel_group") else task.step_index + 1
+            await _run_from_step(db, instance, definition.steps, resume_index)
 
     if instance.entity_type == "requisition" and decision == "approve":
         from app.models.procurement import ProcurementAuditEvent

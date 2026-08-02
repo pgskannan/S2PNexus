@@ -13,12 +13,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.crud.user import get_user, get_users, get_users_count, update_user, delete_user
 from app.database.session import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.user import UserResponse, UserUpdate, UserListResponse, UserDirectoryEntry, UserDirectoryResponse
-from app.utils.dependencies import get_current_active_superuser, get_current_active_user
+from app.utils.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/users", tags=["Users"])
 settings = get_settings()
+
+
+def _require_admin(current_user: User) -> None:
+    """Same admin-gate pattern as routers/approval.py, budget.py, org_structure.py.
+
+    Accepts role=ADMINISTRATOR OR is_superuser. The user-management endpoints
+    were previously gated on is_superuser alone (get_current_active_superuser),
+    which 403'd any admin whose account has role=administrator but
+    is_superuser=False -- while every other admin router in the app uses the
+    role-OR-superuser gate.
+    """
+    if current_user.role != UserRole.ADMINISTRATOR and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can manage users",
+        )
 
 
 @router.get(
@@ -52,7 +68,7 @@ async def list_users_directory(
     description="Get paginated list of users (admin only)",
 )
 async def list_users(
-    current_user: Annotated[User, Depends(get_current_active_superuser)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records"),
@@ -72,6 +88,7 @@ async def list_users(
     Returns:
         UserListResponse: Paginated user list
     """
+    _require_admin(current_user)
     users = await get_users(
         db,
         skip=skip,
@@ -98,7 +115,7 @@ async def list_users(
 )
 async def get_user_by_id(
     user_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_superuser)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> UserResponse:
     """
@@ -115,6 +132,7 @@ async def get_user_by_id(
     Raises:
         HTTPException: If user not found
     """
+    _require_admin(current_user)
     user = await get_user(db, user_id)
     if not user:
         raise HTTPException(
@@ -133,7 +151,7 @@ async def get_user_by_id(
 async def update_user_by_id(
     user_id: UUID,
     user_update: UserUpdate,
-    current_user: Annotated[User, Depends(get_current_active_superuser)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> UserResponse:
     """
@@ -151,6 +169,7 @@ async def update_user_by_id(
     Raises:
         HTTPException: If user not found
     """
+    _require_admin(current_user)
     user = await get_user(db, user_id)
     if not user:
         raise HTTPException(
@@ -170,7 +189,7 @@ async def update_user_by_id(
 )
 async def delete_user_by_id(
     user_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_superuser)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """
@@ -184,6 +203,7 @@ async def delete_user_by_id(
     Raises:
         HTTPException: If user not found or trying to delete self
     """
+    _require_admin(current_user)
     if user_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

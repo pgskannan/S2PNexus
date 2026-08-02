@@ -50,6 +50,8 @@ export default function WorkflowDefinitionsPage() {
       rules: step.rules && typeof step.rules === "object" && !Array.isArray(step.rules) ? (step.rules as Record<string, unknown>) : undefined,
       recipients: Array.isArray(step.recipients) ? step.recipients.map((item) => String(item)) : [],
       message_template: typeof step.message_template === "string" ? step.message_template : undefined,
+      parallel_group: typeof step.parallel_group === "string" && step.parallel_group ? step.parallel_group : undefined,
+      parallel_next_step: typeof step.parallel_next_step === "number" ? step.parallel_next_step : null,
     } as WorkflowStepValue;
   }, [form.steps, selectedNodeId]);
 
@@ -116,6 +118,32 @@ export default function WorkflowDefinitionsPage() {
     if (hasCondition && steps.some((step) => step.step_type === "condition" && (step.on_true_next_step == null || step.on_false_next_step == null))) {
       errors.push("Condition steps need both true and false branches configured.");
     }
+
+    // Mirror the backend's WorkflowDefinitionCreate._validate_parallel_groups
+    // checks client-side so mistakes surface here instead of as a 422 after
+    // "Save as new version".
+    const groups = new Map<string, number[]>();
+    steps.forEach((step, index) => {
+      if (typeof step.parallel_group !== "string" || !step.parallel_group) return;
+      if (!["approval", "notification", "auto"].includes(String(step.step_type))) {
+        errors.push(`Step ${index + 1} ("${step.name}"): parallel group only works on approval, notification, or auto steps.`);
+        return;
+      }
+      const bucket = groups.get(step.parallel_group) ?? [];
+      bucket.push(index);
+      groups.set(step.parallel_group, bucket);
+    });
+    groups.forEach((memberIndices, groupKey) => {
+      if (memberIndices.length < 2) {
+        errors.push(`Parallel group "${groupKey}" only has one step -- add it to at least one more step, or clear it.`);
+        return;
+      }
+      const nextSteps = new Set(memberIndices.map((i) => steps[i].parallel_next_step ?? null));
+      if (nextSteps.size > 1) {
+        errors.push(`Every step in parallel group "${groupKey}" must have the same "Continue to" target.`);
+      }
+    });
+
     return errors;
   }
 
@@ -320,6 +348,7 @@ export default function WorkflowDefinitionsPage() {
                 selectedNode={selectedNode as WorkflowStepValue | null}
                 onUpdate={updateSelectedNode}
                 entityType={form.entity_type}
+                allSteps={form.steps}
               />
             </div>
           </div>
