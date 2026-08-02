@@ -25,6 +25,10 @@ export interface WorkflowStepValue {
   value?: unknown;
   on_true_next_step?: number | null;
   on_false_next_step?: number | null;
+  /** Continue target after this step (approval/notification/auto/ai).
+   * `allSteps.length` means End. When unset, the engine skips falling into
+   * a condition's sibling Yes/No arm. */
+  next_step?: number | null;
   approvers?: string[];
   role_code?: string;
   required_approvals?: number;
@@ -123,14 +127,42 @@ const nodeTypes = { workflow: WorkflowNode };
  * Turn the step array into a faithful ReactFlow graph.
  *
  * The edges mirror the runtime engine (backend/app/crud/workflow.py
- * `_run_from_step`):
+ * `_run_from_step` / `_continue_after_step`):
  *  - a `condition` step routes via its on_true/on_false targets (green "Yes"
  *    / red "No" edges), falling through to the next index when unset;
  *  - steps sharing a `parallel_group` fan out from the group entry to every
  *    member and converge on the group's `parallel_next_step` (or the index
  *    after the last member when unset) -- drawn as purple "‖" edges;
- *  - everything else follows the main line to the next step, then to End.
+ *  - everything else follows `next_step` when set, otherwise +1 -- but never
+ *    draws a linear edge from one Yes/No condition arm into its sibling
+ *    (that would imply Yes Approval → No Approval).
  */
+function conditionSiblingArm(
+  steps: Array<Record<string, unknown>>,
+  stepIndex: number
+): { sibling: number; merge: number } | null {
+  for (const step of steps) {
+    if (String(step.step_type) !== "condition") continue;
+    const trueT = typeof step.on_true_next_step === "number" ? step.on_true_next_step : null;
+    const falseT = typeof step.on_false_next_step === "number" ? step.on_false_next_step : null;
+    if (trueT == null || falseT == null || trueT === falseT) continue;
+    if (stepIndex === trueT) return { sibling: falseT, merge: Math.max(trueT, falseT) + 1 };
+    if (stepIndex === falseT) return { sibling: trueT, merge: Math.max(trueT, falseT) + 1 };
+  }
+  return null;
+}
+
+function continueAfterStep(steps: Array<Record<string, unknown>>, stepIndex: number): number {
+  const n = steps.length;
+  if (stepIndex < 0 || stepIndex >= n) return n;
+  const step = steps[stepIndex];
+  if (typeof step.next_step === "number") return step.next_step as number;
+  const candidate = stepIndex + 1;
+  const siblingInfo = conditionSiblingArm(steps, stepIndex);
+  if (siblingInfo && candidate === siblingInfo.sibling) return siblingInfo.merge;
+  return candidate;
+}
+
 function buildInitialFlow(steps: Array<Record<string, unknown>>) {
   const n = steps.length;
 
@@ -147,7 +179,8 @@ function buildInitialFlow(steps: Array<Record<string, unknown>>) {
   groups.forEach((members) => members.forEach((m) => memberSet.add(m)));
 
   // Layout: left-to-right columns; parallel members stack vertically so the
-  // fan-out reads clearly.
+  // fan-out reads clearly. Condition Yes/No arms also stack so the diamond
+  // doesn't look like a linear Yes→No chain.
   const positions: Record<number, { x: number; y: number }> = {};
   let cursorX = 40;
   let i = 0;
@@ -159,10 +192,42 @@ function buildInitialFlow(steps: Array<Record<string, unknown>>) {
       });
       cursorX += 230;
       i += members.length;
-    } else {
+    } else if (
+      String(steps[i].step_type) === "condition" &&
+      typeof steps[i].on_true_next_step === "number" &&
+      typeof steps[i].on_false_next_step === "number" &&
+      steps[i].on_true_next_step !== steps[i].on_false_next_step
+    ) {
       positions[i] = { x: cursorX, y: 60 };
       cursorX += 230;
+      const trueT = steps[i].on_true_next_step as number;
+      const falseT = steps[i].on_false_next_step as number;
+      // Place both arms in the next column (stacked) when they are immediate
+      // consecutive indices that haven't been positioned yet.
+      const arms = [trueT, falseT].filter((idx) => idx >= 0 && idx < n && positions[idx] == null);
+      if (arms.length === 2 && !memberSet.has(arms[0]) && !memberSet.has(arms[1])) {
+        arms.forEach((armIndex, offset) => {
+          positions[armIndex] = { x: cursorX, y: 20 + offset * 120 };
+        });
+        cursorX += 230;
+        i += 1;
+        // Skip ahead past arms we just placed if they were next in sequence.
+        while (i < n && positions[i] != null) i += 1;
+      } else {
+        i += 1;
+      }
+    } else {
+      if (positions[i] == null) {
+        positions[i] = { x: cursorX, y: 60 };
+        cursorX += 230;
+      }
       i += 1;
+    }
+  }
+  for (let idx = 0; idx < n; idx++) {
+    if (positions[idx] == null) {
+      positions[idx] = { x: cursorX, y: 60 };
+      cursorX += 230;
     }
   }
 
@@ -230,6 +295,15 @@ function buildInitialFlow(steps: Array<Record<string, unknown>>) {
     groupEntry[first] = first === 0 ? "start" : `step-${first - 1}`;
   });
 
+  // Indices that are reached only via a condition Yes/No edge -- their
+  // incoming linear edge from index-1 must not be drawn.
+  const conditionTargets = new Set<number>();
+  steps.forEach((step, index) => {
+    if (String(step.step_type) !== "condition") return;
+    if (typeof step.on_true_next_step === "number") conditionTargets.add(step.on_true_next_step);
+    if (typeof step.on_false_next_step === "number") conditionTargets.add(step.on_false_next_step);
+  });
+
   for (let index = 0; index < n; index++) {
     const step = steps[index];
     const stepType = String(step.step_type || "approval");
@@ -259,7 +333,9 @@ function buildInitialFlow(steps: Array<Record<string, unknown>>) {
       });
     } else if (stepType === "condition") {
       // Incoming edge, then the two branch edges.
-      addEdge(index === 0 ? "start" : `step-${index - 1}`, id, {});
+      if (index === 0 || !conditionTargets.has(index)) {
+        addEdge(index === 0 ? "start" : `step-${index - 1}`, id, {});
+      }
       const yesTarget = resolveTarget(
         typeof step.on_true_next_step === "number" ? (step.on_true_next_step as number) : null,
         index + 1
@@ -279,17 +355,16 @@ function buildInitialFlow(steps: Array<Record<string, unknown>>) {
         labelStyle: { fill: "#dc2626", fontWeight: 700 },
       });
     } else {
-      // Plain main-line step. Its incoming edge is skipped when the previous
-      // step is a condition (that node's Yes/No edges route in instead) or a
-      // parallel member (the group's converge edges route in instead).
+      // Plain main-line step. Skip incoming when the previous step is a
+      // condition (Yes/No edges route in) or this index is a condition target
+      // / parallel member (those routes own the inbound edge).
       const prevIsCondition = index > 0 && String(steps[index - 1].step_type) === "condition";
       const prevIsGroupMember = memberSet.has(index - 1);
-      if (!prevIsCondition && !prevIsGroupMember) {
+      if (!prevIsCondition && !prevIsGroupMember && !conditionTargets.has(index)) {
         addEdge(index === 0 ? "start" : `step-${index - 1}`, id, {});
       }
-      if (index === n - 1) {
-        addEdge(id, "end", {});
-      }
+      const continueTo = continueAfterStep(steps, index);
+      addEdge(id, resolveTarget(continueTo, continueTo), {});
     }
   }
 
@@ -310,6 +385,7 @@ function mapStepsToValue(steps: Array<Record<string, unknown>>): WorkflowStepVal
     value: step.value,
     on_true_next_step: typeof step.on_true_next_step === "number" ? step.on_true_next_step : null,
     on_false_next_step: typeof step.on_false_next_step === "number" ? step.on_false_next_step : null,
+    next_step: typeof step.next_step === "number" ? step.next_step : null,
     approvers: Array.isArray(step.approvers) ? step.approvers.map((item) => String(item)) : [],
     role_code: typeof step.role_code === "string" && step.role_code ? step.role_code : undefined,
     required_approvals: typeof step.required_approvals === "number" ? step.required_approvals : 1,
@@ -333,6 +409,7 @@ function mapValueToSteps(values: WorkflowStepValue[]): Array<Record<string, unkn
     value: step.value,
     on_true_next_step: step.on_true_next_step,
     on_false_next_step: step.on_false_next_step,
+    next_step: step.next_step,
     approvers: step.approvers || [],
     role_code: step.role_code,
     required_approvals: step.required_approvals || 1,
@@ -418,6 +495,7 @@ export function WorkflowCanvas({ value, onChange, selectedNodeId, onSelectNode, 
         ...step,
         on_true_next_step: adjust(step.on_true_next_step),
         on_false_next_step: adjust(step.on_false_next_step),
+        next_step: adjust(step.next_step),
         // parallel_next_step is an index reference too (see
         // ParallelGroupFields in WorkflowNodeInspector.tsx) -- same
         // shift-down / null-out-if-removed treatment applies.

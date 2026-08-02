@@ -69,6 +69,55 @@ def _coerce_numeric(value: Any) -> Any:
     return value
 
 
+def _condition_sibling_arm(steps: list[dict[str, Any]], step_index: int) -> tuple[int, int] | None:
+    """If `step_index` is one arm of a Yes/No condition diamond, return
+    `(sibling_index, merge_index)`.
+
+    `merge_index` is the first step after both arms (`max(true, false) + 1`),
+    which is where execution should continue instead of falling linearly from
+    one arm into the other. Without this, a diamond like
+    `Condition → Yes(2) | No(3)` advances Yes → No via plain `+1` and wrongly
+    requires the unused branch. Explicit `next_step` on the arm still wins
+    (see `_continue_after_step`).
+    """
+    for step in steps:
+        if step.get("step_type") != "condition":
+            continue
+        true_t = step.get("on_true_next_step")
+        false_t = step.get("on_false_next_step")
+        if not isinstance(true_t, int) or not isinstance(false_t, int):
+            continue
+        if true_t == false_t:
+            continue
+        if step_index == true_t:
+            return false_t, max(true_t, false_t) + 1
+        if step_index == false_t:
+            return true_t, max(true_t, false_t) + 1
+    return None
+
+
+def _continue_after_step(steps: list[dict[str, Any]], step_index: int) -> int:
+    """Index to resume at after a non-branching step finishes.
+
+    Prefer an explicit `next_step` (designer "Continue to" / End). Otherwise
+    advance by one, but never fall from one condition arm into its sibling --
+    jump to the merge point after both arms instead.
+    """
+    if step_index < 0 or step_index >= len(steps):
+        return len(steps)
+    step = steps[step_index]
+    explicit = step.get("next_step")
+    if isinstance(explicit, int):
+        return explicit
+    candidate = step_index + 1
+    sibling_info = _condition_sibling_arm(steps, step_index)
+    if sibling_info is not None:
+        sibling, merge = sibling_info
+        if candidate == sibling:
+            return merge
+    return candidate
+
+
 def _evaluate_condition(step: dict[str, Any], context: dict[str, Any]) -> bool:
     operator_key = step.get("operator", "eq")
     operator = _OPERATORS.get(operator_key)
@@ -327,7 +376,7 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
                     entity_type=instance.entity_type,
                     entity_id=instance.entity_id,
                 )
-            step_index += 1
+            step_index = _continue_after_step(steps, step_index)
             continue
 
         if step_type == "auto":
@@ -343,7 +392,7 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
                 action="AUTO_APPROVED",
                 comments=step.get("name", "Auto-approval"),
             )
-            step_index += 1
+            step_index = _continue_after_step(steps, step_index)
             continue
 
         if step_type == "ai":
@@ -365,7 +414,7 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
                     ai_flags=decision.get("ai_flags"),
                     ai_explanation_ref=step.get("name"),
                 )
-                step_index += 1
+                step_index = _continue_after_step(steps, step_index)
                 continue
             # Not auto-approvable: fall through to an approval node for the
             # suggested role (or the role configured on the step).
@@ -393,7 +442,7 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
             return  # wait for human input
 
         # Unknown step type: skip it rather than silently looping forever.
-        step_index += 1
+        step_index = _continue_after_step(steps, step_index)
 
 
 async def _create_approval_tasks(
@@ -702,12 +751,18 @@ async def complete_task(
         required = step.get("required_approvals", 1)
         if approved_count >= required:
             # For a parallel-group member, re-enter _run_from_step AT this
-            # same member's index rather than +1 -- the parallel_group branch
-            # there re-derives the sibling member indices, sees tasks already
-            # exist (so it won't recreate them), and only advances past the
-            # whole group once _parallel_group_is_complete() is true for
-            # every member (this one now included).
-            resume_index = task.step_index if step.get("parallel_group") else task.step_index + 1
+            # same member's index rather than continuing -- the parallel_group
+            # branch there re-derives the sibling member indices, sees tasks
+            # already exist (so it won't recreate them), and only advances past
+            # the whole group once _parallel_group_is_complete() is true for
+            # every member (this one now included). Non-parallel approvals use
+            # `_continue_after_step` so a Yes-branch arm does not fall into
+            # its No sibling (and so an explicit `next_step` is honored).
+            resume_index = (
+                task.step_index
+                if step.get("parallel_group")
+                else _continue_after_step(definition.steps, task.step_index)
+            )
             await _run_from_step(db, instance, definition.steps, resume_index)
 
     if instance.entity_type == "requisition" and decision == "approve":

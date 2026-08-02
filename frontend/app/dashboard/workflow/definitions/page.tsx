@@ -43,6 +43,7 @@ export default function WorkflowDefinitionsPage() {
       value: step.value,
       on_true_next_step: typeof step.on_true_next_step === "number" ? step.on_true_next_step : null,
       on_false_next_step: typeof step.on_false_next_step === "number" ? step.on_false_next_step : null,
+      next_step: typeof step.next_step === "number" ? step.next_step : null,
       approvers: Array.isArray(step.approvers) ? step.approvers.map((item) => String(item)) : [],
       role_code: typeof step.role_code === "string" && step.role_code ? step.role_code : undefined,
       required_approvals: typeof step.required_approvals === "number" ? step.required_approvals : 1,

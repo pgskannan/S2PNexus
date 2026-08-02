@@ -562,6 +562,17 @@ export function WorkflowNodeInspector({ selectedNode, onUpdate, entityType, allS
               </div>
             </Section>
             <Section
+              title="Continue after approval"
+              description="Where to go once this approval is satisfied. For Yes/No condition arms, choose End (or a shared merge step) — never the other arm."
+            >
+              <StepTargetSelect
+                value={selectedNode.next_step}
+                allSteps={allSteps}
+                excludeIndex={selfIndex}
+                onChange={(index) => onUpdate({ next_step: index })}
+              />
+            </Section>
+            <Section
               title="Approval behavior"
               description="How many approvals are needed and what happens when a task is ignored."
             >

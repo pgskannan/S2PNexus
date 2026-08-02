@@ -49,7 +49,34 @@ function evaluateCondition(step: Record<string, unknown>, context: Record<string
  * context snapshot and parallel-group fan-out) and return the set of step
  * indices execution will actually visit. Approval steps outside this set are
  * on a branch that won't trigger for this document -- shown as "Not in path"
- * instead of a misleading "Waiting". */
+ * instead of a misleading "Waiting". Mirrors backend
+ * `_continue_after_step` so Yes/No condition arms don't chain into each other. */
+function conditionSiblingArm(
+  definitionSteps: Array<Record<string, unknown>>,
+  stepIndex: number
+): { sibling: number; merge: number } | null {
+  for (const step of definitionSteps) {
+    if ((typeof step.step_type === "string" ? step.step_type : "") !== "condition") continue;
+    const trueT = typeof step.on_true_next_step === "number" ? step.on_true_next_step : null;
+    const falseT = typeof step.on_false_next_step === "number" ? step.on_false_next_step : null;
+    if (trueT == null || falseT == null || trueT === falseT) continue;
+    if (stepIndex === trueT) return { sibling: falseT, merge: Math.max(trueT, falseT) + 1 };
+    if (stepIndex === falseT) return { sibling: trueT, merge: Math.max(trueT, falseT) + 1 };
+  }
+  return null;
+}
+
+function continueAfterStep(definitionSteps: Array<Record<string, unknown>>, stepIndex: number): number {
+  const n = definitionSteps.length;
+  if (stepIndex < 0 || stepIndex >= n) return n;
+  const step = definitionSteps[stepIndex];
+  if (typeof step.next_step === "number") return step.next_step as number;
+  const candidate = stepIndex + 1;
+  const siblingInfo = conditionSiblingArm(definitionSteps, stepIndex);
+  if (siblingInfo && candidate === siblingInfo.sibling) return siblingInfo.merge;
+  return candidate;
+}
+
 function computeReachableSteps(
   definitionSteps: Array<Record<string, unknown>>,
   context: Record<string, unknown>
@@ -66,7 +93,9 @@ function computeReachableSteps(
   });
 
   let index = 0;
-  while (index >= 0 && index < n) {
+  let guard = 0;
+  while (index >= 0 && index < n && guard < n + 2) {
+    guard += 1;
     reachable.add(index);
     const step = definitionSteps[index];
     const stepType = typeof step.step_type === "string" ? step.step_type : "";
@@ -88,7 +117,7 @@ function computeReachableSteps(
         : index + 1;
       index = target;
     } else {
-      index += 1;
+      index = continueAfterStep(definitionSteps, index);
     }
   }
   return reachable;
@@ -136,6 +165,12 @@ export function buildApprovalSteps(
       // the Ariba-style diagram is approval-focused.
       return;
     }
+    // Off-path arms (e.g. No Approval when estimated_value took the Yes
+    // branch) must not appear as Waiting sequential steps -- that was the
+    // "3 approvals" bug for a 2-approver PR path.
+    if (!reachable.has(index)) {
+      return;
+    }
     const stepName = typeof step.name === "string" ? step.name : "Approval";
 
     const tasks = tasksByStepIndex.get(index) ?? [];
@@ -145,21 +180,16 @@ export function buildApprovalSteps(
       // but with zero approvers configured (a stuck step), or the instance is
       // blocked on this step. Show one placeholder card so the step stays
       // visible in sequence. Role-based steps (empty approvers list, role_code
-      // set) are labelled by their role -- NOT "Unassigned" -- and steps on a
-      // branch that can't trigger for this document's context are greyed out
-      // as "Not in path" so only the real approval chain reads as active.
+      // set) are labelled by their role -- NOT "Unassigned".
       const approverCount = Array.isArray(step.approvers) ? step.approvers.length : 0;
       const roleCode = typeof step.role_code === "string" && step.role_code ? step.role_code : "";
       const isCurrent = index === instance.current_step_index;
-      const onPath = reachable.has(index);
       const approverName = approverCount > 0 ? "Pending assignment" : roleCode ? `${roleCode} (role)` : "Unassigned";
       const status =
         isCurrent && instance.status === "blocked"
           ? "BLOCKED"
           : isCurrent && instance.status === "in_progress"
           ? "PENDING"
-          : !onPath
-          ? "NOT_IN_PATH"
           : "WAITING";
       cards.push({
         step_order: index,

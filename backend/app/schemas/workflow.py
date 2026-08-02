@@ -23,10 +23,10 @@ class WorkflowStep(BaseModel):
 
     - condition: field, operator, value, on_true_next_step, on_false_next_step
     - approval: approvers (or role_code for rule-driven resolution),
-      required_approvals, escalate_after_hours, escalate_to
-    - auto: deterministic auto-approval
+      required_approvals, escalate_after_hours, escalate_to, next_step
+    - auto: deterministic auto-approval, next_step
     - ai: rules (deterministic + AI) may auto-approve or fall through to a role
-    - notification: recipients, message_template
+    - notification: recipients, message_template, next_step
 
     True parallel branches (as opposed to the multiple-approvers-on-one-step
     "N-of-M" pattern) are expressed by giving two or more steps the same
@@ -39,6 +39,11 @@ class WorkflowStep(BaseModel):
     is where execution continues once the group is fully resolved (falls
     through to the step after the highest-indexed member if unset, same
     fallthrough convention as on_true_next_step/on_false_next_step).
+
+    `next_step` on non-condition steps overrides the default "+1" continue
+    target (use `len(steps)` for End). When unset, the runtime still skips
+    falling from one Yes/No condition arm into its sibling -- see
+    crud/workflow.py::_continue_after_step.
     """
 
     name: str = Field(..., min_length=1, max_length=255)
@@ -61,6 +66,11 @@ class WorkflowStep(BaseModel):
     # designer canvas node and editable / AI-drafted in the node inspector.
     reason: Optional[str] = Field(default=None, max_length=2000)
     rules: dict[str, Any] = Field(default_factory=dict)
+
+    # Where to go after this step finishes (approval / notification / auto /
+    # ai). `len(steps)` means End / workflow complete. When unset, runtime
+    # uses +1 unless that would enter the sibling arm of a condition.
+    next_step: Optional[int] = None
 
     # notification
     recipients: list[UUID] = Field(default_factory=list)
