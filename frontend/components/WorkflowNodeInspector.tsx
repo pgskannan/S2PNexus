@@ -1,14 +1,106 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { WorkflowStepValue } from "./WorkflowCanvas";
 import UserPicker from "@/components/UserPicker";
-import { resolveApprovers } from "@/lib/api";
-import { APPROVER_ROLE_CODES, type ResolvedApprover } from "@/lib/types";
+import { listWorkflowFields, resolveApprovers } from "@/lib/api";
+import { APPROVER_ROLE_CODES, type ResolvedApprover, type WorkflowFieldSpec } from "@/lib/types";
 
 interface WorkflowNodeInspectorProps {
   selectedNode: WorkflowStepValue | null;
   onUpdate: (changes: Partial<WorkflowStepValue>) => void;
+  /** Entity type of the definition being edited (e.g. "requisition",
+   * "purchase_order") -- used to fetch the right set of condition-field
+   * suggestions from GET /workflow/fields. Omit to fall back to a plain
+   * text input (e.g. if the caller doesn't know the entity type yet). */
+  entityType?: string;
+}
+
+function ConditionFieldInput({
+  value,
+  entityType,
+  onChange,
+}: {
+  value: string;
+  entityType?: string;
+  onChange: (field: string) => void;
+}) {
+  const [options, setOptions] = useState<WorkflowFieldSpec[]>([]);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!entityType) {
+      setOptions([]);
+      return;
+    }
+    listWorkflowFields(entityType)
+      .then((res) => {
+        if (!cancelled) setOptions(res.fields);
+      })
+      .catch(() => {
+        if (!cancelled) setOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [entityType]);
+
+  const suggestions = useMemo(() => {
+    const query = value.trim().toLowerCase();
+    const matches = query
+      ? options.filter(
+          (option) => option.path.toLowerCase().includes(query) || option.label.toLowerCase().includes(query)
+        )
+      : options;
+    return matches.slice(0, 20);
+  }, [options, value]);
+
+  return (
+    <div className="relative">
+      <input
+        className="input-field"
+        value={value}
+        placeholder={entityType ? "Start typing to search fields..." : "e.g. estimated_value"}
+        onFocus={() => setOpen(true)}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={() => {
+          // Delay so a click on a suggestion registers before the list unmounts.
+          setTimeout(() => setOpen(false), 150);
+        }}
+      />
+      {open && entityType && suggestions.length > 0 && (
+        <ul className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+          {suggestions.map((option) => (
+            <li key={option.path}>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50"
+                onMouseDown={(event) => {
+                  // onMouseDown fires before the input's onBlur, so the click
+                  // registers instead of being swallowed by the blur timeout.
+                  event.preventDefault();
+                  onChange(option.path);
+                  setOpen(false);
+                }}
+              >
+                <span>
+                  <span className="font-mono text-slate-700">{option.path}</span>
+                  <span className="ml-2 text-slate-400">{option.label}</span>
+                </span>
+                <span className="badge bg-slate-100 text-slate-500">{option.type}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {open && entityType && suggestions.length === 0 && (
+        <div className="absolute z-10 mt-1 w-full rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-400 shadow-lg">
+          No matching fields for this document type -- you can still type a custom field name.
+        </div>
+      )}
+    </div>
+  );
 }
 
 function RoleResolutionPreview({ roleCode, amount }: { roleCode: string; amount: string }) {
@@ -68,7 +160,7 @@ function RoleResolutionPreview({ roleCode, amount }: { roleCode: string; amount:
   );
 }
 
-export function WorkflowNodeInspector({ selectedNode, onUpdate }: WorkflowNodeInspectorProps) {
+export function WorkflowNodeInspector({ selectedNode, onUpdate, entityType }: WorkflowNodeInspectorProps) {
   const [previewAmount, setPreviewAmount] = useState("");
   const [escalateRole, setEscalateRole] = useState("");
   const [escalateResolvedName, setEscalateResolvedName] = useState<string | null>(null);
@@ -137,10 +229,10 @@ export function WorkflowNodeInspector({ selectedNode, onUpdate }: WorkflowNodeIn
         <>
           <div>
             <label className="label">Field</label>
-            <input
-              className="input-field"
+            <ConditionFieldInput
               value={selectedNode.field || ""}
-              onChange={(event) => onUpdate({ field: event.target.value })}
+              entityType={entityType}
+              onChange={(field) => onUpdate({ field })}
             />
           </div>
           <div>

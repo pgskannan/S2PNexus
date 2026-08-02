@@ -656,6 +656,17 @@ export interface WorkflowInstanceListResponse {
   limit: number;
 }
 
+export interface WorkflowFieldSpec {
+  path: string;
+  label: string;
+  type: string;
+}
+
+export interface WorkflowFieldListResponse {
+  entity_type: string;
+  fields: WorkflowFieldSpec[];
+}
+
 // Mirrors APPROVER_ROLE_CODES in backend/app/models/approval.py -- keep in sync.
 export const APPROVER_ROLE_CODES = [
   "MANAGER",

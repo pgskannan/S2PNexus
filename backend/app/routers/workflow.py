@@ -33,16 +33,30 @@ from app.schemas.workflow import (
     WorkflowDefinitionCreate,
     WorkflowDefinitionListResponse,
     WorkflowDefinitionResponse,
+    WorkflowFieldListResponse,
     WorkflowInstanceListResponse,
     WorkflowInstanceResponse,
     WorkflowInstanceStart,
     WorkflowTaskCompleteRequest,
     WorkflowTaskResponse,
 )
+from app.services.workflow_field_registry import get_fields_for_entity_type
 from app.utils.dependencies import get_current_active_user
 from app.utils.dependencies import get_current_active_superuser
 
 router = APIRouter(prefix="", tags=["Workflow"])
+
+
+@router.get(
+    "/fields",
+    response_model=WorkflowFieldListResponse,
+    summary="List condition-step fields available for an entity type (designer Field autocomplete)",
+)
+async def list_workflow_fields(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    entity_type: str = Query(...),
+) -> WorkflowFieldListResponse:
+    return WorkflowFieldListResponse(entity_type=entity_type, fields=get_fields_for_entity_type(entity_type))
 
 
 @router.get("/definitions", response_model=WorkflowDefinitionListResponse, summary="List workflow definitions")

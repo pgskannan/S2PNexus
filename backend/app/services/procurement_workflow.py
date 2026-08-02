@@ -417,12 +417,27 @@ async def start_requisition_approval_workflow(
     # (mirrors the pattern in services/supplier_workflow.py).
     estimated_value = getattr(requisition, "estimated_value", None)
     requested_by = getattr(requisition, "requested_by", None)
+    supplier_id = getattr(requisition, "supplier_id", None)
+    need_by_date = getattr(requisition, "need_by_date", None)
+    header_tax = getattr(requisition, "header_tax", None)
+    shipping_cost = getattr(requisition, "shipping_cost", None)
     context = {
         "estimated_value": str(estimated_value) if estimated_value is not None else "0",
         "priority": getattr(requisition, "priority", "medium") or "medium",
         "category": getattr(requisition, "category", None),
         "requested_by": str(requested_by) if requested_by is not None else None,
         "requisition_id": str(getattr(requisition, "id", "")),
+        # Additive fields for the designer's Field autocomplete (see
+        # services/workflow_field_registry.py) -- purely new keys, the ones
+        # above are unchanged so existing saved condition steps keep working.
+        "account_code": getattr(requisition, "account_code", None),
+        "commodity": getattr(requisition, "commodity", None),
+        "supplier_id": str(supplier_id) if supplier_id is not None else None,
+        "currency": getattr(requisition, "currency", None),
+        "need_by_date": need_by_date.isoformat() if need_by_date is not None else None,
+        "is_emergency": bool(getattr(requisition, "is_emergency", False)),
+        "header_tax": str(header_tax) if header_tax is not None else None,
+        "shipping_cost": str(shipping_cost) if shipping_cost is not None else None,
     }
 
     filtered_steps = _filter_requisition_approvers(getattr(definition, "steps", None), getattr(requisition, "requested_by", None))
@@ -480,11 +495,27 @@ async def start_purchase_order_approval_workflow(
 
     total_amount = getattr(purchase_order, "total_amount", None) or getattr(purchase_order, "grand_total", None)
     supplier_id = getattr(purchase_order, "supplier_id", None)
+    subtotal = getattr(purchase_order, "subtotal", None)
+    tax_total = getattr(purchase_order, "tax_total", None)
+    shipping_amount = getattr(purchase_order, "shipping_amount", None)
+    grand_total = getattr(purchase_order, "grand_total", None)
     context = {
         "total_amount": str(total_amount) if total_amount is not None else "0",
         "supplier_id": str(supplier_id) if supplier_id is not None else None,
         "purchase_order_id": str(getattr(purchase_order, "id", "")),
         "lifecycle_status": getattr(purchase_order, "lifecycle_status", None),
+        # Additive fields for the designer's Field autocomplete (see
+        # services/workflow_field_registry.py) -- purely new keys, the ones
+        # above are unchanged so existing saved condition steps keep working.
+        "order_number": getattr(purchase_order, "order_number", None),
+        "status": getattr(purchase_order, "status", None),
+        "subtotal": str(subtotal) if subtotal is not None else None,
+        "tax_total": str(tax_total) if tax_total is not None else None,
+        "shipping_amount": str(shipping_amount) if shipping_amount is not None else None,
+        "grand_total": str(grand_total) if grand_total is not None else None,
+        "currency": getattr(purchase_order, "currency", None),
+        "incoterms": getattr(purchase_order, "incoterms", None),
+        "payment_terms": getattr(purchase_order, "payment_terms", None),
     }
 
     return await start_workflow_instance(

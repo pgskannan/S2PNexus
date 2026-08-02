@@ -36,6 +36,7 @@ import type {
   User,
   WorkflowDefinition,
   WorkflowDefinitionListResponse,
+  WorkflowFieldListResponse,
   WorkflowInstance,
   WorkflowInstanceListResponse,
   WorkflowTask,
@@ -801,6 +802,13 @@ export async function getWorkflowDefinition(id: string): Promise<WorkflowDefinit
   return data;
 }
 
+export async function listWorkflowFields(entityType: string): Promise<WorkflowFieldListResponse> {
+  const { data } = await api.get<WorkflowFieldListResponse>("/workflow/fields", {
+    params: { entity_type: entityType },
+  });
+  return data;
+}
+
 export async function updateWorkflowDefinition(
   id: string,
   payload: {
@@ -823,6 +831,8 @@ export async function listWorkflowInstances(params?: {
   entity_type?: string;
   entity_id?: string;
   status?: string;
+  skip?: number;
+  limit?: number;
 }): Promise<WorkflowInstanceListResponse> {
   const { data } = await api.get<WorkflowInstanceListResponse>(
     "/workflow/instances",

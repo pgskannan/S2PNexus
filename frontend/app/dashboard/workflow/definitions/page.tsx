@@ -319,6 +319,7 @@ export default function WorkflowDefinitionsPage() {
               <WorkflowNodeInspector
                 selectedNode={selectedNode as WorkflowStepValue | null}
                 onUpdate={updateSelectedNode}
+                entityType={form.entity_type}
               />
             </div>
           </div>

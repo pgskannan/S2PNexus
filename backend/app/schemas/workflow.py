@@ -135,6 +135,17 @@ class WorkflowTaskCompleteRequest(BaseModel):
     comments: Optional[str] = None
 
 
+class WorkflowFieldSpec(BaseModel):
+    path: str
+    label: str
+    type: str
+
+
+class WorkflowFieldListResponse(BaseModel):
+    entity_type: str
+    fields: list[WorkflowFieldSpec]
+
+
 class EscalationSweepResponse(BaseModel):
     escalated_task_ids: list[UUID]
     count: int
