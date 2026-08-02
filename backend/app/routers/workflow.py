@@ -25,7 +25,7 @@ from app.crud.workflow import (
     start_workflow_instance,
 )
 from app.database.session import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.workflow import (
     EscalationSweepResponse,
     NotificationListResponse,
@@ -42,9 +42,22 @@ from app.schemas.workflow import (
 )
 from app.services.workflow_field_registry import get_fields_for_entity_type
 from app.utils.dependencies import get_current_active_user
-from app.utils.dependencies import get_current_active_superuser
 
 router = APIRouter(prefix="", tags=["Workflow"])
+
+
+def _require_admin(current_user: User) -> None:
+    """Same admin-gate pattern as routers/approval.py, budget.py, users.py.
+
+    Accepts role=ADMINISTRATOR OR is_superuser. The delete-definition endpoint
+    was previously gated on is_superuser alone, which 403'd admins whose
+    account has role=administrator but is_superuser=False.
+    """
+    if current_user.role != UserRole.ADMINISTRATOR and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can manage workflow definitions",
+        )
 
 
 @router.get(
@@ -133,9 +146,10 @@ async def update_workflow_definition_endpoint(
 @router.delete("/definitions/{definition_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_workflow_definition_endpoint(
     definition_id: UUID,
-    current_user: Annotated[User, Depends(get_current_active_superuser)],
+    current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> None:
+    _require_admin(current_user)
     try:
         deleted = await delete_workflow_definition(db, definition_id)
     except ValueError as exc:

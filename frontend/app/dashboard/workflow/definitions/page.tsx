@@ -230,6 +230,7 @@ export default function WorkflowDefinitionsPage() {
         </Link>
       </div>
 
+      <form onSubmit={handleSubmit} className="space-y-6">
       <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="card overflow-x-auto p-0">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -270,7 +271,7 @@ export default function WorkflowDefinitionsPage() {
           </table>
         </div>
 
-        <form onSubmit={handleSubmit} className="card space-y-4">
+        <div className="card space-y-4">
           <h2 className="text-lg font-semibold">{editingId ? "Edit definition (publishes a new version)" : "Create definition"}</h2>
           {editingId && (
             <p className="text-sm text-slate-500">
@@ -335,23 +336,40 @@ export default function WorkflowDefinitionsPage() {
               onChange={(e) => setForm({ ...form, steps: JSON.parse(e.target.value || "[]") })}
             />
           )}
-          <WorkflowCanvas
-            value={form.steps}
-            onChange={(steps) => setForm((current) => ({ ...current, steps }))}
-            selectedNodeId={selectedNodeId}
-            onSelectNode={setSelectedNodeId}
-          />
-          <div className="rounded-lg border border-slate-200 p-4">
-            <h3 className="text-sm font-semibold">Node inspector</h3>
-            <div className="mt-3">
-              <WorkflowNodeInspector
-                selectedNode={selectedNode as WorkflowStepValue | null}
-                onUpdate={updateSelectedNode}
-                entityType={form.entity_type}
-                allSteps={form.steps}
-              />
-            </div>
+        </div>
+      </div>
+
+      {/* Canvas + inspector get the full page width below the table/fields
+          row -- cramming them into the narrow 0.9fr form column made the
+          condition true/false selects and the parallel-group field easy to
+          miss (2026-08-02 feedback: they read as "missing" when they were
+          actually just squeezed off-screen). */}
+      <div className="card space-y-4">
+        <div>
+          <h3 className="text-base font-semibold text-slate-900">Workflow canvas</h3>
+          <p className="text-sm text-slate-500">
+            Click a step to edit it below -- including a condition's true/false targets and a step's parallel group.
+          </p>
+        </div>
+        <WorkflowCanvas
+          value={form.steps}
+          onChange={(steps) => setForm((current) => ({ ...current, steps }))}
+          selectedNodeId={selectedNodeId}
+          onSelectNode={setSelectedNodeId}
+        />
+        <div className="rounded-lg border border-slate-200 p-4">
+          <h3 className="text-sm font-semibold">Node inspector</h3>
+          <div className="mt-3">
+            <WorkflowNodeInspector
+              selectedNode={selectedNode as WorkflowStepValue | null}
+              onUpdate={updateSelectedNode}
+              entityType={form.entity_type}
+              allSteps={form.steps}
+            />
           </div>
+        </div>
+      </div>
+
           {error && <p className="whitespace-pre-line text-sm text-red-600">{error}</p>}
           <div className="flex gap-3">
             <button type="submit" disabled={saving} className="btn-primary">
@@ -363,8 +381,7 @@ export default function WorkflowDefinitionsPage() {
               </button>
             )}
           </div>
-        </form>
-      </div>
+      </form>
     </div>
   );
 }

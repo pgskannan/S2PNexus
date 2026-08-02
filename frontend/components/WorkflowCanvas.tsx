@@ -183,6 +183,37 @@ export function WorkflowCanvas({ value, onChange, selectedNodeId, onSelectNode, 
     onChange(mapValueToSteps(nextSteps));
   }, [onChange, steps]);
 
+  // One-click starting point for "run these at the same time" -- adds two
+  // linked approval steps sharing a fresh parallel_group instead of making
+  // the admin add two separate steps and hand-type a matching group name
+  // into each one's inspector (the entry point that was hard to find,
+  // 2026-08-02 feedback). Select each new node afterward to name it, assign
+  // approvers, and add a third+ branch the same way (Add approval, then set
+  // the same group name in its inspector).
+  const addParallelBranches = useCallback(() => {
+    const groupKey = `parallel_${Date.now().toString(36)}`;
+    const base = steps.length;
+    const nextSteps = [
+      ...steps,
+      {
+        id: `step-${base}`,
+        name: "Branch A",
+        step_type: "approval" as const,
+        parallel_group: groupKey,
+        parallel_next_step: null,
+      },
+      {
+        id: `step-${base + 1}`,
+        name: "Branch B",
+        step_type: "approval" as const,
+        parallel_group: groupKey,
+        parallel_next_step: null,
+      },
+    ];
+    onChange(mapValueToSteps(nextSteps));
+    onSelectNode?.(`step-${base}`);
+  }, [onChange, onSelectNode, steps]);
+
   const removeStep = useCallback((index: number) => {
     if (index < 0 || index >= steps.length) return;
     // Condition steps reference other steps by array index
@@ -254,6 +285,14 @@ export function WorkflowCanvas({ value, onChange, selectedNodeId, onSelectNode, 
             Add {type === "ai" ? "AI rule" : type}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={addParallelBranches}
+          className="btn-secondary border-purple-200 text-purple-700 hover:bg-purple-50"
+          title="Add two approval steps that run at the same time"
+        >
+          ‖ Add parallel branches
+        </button>
         <button
           type="button"
           className="btn-secondary ml-auto border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
