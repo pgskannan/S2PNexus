@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import ReactFlow, {
   Background,
   Controls,
@@ -8,7 +8,6 @@ import ReactFlow, {
   type Edge,
   type Node,
   useEdgesState,
-  useNodesState,
   type OnConnect,
   type Connection,
 } from "reactflow";
@@ -152,15 +151,13 @@ function mapValueToSteps(values: WorkflowStepValue[]): Array<Record<string, unkn
 }
 
 export function WorkflowCanvas({ value, onChange, selectedNodeId, onSelectNode, highlightedNodeId }: WorkflowCanvasProps) {
-  const initialSteps = useMemo(() => mapStepsToValue(value as Array<Record<string, unknown>>), [value]);
-  const [steps, setSteps] = useState<WorkflowStepValue[]>(initialSteps);
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-
-  const updateFlow = useCallback((nextSteps: WorkflowStepValue[]) => {
-    setSteps(nextSteps);
-    onChange(mapValueToSteps(nextSteps));
-  }, [onChange]);
+  // Derived directly from the `value` prop on every render rather than mirrored
+  // into local state -- steps can change from three different places (this
+  // component's own "Add X" buttons, the Node inspector editing a field, or
+  // switching which definition is being edited), and a local copy that only
+  // seeds from props once on mount would go stale for the other two.
+  const steps = useMemo(() => mapStepsToValue(value as Array<Record<string, unknown>>), [value]);
+  const [edges, setEdges] = useEdgesState([]);
 
   const addStep = useCallback((stepType: WorkflowStepValue["step_type"]) => {
     const nextSteps = [...steps, {
@@ -168,15 +165,35 @@ export function WorkflowCanvas({ value, onChange, selectedNodeId, onSelectNode, 
       name: `${stepType[0].toUpperCase()}${stepType.slice(1)} ${steps.length + 1}`,
       step_type: stepType === "end" ? "approval" : stepType,
     }];
-    setSteps(nextSteps);
     onChange(mapValueToSteps(nextSteps));
   }, [onChange, steps]);
 
-  const updateStep = useCallback((id: string, changes: Partial<WorkflowStepValue>) => {
-    const nextSteps = steps.map((step) => (step.id === id ? { ...step, ...changes } : step));
-    setSteps(nextSteps);
+  const removeStep = useCallback((index: number) => {
+    if (index < 0 || index >= steps.length) return;
+    // Condition steps reference other steps by array index
+    // (on_true_next_step / on_false_next_step -- see crud/workflow.py's
+    // _run_from_step), so removing a step must shift every reference above
+    // it down by one, and null out any reference that pointed at the step
+    // being removed (the branch is now undefined; the engine falls through
+    // to step_index + 1 by default, and the designer flags it via
+    // validateSteps' "need both true and false branches" check so it's not
+    // silently wrong -- it's visibly incomplete).
+    const adjust = (v?: number | null) => {
+      if (v == null) return v ?? null;
+      if (v === index) return null;
+      if (v > index) return v - 1;
+      return v;
+    };
+    const nextSteps = steps
+      .filter((_, i) => i !== index)
+      .map((step) => ({
+        ...step,
+        on_true_next_step: adjust(step.on_true_next_step),
+        on_false_next_step: adjust(step.on_false_next_step),
+      }));
     onChange(mapValueToSteps(nextSteps));
-  }, [onChange, steps]);
+    onSelectNode?.(null);
+  }, [onChange, onSelectNode, steps]);
 
   const handleConnect: OnConnect = useCallback((params: Connection) => {
     const edge: Edge = {
@@ -207,21 +224,34 @@ export function WorkflowCanvas({ value, onChange, selectedNodeId, onSelectNode, 
     return baseEdges;
   }, [steps]);
 
+  const selectedStepIndex = selectedNodeId?.startsWith("step-") ? Number(selectedNodeId.slice("step-".length)) : null;
+  const canDeleteSelected = selectedStepIndex !== null && !Number.isNaN(selectedStepIndex) && selectedStepIndex < steps.length;
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {(["condition", "approval", "notification", "auto", "ai"] as const).map((type) => (
           <button key={type} type="button" onClick={() => addStep(type)} className="btn-secondary">
             Add {type === "ai" ? "AI rule" : type}
           </button>
         ))}
+        <button
+          type="button"
+          className="btn-secondary ml-auto border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!canDeleteSelected}
+          onClick={() => {
+            if (selectedStepIndex === null) return;
+            if (!confirm("Remove this step? Any condition branches pointing at it will need to be reconnected.")) return;
+            removeStep(selectedStepIndex);
+          }}
+        >
+          Delete selected step
+        </button>
       </div>
       <div className="h-[420px] rounded-lg border border-slate-200 bg-white">
         <ReactFlow
           nodes={flowNodes}
           edges={flowEdges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
           onConnect={handleConnect}
           onNodeClick={(event, node) => onSelectNode?.(node.id)}
           fitView
