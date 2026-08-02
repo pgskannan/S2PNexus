@@ -10,6 +10,7 @@ export default function LoginPage() {
   const router = useRouter();
   const setSession = useAuthStore((s) => s.setSession);
   const setUser = useAuthStore((s) => s.setUser);
+  const setActAs = useAuthStore((s) => s.setActAs);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -25,6 +26,7 @@ export default function LoginPage() {
       setSession(token.access_token, token.refresh_token);
       const profile = await getMe(token.access_token);
       setUser(profile);
+      setActAs(profile.act_as ?? null);
       router.replace("/dashboard");
     } catch (err) {
       setError(extractErrorMessage(err));

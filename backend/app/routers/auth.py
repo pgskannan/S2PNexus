@@ -7,8 +7,11 @@ Handles user authentication, registration, and token management.
 from datetime import timedelta
 from typing import Annotated
 
+from typing import Optional
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,20 +22,25 @@ from app.core.security import (
     verify_password,
     get_password_hash,
     decode_token,
+    get_act_as_claims,
 )
 from app.crud.user import get_user_by_email, get_user_by_id, create_user
 from app.database.session import get_db
 from app.models.user import User
+from app.schemas.act_as import ActAsStatusResponse, ActAsUserSummary
 from app.schemas.auth import (
     Token,
     TokenRefresh,
     UserRegister,
     UserLogin,
     UserResponse,
+    MeResponse,
     MessageResponse,
 )
 from app.schemas.user import UserCreate, UserUpdate
 from app.utils.dependencies import get_current_user, get_current_active_user
+
+_bearer = HTTPBearer(auto_error=False)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 settings = get_settings()
@@ -212,23 +220,39 @@ async def logout() -> MessageResponse:
 
 @router.get(
     "/me",
-    response_model=UserResponse,
+    response_model=MeResponse,
     summary="Get current user",
-    description="Get authenticated user profile",
+    description="Get authenticated user profile, plus act-as (impersonation) status",
 )
 async def get_current_user_profile(
     current_user: Annotated[User, Depends(get_current_active_user)],
-) -> UserResponse:
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+    db: AsyncSession = Depends(get_db),
+) -> MeResponse:
     """
     Get current authenticated user profile.
 
-    Args:
-        current_user: Current authenticated user
-
-    Returns:
-        UserResponse: User profile information
+    If the request's token is an Act as User impersonation token,
+    `current_user` already resolves to the impersonated TARGET user (its
+    `sub` claim) -- everything downstream of get_current_active_user works
+    unchanged. `act_as` on the response additionally surfaces who the real
+    admin is, so the frontend can render/restore the "Acting as" banner on a
+    page refresh without a separate call.
     """
-    return UserResponse.model_validate(current_user)
+    act_as = ActAsStatusResponse(is_impersonating=False)
+    if credentials:
+        claims = get_act_as_claims(credentials.credentials)
+        if claims:
+            admin = await get_user_by_id(db, UUID(claims.admin_user_id))
+            if admin is not None:
+                act_as = ActAsStatusResponse(
+                    is_impersonating=True,
+                    session_id=claims.session_id,
+                    admin_user=ActAsUserSummary(
+                        id=admin.id, full_name=admin.full_name, email=admin.email, role=admin.role.value
+                    ),
+                )
+    return MeResponse(**UserResponse.model_validate(current_user).model_dump(), act_as=act_as)
 
 
 @router.patch(

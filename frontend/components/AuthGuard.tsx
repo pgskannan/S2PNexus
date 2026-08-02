@@ -11,7 +11,7 @@ export default function AuthGuard({
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const { accessToken, user, hasHydrated, setUser, logout } = useAuthStore();
+  const { accessToken, user, hasHydrated, setUser, setActAs, logout } = useAuthStore();
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
@@ -30,13 +30,14 @@ export default function AuthGuard({
     getMe(accessToken)
       .then((profile) => {
         setUser(profile);
+        setActAs(profile.act_as ?? null);
         setChecked(true);
       })
       .catch(() => {
         logout();
         router.replace("/login");
       });
-  }, [hasHydrated, accessToken, user, router, setUser, logout]);
+  }, [hasHydrated, accessToken, user, router, setUser, setActAs, logout]);
 
   if (!hasHydrated || !checked) {
     return (

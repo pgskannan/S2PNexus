@@ -49,6 +49,7 @@ from app.models.gl_account import GLAccount  # noqa: F401
 from app.models.address import Address  # noqa: F401
 from app.models.accounting_split import LineItemAccountingSplit, Budget  # noqa: F401
 from app.models.approval import ApproverSeed, ApprovalEvent, SlaDefinition, SlaMetric  # noqa: F401
+from app.models.act_as import ActAsSession  # noqa: F401
 from app.metadata_engine.models import (
     MetadataAuditEvent,
     MetadataField,
@@ -98,4 +99,5 @@ __all__ = [
     "PurchaseOrderLineItem",
     "LineItemAccountingSplit",
     "Budget",
+    "ActAsSession",
 ]

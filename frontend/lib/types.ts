@@ -8,6 +8,43 @@ export type UserRole =
   | "ap_clerk"
   | "contract_manager";
 
+export interface ActAsUserSummary {
+  id: string;
+  full_name: string;
+  email: string;
+  role: string;
+}
+
+export interface ActAsStatusResponse {
+  is_impersonating: boolean;
+  session_id?: string | null;
+  admin_user?: ActAsUserSummary | null;
+}
+
+export interface ActAsStartResponse {
+  session_id: string;
+  access_token: string;
+  token_type: string;
+  expires_at: string;
+  target_user: ActAsUserSummary;
+  admin_user: ActAsUserSummary;
+}
+
+export interface ActAsSessionResponse {
+  id: string;
+  admin_user_id: string;
+  target_user_id: string;
+  started_at: string;
+  expires_at: string;
+  ended_at?: string | null;
+  ended_reason?: string | null;
+}
+
+export interface ActAsSessionListResponse {
+  items: ActAsSessionResponse[];
+  total: number;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -16,6 +53,9 @@ export interface User {
   is_active: boolean;
   is_superuser: boolean;
   tenant_id?: string;
+  // Only populated by GET /auth/me -- see ActAsStatusResponse. Absent (not
+  // just false) on responses from other endpoints that embed a User.
+  act_as?: ActAsStatusResponse;
 }
 
 export interface UserUpdate {

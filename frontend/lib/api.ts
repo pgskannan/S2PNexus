@@ -2,6 +2,9 @@ import axios, { AxiosError } from "axios";
 import { useAuthStore } from "@/lib/auth-store";
 import type {
   AccountingSplit,
+  ActAsSessionListResponse,
+  ActAsSessionResponse,
+  ActAsStartResponse,
   AddressResult,
   AgentQueryResponse,
   AgentActivityLogEntry,
@@ -73,9 +76,21 @@ api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     if (error.response?.status === 401) {
-      useAuthStore.getState().logout();
-      if (typeof window !== "undefined") {
-        window.location.href = "/login";
+      const store = useAuthStore.getState();
+      if (store.originalSession) {
+        // The impersonation token 401'd (expired after 30 min, or was
+        // ended server-side) -- fall back to the admin's own stashed
+        // session instead of a full logout, so a lapsed "Act as" doesn't
+        // force the admin to re-authenticate.
+        store.endActAs();
+        if (typeof window !== "undefined") {
+          window.location.href = "/dashboard";
+        }
+      } else {
+        store.logout();
+        if (typeof window !== "undefined") {
+          window.location.href = "/login";
+        }
       }
     }
     return Promise.reject(error);
@@ -252,7 +267,7 @@ export interface UserDirectoryEntry {
 // resolving a requested_by/assignee_id UUID to a display name (requisition
 // lists, the Ariba-style approval flow diagram, etc). Deliberately returns
 // only id/full_name/email, nothing sensitive.
-export async function listUserDirectory(params?: { limit?: number }): Promise<{ items: UserDirectoryEntry[] }> {
+export async function listUserDirectory(params?: { limit?: number; search?: string }): Promise<{ items: UserDirectoryEntry[] }> {
   const { data } = await api.get<{ items: UserDirectoryEntry[] }>("/users/directory", { params });
   return data;
 }
@@ -280,6 +295,31 @@ export async function updateUser(id: string, payload: UserUpdate): Promise<User>
 
 export async function deleteUser(id: string): Promise<void> {
   await api.delete(`/users/${id}`);
+}
+
+// ---- Admin / Act as User (impersonation) ----
+
+export async function startActAsSession(targetUserId: string): Promise<ActAsStartResponse> {
+  const { data } = await api.post<ActAsStartResponse>("/admin/act-as/sessions", {
+    target_user_id: targetUserId,
+  });
+  return data;
+}
+
+export async function endActAsSessionRequest(sessionId: string): Promise<ActAsSessionResponse> {
+  const { data } = await api.post<ActAsSessionResponse>(`/admin/act-as/sessions/${sessionId}/end`);
+  return data;
+}
+
+export async function listActAsSessions(params?: {
+  admin_user_id?: string;
+  target_user_id?: string;
+  active_only?: boolean;
+  skip?: number;
+  limit?: number;
+}): Promise<ActAsSessionListResponse> {
+  const { data } = await api.get<ActAsSessionListResponse>("/admin/act-as/sessions", { params });
+  return data;
 }
 
 // ---- Admin / Budgets ----

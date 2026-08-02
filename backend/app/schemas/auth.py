@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.models.user import UserRole
+from app.schemas.act_as import ActAsStatusResponse
 
 
 class UserRegister(BaseModel):
@@ -63,6 +64,16 @@ class UserResponse(BaseModel):
     is_superuser: bool
     created_at: datetime
     updated_at: datetime
+
+
+class MeResponse(UserResponse):
+    """GET /auth/me response: the resolved user (the impersonated target
+    user, if currently acting as someone -- get_current_active_user already
+    resolves off the token's `sub`, which is the target's id) plus act-as
+    status, so a page refresh can restore the "Acting as" banner without a
+    separate round trip."""
+
+    act_as: ActAsStatusResponse
 
 
 class MessageResponse(BaseModel):

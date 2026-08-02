@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { listUsers } from "@/lib/api";
+import { extractErrorMessage, listUserDirectory } from "@/lib/api";
 
 export default function UserPicker({
   value,
@@ -18,6 +18,7 @@ export default function UserPicker({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -39,12 +40,18 @@ export default function UserPicker({
     }
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
+      setError(null);
       try {
-        const res = await listUsers({ search: query, limit: 25 });
+        // GET /users/directory, not GET /users -- the latter is superuser-only
+        // (get_current_active_superuser) and would 403 for any admin whose
+        // account has role=administrator but is_superuser=False, silently
+        // showing "No matches" here with no indication anything was wrong.
+        const res = await listUserDirectory({ search: query, limit: 25 });
         setResults(res.items);
         setOpen(true);
-      } catch {
+      } catch (err) {
         setResults([]);
+        setError(extractErrorMessage(err));
       } finally {
         setLoading(false);
       }
@@ -83,8 +90,9 @@ export default function UserPicker({
       {open && (
         <div className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
           {loading && <div className="px-3 py-2 text-sm text-slate-400">Searching...</div>}
-          {!loading && results.length === 0 && <div className="px-3 py-2 text-sm text-slate-400">No matches</div>}
-          {!loading && results.map((u) => (
+          {!loading && error && <div className="px-3 py-2 text-sm text-red-600">{error}</div>}
+          {!loading && !error && results.length === 0 && <div className="px-3 py-2 text-sm text-slate-400">No matches</div>}
+          {!loading && !error && results.map((u) => (
             <button key={u.id} type="button" onClick={() => pick(u)} className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-50">
               <div className="font-medium">{u.full_name}</div>
               <div className="text-xs text-slate-500">{u.email}</div>

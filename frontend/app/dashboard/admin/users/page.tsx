@@ -1,8 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/lib/auth-store";
-import { deleteUser, extractErrorMessage, listUserDirectory, listUsers, updateUser } from "@/lib/api";
+import {
+  deleteUser,
+  extractErrorMessage,
+  getMe,
+  listUserDirectory,
+  listUsers,
+  startActAsSession,
+  updateUser,
+} from "@/lib/api";
 import type { User, UserRole, UserUpdate } from "@/lib/types";
 
 const USER_ROLE_OPTIONS: UserRole[] = [
@@ -28,8 +37,18 @@ const ROLE_LABELS: Record<UserRole, string> = {
 };
 
 export default function UsersAdminPage() {
+  const router = useRouter();
   const user = useAuthStore((state) => state.user);
+  const originalSession = useAuthStore((state) => state.originalSession);
+  const startActAs = useAuthStore((state) => state.startActAs);
+  const setUser = useAuthStore((state) => state.setUser);
+  const setActAs = useAuthStore((state) => state.setActAs);
   const isAdmin = user?.role === "administrator";
+  // Already impersonating someone -- the entry point is only for the admin's
+  // own (original) session, so it's hidden rather than allowing act-as
+  // chaining. Exiting the current session (via the banner) brings it back.
+  const isImpersonating = Boolean(originalSession);
+  const [actingAsUserId, setActingAsUserId] = useState<string | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,6 +137,29 @@ export default function UsersAdminPage() {
     }
   }
 
+  async function handleActAs(userItem: User) {
+    if (!window.confirm(`Act as ${userItem.full_name} (${userItem.email})? You'll see the app exactly as they do.`)) {
+      return;
+    }
+    setActingAsUserId(userItem.id);
+    setError(null);
+    try {
+      const session = await startActAsSession(userItem.id);
+      startActAs(session);
+      // startActAs() clears `user` so AuthGuard would normally re-fetch it,
+      // but fetch it here too so the redirect below lands with the banner
+      // already showing the target's name instead of a flash of "...".
+      const profile = await getMe(session.access_token);
+      setUser(profile);
+      setActAs(profile.act_as ?? null);
+      router.replace("/dashboard");
+    } catch (err) {
+      setError(extractErrorMessage(err));
+    } finally {
+      setActingAsUserId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -186,6 +228,16 @@ export default function UsersAdminPage() {
                           <button className="btn-secondary" onClick={() => void handleDelete(item)}>
                             Delete
                           </button>
+                          {!isImpersonating && item.role !== "administrator" && !item.is_superuser && item.id !== user?.id && (
+                            <button
+                              className="btn-secondary"
+                              disabled={actingAsUserId === item.id}
+                              onClick={() => void handleActAs(item)}
+                              title="View the app as this user"
+                            >
+                              {actingAsUserId === item.id ? "Starting..." : "Act as"}
+                            </button>
+                          )}
                         </div>
                       </td>
                     )}

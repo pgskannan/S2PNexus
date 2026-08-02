@@ -65,6 +65,61 @@ def create_access_token(
     return encoded_jwt
 
 
+def create_act_as_token(
+    *,
+    target_user_id: UUID | str,
+    admin_user_id: UUID | str,
+    session_id: UUID | str,
+    expires_delta: timedelta,
+) -> str:
+    """Create a short-lived impersonation access token.
+
+    `sub` is the TARGET user's id -- get_current_user/get_current_active_user
+    resolve off `sub` with no other changes needed, so every existing
+    authorization/data-visibility check in the app transparently applies as
+    the impersonated user. `act_as_admin_id` / `act_as_session_id` are extra
+    claims only read by app.core.security.get_act_as_claims (used for the
+    "acting as" banner and the self-service session-end endpoint) -- they
+    don't affect standard token decoding/validation. `type` stays "access" on
+    purpose so this token is accepted anywhere a normal access token is.
+    """
+    now = datetime.now(timezone.utc)
+    expire = now + expires_delta
+    to_encode = {
+        "sub": str(target_user_id),
+        "exp": expire,
+        "iat": now,
+        "type": "access",
+        "act_as_admin_id": str(admin_user_id),
+        "act_as_session_id": str(session_id),
+    }
+    return jose_jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+@dataclass
+class ActAsClaims:
+    admin_user_id: str
+    session_id: str
+
+
+def get_act_as_claims(token: str) -> Optional[ActAsClaims]:
+    """Returns the impersonation claims on this token, or None if it's a
+    normal (non-impersonation) access token. Never raises for malformed/
+    expired tokens -- callers that need strict validation should decode the
+    token themselves first; this is meant for "is this request currently
+    impersonating" checks where a bad token has already been rejected
+    upstream by get_current_user."""
+    try:
+        payload = decode_token(token)
+    except Exception:
+        return None
+    admin_id = payload.get("act_as_admin_id")
+    session_id = payload.get("act_as_session_id")
+    if not admin_id or not session_id:
+        return None
+    return ActAsClaims(admin_user_id=admin_id, session_id=session_id)
+
+
 def create_refresh_token(
     subject: UUID | str,
     expires_delta: Optional[timedelta] = None,

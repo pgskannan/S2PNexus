@@ -39,8 +39,9 @@ async def list_users_directory(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
     limit: int = Query(500, ge=1, le=1000),
+    search: str | None = Query(None, description="Filter by email or full name substring"),
 ) -> UserDirectoryResponse:
-    users = await get_users(db, skip=0, limit=limit)
+    users = await get_users(db, skip=0, limit=limit, search=search)
     return UserDirectoryResponse(items=[UserDirectoryEntry.model_validate(u) for u in users])
 
 
