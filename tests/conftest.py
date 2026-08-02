@@ -69,7 +69,14 @@ _test_engine = create_async_engine(
     poolclass=StaticPool,
 )
 
-TestingSessionLocal = async_sessionmaker(_test_engine, class_=AsyncSession, expire_on_commit=False)
+TestingSessionLocal = async_sessionmaker(
+    _test_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    # Mirror production (app/database/database.py) so workflow advancement
+    # bugs that only show with autoflush=False are caught in unit tests.
+    autoflush=False,
+)
 
 
 @pytest_asyncio.fixture(scope="session")

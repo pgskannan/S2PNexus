@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  completeWorkflowTask,
   getDashboardMetrics,
   getSavingsSummary,
   listMyWorkflowTasks,
@@ -10,7 +11,7 @@ import {
   listSourcingEvents,
 } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth-store";
-import type { DashboardMetricsResponse } from "@/lib/types";
+import type { DashboardMetricsResponse, WorkflowTask } from "@/lib/types";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -28,7 +29,8 @@ export default function DashboardPage() {
   const [metrics, setMetrics] = useState<DashboardMetricsResponse | null>(null);
   const [reqTotal, setReqTotal] = useState<number | null>(null);
   const [sourcingTotal, setSourcingTotal] = useState<number | null>(null);
-  const [pendingTasks, setPendingTasks] = useState<number | null>(null);
+  const [myApprovals, setMyApprovals] = useState<WorkflowTask[]>([]);
+  const [approvalsBusyId, setApprovalsBusyId] = useState<string | null>(null);
   const [savingsSummary, setSavingsSummary] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,9 +61,9 @@ export default function DashboardPage() {
         setSourcingTotal(0);
       }
       if (tasksResult.status === "fulfilled") {
-        setPendingTasks(tasksResult.value.length);
+        setMyApprovals(tasksResult.value);
       } else {
-        setPendingTasks(0);
+        setMyApprovals([]);
       }
       if (savingsResult.status === "fulfilled") {
         setSavingsSummary(savingsResult.value.total_savings);
@@ -76,10 +78,21 @@ export default function DashboardPage() {
     };
   }, []);
 
+  async function handleApproval(taskId: string, decision: "approve" | "reject") {
+    setApprovalsBusyId(taskId);
+    try {
+      await completeWorkflowTask(taskId, { decision });
+      setMyApprovals((current) => current.filter((task) => task.id !== taskId));
+    } finally {
+      setApprovalsBusyId(null);
+    }
+  }
+
   const monthlySpend = metrics?.spend_by_month.slice(-6) ?? [];
   const maxMonthlySpend = Math.max(1, ...monthlySpend.map((item) => Number(item.amount || 0)));
   const topCategories = metrics?.spend_by_category.slice(0, 4) ?? [];
   const topSuppliers = metrics?.top_suppliers.slice(0, 3) ?? [];
+  const pendingTasks = myApprovals.length;
 
   return (
     <div className="space-y-8">
@@ -90,6 +103,66 @@ export default function DashboardPage() {
         <p className="mt-1 text-sm text-slate-500">
           Here&apos;s what&apos;s happening across your S2P operations.
         </p>
+      </div>
+
+      <div className="card border-amber-200 bg-amber-50/40">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700">My Approvals</p>
+            <h2 className="mt-1 text-lg font-semibold text-slate-900">
+              {pendingTasks === 0 ? "You are caught up" : `${pendingTasks} waiting on you`}
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Approve or reject assigned workflow tasks without leaving the dashboard.
+            </p>
+          </div>
+          <Link href="/dashboard/workflow" className="btn-secondary">
+            Open My Approvals
+          </Link>
+        </div>
+        <div className="mt-4 space-y-2">
+          {myApprovals.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-amber-200 bg-white px-3 py-4 text-sm text-slate-500">
+              No pending approvals right now.
+            </p>
+          ) : (
+            myApprovals.slice(0, 5).map((task) => (
+              <div
+                key={task.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <Link
+                    href={`/dashboard/workflow/instances/${task.instance_id}`}
+                    className="font-medium text-brand-700 hover:underline"
+                  >
+                    {task.step_name}
+                  </Link>
+                  {task.reason && <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">{task.reason}</p>}
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    Due {task.due_at ? new Date(task.due_at).toLocaleDateString() : "—"}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    disabled={approvalsBusyId === task.id}
+                    onClick={() => handleApproval(task.id, "approve")}
+                    className="btn-primary"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    disabled={approvalsBusyId === task.id}
+                    onClick={() => handleApproval(task.id, "reject")}
+                    className="btn-secondary"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -105,10 +178,10 @@ export default function DashboardPage() {
         <div className="card">
           <p className="text-sm text-slate-500">Pending approvals</p>
           <p className="mt-2 text-3xl font-semibold">
-            {metrics ? metrics.pending_approvals : pendingTasks ?? "..."}
+            {metrics ? metrics.pending_approvals : pendingTasks}
           </p>
           <Link href="/dashboard/workflow" className="mt-3 inline-block text-sm text-brand-600 hover:underline">
-            Review workflow tasks
+            Review My Approvals
           </Link>
         </div>
         <div className="card">

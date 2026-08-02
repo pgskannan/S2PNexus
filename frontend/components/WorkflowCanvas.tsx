@@ -165,8 +165,11 @@ function continueAfterStep(steps: Array<Record<string, unknown>>, stepIndex: num
 
 function buildInitialFlow(steps: Array<Record<string, unknown>>) {
   const n = steps.length;
+  const COL = 220;
+  const ROW = 110;
+  const START_X = 24;
+  const BASE_Y = 100;
 
-  // Same grouping the engine uses: indices of every member per parallel_group.
   const groups = new Map<string, number[]>();
   steps.forEach((step, index) => {
     const group = typeof step.parallel_group === "string" ? step.parallel_group.trim() : "";
@@ -178,65 +181,73 @@ function buildInitialFlow(steps: Array<Record<string, unknown>>) {
   const memberSet = new Set<number>();
   groups.forEach((members) => members.forEach((m) => memberSet.add(m)));
 
-  // Layout: left-to-right columns; parallel members stack vertically so the
-  // fan-out reads clearly. Condition Yes/No arms also stack so the diamond
-  // doesn't look like a linear Yes→No chain.
+  // Simple left-to-right columns. Never stack Start on top of step 0 (that
+  // made the canvas look like "one box" after fitView). Condition Yes/No arms
+  // share the next column, stacked.
   const positions: Record<number, { x: number; y: number }> = {};
-  let cursorX = 40;
+  let col = 1; // column 0 is Start
   let i = 0;
   while (i < n) {
     if (memberSet.has(i)) {
       const members = groups.get(String(steps[i].parallel_group))!;
       members.forEach((memberIndex, offset) => {
-        positions[memberIndex] = { x: cursorX, y: 60 + offset * 130 };
+        positions[memberIndex] = {
+          x: START_X + col * COL,
+          y: BASE_Y + (offset - (members.length - 1) / 2) * ROW,
+        };
       });
-      cursorX += 230;
+      col += 1;
       i += members.length;
-    } else if (
-      String(steps[i].step_type) === "condition" &&
-      typeof steps[i].on_true_next_step === "number" &&
-      typeof steps[i].on_false_next_step === "number" &&
-      steps[i].on_true_next_step !== steps[i].on_false_next_step
-    ) {
-      positions[i] = { x: cursorX, y: 60 };
-      cursorX += 230;
-      const trueT = steps[i].on_true_next_step as number;
-      const falseT = steps[i].on_false_next_step as number;
-      // Place both arms in the next column (stacked) when they are immediate
-      // consecutive indices that haven't been positioned yet.
-      const arms = [trueT, falseT].filter((idx) => idx >= 0 && idx < n && positions[idx] == null);
-      if (arms.length === 2 && !memberSet.has(arms[0]) && !memberSet.has(arms[1])) {
-        arms.forEach((armIndex, offset) => {
-          positions[armIndex] = { x: cursorX, y: 20 + offset * 120 };
-        });
-        cursorX += 230;
-        i += 1;
-        // Skip ahead past arms we just placed if they were next in sequence.
-        while (i < n && positions[i] != null) i += 1;
-      } else {
-        i += 1;
-      }
-    } else {
-      if (positions[i] == null) {
-        positions[i] = { x: cursorX, y: 60 };
-        cursorX += 230;
-      }
-      i += 1;
+      continue;
     }
+
+    if (positions[i] == null) {
+      positions[i] = { x: START_X + col * COL, y: BASE_Y };
+      col += 1;
+    }
+
+    const step = steps[i];
+    if (
+      String(step.step_type) === "condition" &&
+      typeof step.on_true_next_step === "number" &&
+      typeof step.on_false_next_step === "number" &&
+      step.on_true_next_step !== step.on_false_next_step
+    ) {
+      const trueT = step.on_true_next_step as number;
+      const falseT = step.on_false_next_step as number;
+      const arms = [trueT, falseT].filter((idx) => idx >= 0 && idx < n && positions[idx] == null && !memberSet.has(idx));
+      if (arms.length > 0) {
+        arms.forEach((armIndex, offset) => {
+          positions[armIndex] = {
+            x: START_X + col * COL,
+            y: BASE_Y + (offset - (arms.length - 1) / 2) * ROW,
+          };
+        });
+        col += 1;
+      }
+    }
+
+    i += 1;
+    while (i < n && positions[i] != null) i += 1;
   }
+
   for (let idx = 0; idx < n; idx++) {
     if (positions[idx] == null) {
-      positions[idx] = { x: cursorX, y: 60 };
-      cursorX += 230;
+      positions[idx] = { x: START_X + col * COL, y: BASE_Y };
+      col += 1;
     }
   }
+
+  const endX = START_X + col * COL;
 
   const nodes: Node[] = [
     {
       id: "start",
       type: "workflow",
-      position: { x: 40, y: 60 },
+      position: { x: START_X, y: BASE_Y },
       data: { label: "Start", step_type: "start", color: nodeColors.start },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
     },
   ];
   steps.forEach((step, index) => {
@@ -255,13 +266,17 @@ function buildInitialFlow(steps: Array<Record<string, unknown>>) {
         color: nodeColors[stepType] || nodeColors.approval,
         reason: typeof step.reason === "string" && step.reason ? step.reason : undefined,
       },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
     });
   });
   nodes.push({
     id: "end",
     type: "workflow",
-    position: { x: cursorX, y: 60 },
+    position: { x: endX, y: BASE_Y },
     data: { label: "End", step_type: "end", color: nodeColors.end },
+    sourcePosition: Position.Right,
+    targetPosition: Position.Left,
   });
 
   const edges: Edge[] = [];
@@ -275,33 +290,32 @@ function buildInitialFlow(steps: Array<Record<string, unknown>>) {
       id: `edge-${edges.length}`,
       source,
       target,
-      markerEnd: { type: MarkerType.ArrowClosed },
+      markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+      style: { strokeWidth: 1.5, stroke: "#94a3b8", ...(opts.style as object) },
       ...opts,
     } as Edge);
   };
 
-  // Map a (possibly null) step reference to a node id; anything past the last
-  // step is the End node.
   const resolveTarget = (indexOrNull: number | null | undefined, fallbackIndex: number): string => {
     const target = indexOrNull == null ? fallbackIndex : indexOrNull;
     return target >= n ? "end" : `step-${target}`;
   };
 
-  // Entry source for each parallel group = the node just before its first
-  // member on the main line (Start when the group opens the flow).
   const groupEntry: Record<number, string> = {};
   groups.forEach((members) => {
     const first = members[0];
     groupEntry[first] = first === 0 ? "start" : `step-${first - 1}`;
   });
 
-  // Indices that are reached only via a condition Yes/No edge -- their
-  // incoming linear edge from index-1 must not be drawn.
   const conditionTargets = new Set<number>();
-  steps.forEach((step, index) => {
+  steps.forEach((step) => {
     if (String(step.step_type) !== "condition") return;
-    if (typeof step.on_true_next_step === "number") conditionTargets.add(step.on_true_next_step);
-    if (typeof step.on_false_next_step === "number") conditionTargets.add(step.on_false_next_step);
+    if (typeof step.on_true_next_step === "number" && step.on_true_next_step < n) {
+      conditionTargets.add(step.on_true_next_step);
+    }
+    if (typeof step.on_false_next_step === "number" && step.on_false_next_step < n) {
+      conditionTargets.add(step.on_false_next_step);
+    }
   });
 
   for (let index = 0; index < n; index++) {
@@ -311,65 +325,50 @@ function buildInitialFlow(steps: Array<Record<string, unknown>>) {
 
     if (memberSet.has(index)) {
       const members = groups.get(String(step.parallel_group))!;
-      // Fan-out: group entry -> every member.
       const entry = groupEntry[index];
       if (entry) {
         members.forEach((memberIndex) =>
           addEdge(entry, `step-${memberIndex}`, {
             label: "‖",
-            style: { stroke: nodeColors.condition },
-            labelStyle: { fill: nodeColors.condition, fontWeight: 700 },
+            style: { stroke: nodeColors.condition, strokeWidth: 1.5 },
+            labelStyle: { fill: nodeColors.condition, fontWeight: 700, fontSize: 11 },
           })
         );
       }
-      // Converge: every member -> the shared continue target.
       const parallelNext = typeof step.parallel_next_step === "number" ? (step.parallel_next_step as number) : null;
       const fallback = Math.max(...members) + 1;
-      const target = resolveTarget(parallelNext, fallback);
-      addEdge(id, target, {
+      addEdge(id, resolveTarget(parallelNext, fallback), {
         label: "‖",
-        style: { stroke: nodeColors.condition },
-        labelStyle: { fill: nodeColors.condition, fontWeight: 700 },
+        style: { stroke: nodeColors.condition, strokeWidth: 1.5 },
+        labelStyle: { fill: nodeColors.condition, fontWeight: 700, fontSize: 11 },
       });
     } else if (stepType === "condition") {
-      // Incoming edge, then the two branch edges.
       if (index === 0 || !conditionTargets.has(index)) {
-        addEdge(index === 0 ? "start" : `step-${index - 1}`, id, {});
+        addEdge(index === 0 ? "start" : `step-${index - 1}`, id);
       }
-      const yesTarget = resolveTarget(
-        typeof step.on_true_next_step === "number" ? (step.on_true_next_step as number) : null,
-        index + 1
-      );
-      addEdge(id, yesTarget, {
+      addEdge(id, resolveTarget(typeof step.on_true_next_step === "number" ? step.on_true_next_step : null, index + 1), {
         label: "Yes",
-        style: { stroke: "#16a34a" },
-        labelStyle: { fill: "#16a34a", fontWeight: 700 },
+        style: { stroke: "#16a34a", strokeWidth: 1.75 },
+        labelStyle: { fill: "#16a34a", fontWeight: 700, fontSize: 11 },
       });
-      const noTarget = resolveTarget(
-        typeof step.on_false_next_step === "number" ? (step.on_false_next_step as number) : null,
-        index + 1
-      );
-      addEdge(id, noTarget, {
+      addEdge(id, resolveTarget(typeof step.on_false_next_step === "number" ? step.on_false_next_step : null, index + 1), {
         label: "No",
-        style: { stroke: "#dc2626" },
-        labelStyle: { fill: "#dc2626", fontWeight: 700 },
+        style: { stroke: "#dc2626", strokeWidth: 1.75 },
+        labelStyle: { fill: "#dc2626", fontWeight: 700, fontSize: 11 },
       });
     } else {
-      // Plain main-line step. Skip incoming when the previous step is a
-      // condition (Yes/No edges route in) or this index is a condition target
-      // / parallel member (those routes own the inbound edge).
       const prevIsCondition = index > 0 && String(steps[index - 1].step_type) === "condition";
       const prevIsGroupMember = memberSet.has(index - 1);
       if (!prevIsCondition && !prevIsGroupMember && !conditionTargets.has(index)) {
-        addEdge(index === 0 ? "start" : `step-${index - 1}`, id, {});
+        addEdge(index === 0 ? "start" : `step-${index - 1}`, id);
       }
       const continueTo = continueAfterStep(steps, index);
-      addEdge(id, resolveTarget(continueTo, continueTo), {});
+      addEdge(id, resolveTarget(continueTo, continueTo));
     }
   }
 
   if (n === 0) {
-    addEdge("start", "end", {});
+    addEdge("start", "end");
   }
 
   return { nodes, edges };
@@ -574,9 +573,16 @@ export function WorkflowCanvas({ value, onChange, selectedNodeId, onSelectNode, 
           onConnect={handleConnect}
           onNodeClick={(event, node) => onSelectNode?.(node.id)}
           fitView
+          fitViewOptions={{ padding: 0.2, minZoom: 0.45, maxZoom: 1.25 }}
+          minZoom={0.35}
+          maxZoom={1.5}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          proOptions={{ hideAttribution: true }}
+          defaultEdgeOptions={{ type: "smoothstep" }}
         >
-          <Background />
-          <Controls />
+          <Background gap={18} size={1} color="#e2e8f0" />
+          <Controls showInteractive={false} />
         </ReactFlow>
       </div>
     </div>

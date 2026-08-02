@@ -350,6 +350,9 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
                     await db.flush()
                     return
 
+            # Newly created tasks must be visible to the completion check below
+            # (session autoflush=False in production).
+            await db.flush()
             if not await _parallel_group_is_complete(db, instance, steps, member_indices):
                 instance.status = "in_progress"
                 return  # wait for the remaining branch(es)
@@ -427,6 +430,27 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
             step_type = "approval"
 
         if step_type == "approval":
+            # If this step was already satisfied (e.g. production previously
+            # failed to advance after approve because of autoflush=False), skip
+            # recreating tasks and continue — repairs stuck instances on the
+            # next engine entry (retry or a later approval path).
+            existing_statuses = (
+                await db.execute(
+                    select(WorkflowTask.status).where(
+                        WorkflowTask.instance_id == instance.id,
+                        WorkflowTask.step_index == step_index,
+                    )
+                )
+            ).scalars().all()
+            if existing_statuses:
+                required = step.get("required_approvals", 1)
+                approved = sum(1 for s in existing_statuses if s == "approved")
+                if approved >= required:
+                    step_index = _continue_after_step(steps, step_index)
+                    continue
+                instance.status = "in_progress"
+                return  # wait for remaining approvals on this step
+
             created = await _create_approval_tasks(db, instance, step, step_index)
             if not created:
                 # No approvers resolvable. Never silently skip this node --
@@ -586,32 +610,49 @@ async def start_workflow_instance(
 
 
 async def retry_blocked_instance(db: AsyncSession, instance_id: UUID | str) -> Optional[WorkflowInstance]:
-    """Re-run a blocked workflow instance from the step it stalled on.
+    """Re-run a stalled workflow instance from the step it is on.
 
-    A blocked instance is one where an approval step could not resolve any
-    approvers (e.g. a role with no active approver seed) -- see
-    _run_from_step. After an admin fixes the underlying cause (activates a
-    seed, etc.), this re-enters the engine at the blocked step. Returns None
-    if the instance doesn't exist or isn't blocked.
+    Supports:
+    - `blocked` instances (approver resolution failed)
+    - `in_progress` instances stuck with no pending tasks after an already-
+      satisfied approval (the autoflush=False count bug left Initial approved
+      but never advanced to the next step)
+
+    Healthy in-progress instances that still have pending tasks are left alone
+    (returns None) so Retry cannot be used to duplicate work.
     """
     instance = await get_workflow_instance(db, instance_id)
-    if not instance or instance.status != "blocked":
+    if not instance or instance.status not in ("blocked", "in_progress"):
         return None
 
     definition = await get_workflow_definition(db, instance.definition_id)
     if not definition:
         return None
 
-    # Cancel any stray pending tasks (a blocked instance normally has none,
-    # but be defensive -- e.g. a parallel-group sibling left waiting).
-    result = await db.execute(
-        select(WorkflowTask).where(
-            WorkflowTask.instance_id == instance.id,
-            WorkflowTask.status == "pending",
+    if instance.status == "in_progress":
+        pending = (
+            await db.execute(
+                select(WorkflowTask.id).where(
+                    WorkflowTask.instance_id == instance.id,
+                    WorkflowTask.status.in_(["pending", "escalated"]),
+                )
+            )
+        ).first()
+        if pending is not None:
+            return None  # healthy — still waiting on an assignee
+
+    # Cancel any stray pending tasks on blocked instances (a blocked instance
+    # normally has none, but be defensive -- e.g. a parallel-group sibling
+    # left waiting).
+    if instance.status == "blocked":
+        result = await db.execute(
+            select(WorkflowTask).where(
+                WorkflowTask.instance_id == instance.id,
+                WorkflowTask.status == "pending",
+            )
         )
-    )
-    for task in result.scalars().all():
-        task.status = "cancelled"
+        for task in result.scalars().all():
+            task.status = "cancelled"
 
     instance.status = "in_progress"
     await _run_from_step(db, instance, definition.steps, instance.current_step_index)
@@ -689,6 +730,12 @@ async def complete_task(
     task.completed_by = actor_id
     task.completed_at = now
     task.comments = comments
+    # Production AsyncSession uses autoflush=False (database.py). Without an
+    # explicit flush, the COUNT / cancel SELECTs below still see the old
+    # "pending" row, so approved_count stays 0 and _run_from_step never runs
+    # -- leaving the next approval (e.g. Yes Approval for Kannan) stuck as
+    # Waiting / Pending assignment with no WorkflowTask.
+    await db.flush()
 
     instance = await get_workflow_instance(db, task.instance_id)
     if instance.entity_type == "requisition":

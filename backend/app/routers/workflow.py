@@ -211,10 +211,10 @@ async def get_workflow_instance_endpoint(
 @router.post(
     "/instances/{instance_id}/retry",
     response_model=WorkflowInstanceResponse,
-    summary="Retry a blocked workflow instance",
-    description="Re-runs a blocked instance from the step it stalled on, after the "
-    "approver-resolution problem is fixed (e.g. an approver seed is activated). "
-    "Administrators only.",
+    summary="Retry a stalled workflow instance",
+    description="Re-runs a blocked or stuck in-progress instance from the step it "
+    "is on (after fixing approver setup, or to advance past an already-approved "
+    "step that failed to continue). Administrators only.",
 )
 async def retry_blocked_instance_endpoint(
     instance_id: UUID,
@@ -226,7 +226,7 @@ async def retry_blocked_instance_endpoint(
     if not instance:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Instance not found or not in a blocked state",
+            detail="Instance not found or not in a retryable state",
         )
     return WorkflowInstanceResponse.model_validate(instance)
 

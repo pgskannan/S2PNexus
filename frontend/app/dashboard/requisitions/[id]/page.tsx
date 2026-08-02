@@ -16,6 +16,7 @@ import {
   listRequisitionComments,
   addRequisitionComment,
   listUserDirectory,
+  retryWorkflowInstance,
   transitionRequisition,
   extractErrorMessage,
 } from "@/lib/api";
@@ -204,6 +205,20 @@ export default function RequisitionDetailPage() {
     }
   }
 
+  async function handleResumeWorkflow() {
+    if (!workflowInstance) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await retryWorkflowInstance(workflowInstance.id);
+      await load();
+    } catch (err) {
+      setError(extractErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDelete() {
     if (!confirm("Delete this draft requisition? This cannot be undone.")) {
       return;
@@ -244,6 +259,18 @@ export default function RequisitionDetailPage() {
     workflowInstance?.status === "in_progress"
       ? workflowInstance.tasks.filter((task) => task.status === "pending" || task.status === "escalated").length
       : 0;
+  const approvedWorkflowTaskCount =
+    workflowInstance?.tasks.filter((task) => task.status === "approved").length ?? 0;
+  // Stuck after an approve that never advanced (autoflush bug): in progress,
+  // some approvals done, nothing pending — admin can Resume to fan out the
+  // next step (e.g. Yes Approval for Kannan).
+  const workflowNeedsResume =
+    Boolean(workflowInstance) &&
+    workflowInstance?.status === "in_progress" &&
+    pendingWorkflowTaskCount === 0 &&
+    approvedWorkflowTaskCount > 0 &&
+    requisition.lifecycle_status === "pending_approval";
+  const canResumeWorkflow = canActAsApprover(currentUser) && (workflowNeedsResume || workflowInstance?.status === "blocked");
   const workflowBlocksDirectApprove =
     !workflowCheckDone ||
     pendingWorkflowTaskCount > 0 ||
@@ -271,6 +298,11 @@ export default function RequisitionDetailPage() {
             Reject
           </button>
         </>
+      )}
+      {canResumeWorkflow && (
+        <button disabled={busy} onClick={() => handleResumeWorkflow()} className="btn-primary">
+          Resume workflow
+        </button>
       )}
       {actions.map((action) => (
         <button
@@ -406,9 +438,15 @@ export default function RequisitionDetailPage() {
             </span>
             {(actions.length > 0 ||
               myPendingTask ||
+              canResumeWorkflow ||
               requisition.lifecycle_status === "draft" ||
               requisition.lifecycle_status === "submitted") && (
               <div className="flex flex-wrap justify-end gap-2">{actionBar}</div>
+            )}
+            {canResumeWorkflow && (
+              <p className="max-w-xs text-right text-xs text-amber-700">
+                Workflow is stuck after a prior approval. Click Resume workflow to activate the next approver.
+              </p>
             )}
             {requisition.lifecycle_status === "pending_approval" &&
               workflowCheckDone &&

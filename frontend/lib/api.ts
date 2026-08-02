@@ -886,6 +886,11 @@ export async function getWorkflowInstance(id: string): Promise<WorkflowInstance>
   return data;
 }
 
+export async function retryWorkflowInstance(id: string): Promise<WorkflowInstance> {
+  const { data } = await api.post<WorkflowInstance>(`/workflow/instances/${id}/retry`);
+  return data;
+}
+
 export async function listMyWorkflowTasks(params?: {
   status?: string;
 }): Promise<WorkflowTask[]> {

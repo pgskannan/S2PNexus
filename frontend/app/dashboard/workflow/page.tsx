@@ -51,9 +51,12 @@ export default function WorkflowPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">My Tasks</h1>
+        <div>
+          <h1 className="text-2xl font-semibold">My Approvals</h1>
+          <p className="mt-1 text-sm text-slate-500">Tasks assigned to you across requisitions and other workflows.</p>
+        </div>
         <Link href="/dashboard/workflow/definitions" className="btn-secondary">
-          Manage Definitions
+          Workflow rules
         </Link>
       </div>
 
@@ -80,7 +83,7 @@ export default function WorkflowPage() {
             {!loading && tasks.length === 0 && (
               <tr>
                 <td className="px-4 py-4 text-slate-400" colSpan={4}>
-                  No pending tasks.
+                  No pending approvals.
                 </td>
               </tr>
             )}

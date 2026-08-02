@@ -9,6 +9,7 @@ import type { Notification } from "@/lib/types";
 
 const links = [
   { href: "/dashboard", label: "Overview", icon: "overview" },
+  { href: "/dashboard/workflow", label: "My Approvals", icon: "workflow" },
   { href: "/dashboard/requisitions", label: "Requisitions", icon: "requisitions" },
   { href: "/dashboard/purchase-orders", label: "Purchase Orders", icon: "purchase-orders" },
   { href: "/dashboard/receipts", label: "Receipts", icon: "purchase-orders" },
@@ -17,7 +18,7 @@ const links = [
   { href: "/dashboard/documents", label: "Documents", icon: "documents" },
   { href: "/dashboard/sourcing", label: "Sourcing", icon: "sourcing" },
   { href: "/dashboard/spend", label: "Spend & Savings", icon: "spend-savings" },
-  { href: "/dashboard/workflow", label: "Workflow", icon: "workflow" },
+  { href: "/dashboard/workflow/definitions", label: "Workflow rules", icon: "workflow" },
   { href: "/dashboard/suppliers", label: "Suppliers", icon: "suppliers" },
   { href: "/dashboard/admin", label: "Admin", icon: "settings" },
   { href: "/dashboard/agent", label: "AI Agent", icon: "ai-agent" },
@@ -77,8 +78,10 @@ export default function Nav() {
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
         {links.map((link) => {
           const active =
-            pathname === link.href ||
-            (link.href !== "/dashboard" && pathname.startsWith(link.href));
+            link.href === "/dashboard/workflow"
+              ? pathname === "/dashboard/workflow" || pathname.startsWith("/dashboard/workflow/instances")
+              : pathname === link.href ||
+                (link.href !== "/dashboard" && pathname.startsWith(link.href));
           return (
             <Link
               key={link.href}

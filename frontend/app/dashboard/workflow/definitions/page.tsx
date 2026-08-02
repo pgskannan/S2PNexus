@@ -11,6 +11,7 @@ import { WorkflowNodeInspector } from "@/components/WorkflowNodeInspector";
 
 export default function WorkflowDefinitionsPage() {
   const [definitions, setDefinitions] = useState<WorkflowDefinition[]>([]);
+  const [statusFilter, setStatusFilter] = useState<"active" | "archived" | "all">("active");
   const [form, setForm] = useState({
     name: "",
     entity_type: "requisition",
@@ -62,7 +63,11 @@ export default function WorkflowDefinitionsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await listWorkflowDefinitions();
+      const res = await listWorkflowDefinitions(
+        statusFilter === "all"
+          ? undefined
+          : { is_active: statusFilter === "active" }
+      );
       setDefinitions(res.items);
     } catch (err) {
       setError(extractErrorMessage(err));
@@ -89,7 +94,8 @@ export default function WorkflowDefinitionsPage() {
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter]);
 
   function validateSteps(steps: Array<Record<string, unknown>>) {
     const errors: string[] = [];
@@ -226,11 +232,35 @@ export default function WorkflowDefinitionsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold">Workflow Definitions</h1>
-        <Link href="/dashboard/workflow" className="btn-secondary">
-          Back to tasks
-        </Link>
+        <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5 text-sm">
+            {(
+              [
+                { key: "active", label: "Active" },
+                { key: "archived", label: "Archived" },
+                { key: "all", label: "All" },
+              ] as const
+            ).map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setStatusFilter(option.key)}
+                className={`rounded px-3 py-1.5 font-medium ${
+                  statusFilter === option.key
+                    ? "bg-brand-600 text-white"
+                    : "text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <Link href="/dashboard/workflow" className="btn-secondary">
+            Back to My Approvals
+          </Link>
+        </div>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
