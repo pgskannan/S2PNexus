@@ -4,12 +4,11 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
+  completeWorkflowTask,
   deleteRequisition,
   getRequisition,
   getWorkflowDefinition,
   listPurchaseOrders,
-  listGoodsReceipts,
-  listInvoices,
   listWorkflowInstances,
   listRequisitionAuditEvents,
   listRequisitionComments,
@@ -18,7 +17,7 @@ import {
   transitionRequisition,
   extractErrorMessage,
 } from "@/lib/api";
-import type { PurchaseOrder, Requisition, WorkflowInstance } from "@/lib/types";
+import type { PurchaseOrder, Requisition, WorkflowInstance, WorkflowTask } from "@/lib/types";
 import { ApprovalFlowDiagram, type ApprovalStep } from "@/components/ApprovalFlowDiagram";
 import { buildApprovalSteps, resolveApproverNames } from "@/lib/approvalFlow";
 import DocumentTabs from "@/components/DocumentTabs";
@@ -28,6 +27,7 @@ import {
   fetchDocumentTabSignals,
   type DocumentTabSignals,
 } from "@/lib/documentTabs";
+import { useAuthStore } from "@/lib/auth-store";
 
 const nextSteps: Record<string, { new_status: string; lifecycle_status: string; label: string }[]> = {
   draft: [
@@ -48,6 +48,7 @@ const nextSteps: Record<string, { new_status: string; lifecycle_status: string; 
 export default function RequisitionDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const currentUser = useAuthStore((state) => state.user);
   const [requisition, setRequisition] = useState<Requisition | null>(null);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [workflowInstance, setWorkflowInstance] = useState<WorkflowInstance | null>(null);
@@ -142,6 +143,19 @@ export default function RequisitionDetailPage() {
     }
   }
 
+  async function handleWorkflowDecision(taskId: string, decision: "approve" | "reject") {
+    setBusy(true);
+    setError(null);
+    try {
+      await completeWorkflowTask(taskId, { decision });
+      await load();
+    } catch (err) {
+      setError(extractErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDelete() {
     if (!confirm("Delete this draft requisition? This cannot be undone.")) {
       return;
@@ -172,20 +186,50 @@ export default function RequisitionDetailPage() {
     return <p className="text-sm text-slate-400">Loading...</p>;
   }
 
-  // Mirrors the backend guard in transition_requisition_endpoint: hide the
-  // one-click "Approve" shortcut whenever a real multi-step workflow is
-  // actively waiting on other approvers, so the only path to approve is the
-  // assigned approver's own task. Still shown for requisitions with no
-  // workflow instance at all (workflowInstance stays null in that case).
+  // When a multi-step workflow is active, the lifecycle "Approve" shortcut is
+  // blocked by the backend. Surface the assigned user's pending WorkflowTask
+  // here instead so Initial Review (etc.) can be approved on this page -- the
+  // Approval Flow diagram itself is read-only and used to flash-then-hide the
+  // old Approve button, which made admins think they couldn't act.
+  const myPendingTask: WorkflowTask | null =
+    currentUser && workflowInstance?.status === "in_progress"
+      ? workflowInstance.tasks.find(
+          (task) =>
+            (task.status === "pending" || task.status === "escalated") && task.assignee_id === currentUser.id
+        ) ?? null
+      : null;
   const pendingWorkflowTaskCount =
     workflowInstance?.status === "in_progress"
       ? workflowInstance.tasks.filter((task) => task.status === "pending" || task.status === "escalated").length
       : 0;
-  const actions = (nextSteps[requisition.lifecycle_status] ?? []).filter(
-    (action) => !(action.lifecycle_status === "approved" && pendingWorkflowTaskCount > 0)
-  );
+  const workflowBlocksDirectApprove = pendingWorkflowTaskCount > 0;
+  const actions = (nextSteps[requisition.lifecycle_status] ?? []).filter((action) => {
+    if (!workflowBlocksDirectApprove) return true;
+    // Hide both lifecycle Approve and Reject while a workflow task is open --
+    // those go through the task engine below (or My Tasks if you're not the
+    // assignee). Direct Reject previously stayed visible and skipped the task.
+    return action.lifecycle_status !== "approved" && action.lifecycle_status !== "rejected";
+  });
   const actionBar = (
     <>
+      {myPendingTask && (
+        <>
+          <button
+            disabled={busy}
+            onClick={() => handleWorkflowDecision(myPendingTask.id, "approve")}
+            className="btn-primary"
+          >
+            Approve
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => handleWorkflowDecision(myPendingTask.id, "reject")}
+            className="btn-secondary"
+          >
+            Reject
+          </button>
+        </>
+      )}
       {actions.map((action) => (
         <button
           key={action.new_status}
@@ -233,7 +277,9 @@ export default function RequisitionDetailPage() {
         return "This requisition is still a draft. Submit it for approval when it's ready.";
       case "submitted":
       case "pending_approval":
-        return "Awaiting approval. Check the Approval Flow tab for who's up next.";
+        return myPendingTask
+          ? `Your approval is needed on "${myPendingTask.step_name}". Use Approve / Reject above.`
+          : "Awaiting approval. Check the Approval Flow tab for who's Active, or open My Tasks if you are the assignee.";
       case "approved":
         return purchaseOrders.length === 0
           ? "Approved and ready — convert it to a PO to continue the P2P flow."
@@ -316,13 +362,25 @@ export default function RequisitionDetailPage() {
             <span className="badge bg-slate-100 text-slate-700 capitalize">
               {requisition.lifecycle_status}
             </span>
-            {(actions.length > 0 || requisition.lifecycle_status === "draft" || requisition.lifecycle_status === "submitted") && (
+            {(actions.length > 0 ||
+              myPendingTask ||
+              requisition.lifecycle_status === "draft" ||
+              requisition.lifecycle_status === "submitted") && (
               <div className="flex flex-wrap justify-end gap-2">{actionBar}</div>
             )}
-            {requisition.lifecycle_status === "pending_approval" && pendingWorkflowTaskCount > 0 && (
+            {requisition.lifecycle_status === "pending_approval" && pendingWorkflowTaskCount > 0 && !myPendingTask && (
               <p className="max-w-xs text-right text-xs text-slate-500">
-                Waiting on {pendingWorkflowTaskCount} pending approval{pendingWorkflowTaskCount === 1 ? "" : "s"} in the
-                Approval Flow tab below -- approve from there, not here.
+                Waiting on {pendingWorkflowTaskCount} pending approval
+                {pendingWorkflowTaskCount === 1 ? "" : "s"}. This step is assigned to someone else — open{" "}
+                <Link href="/dashboard/workflow" className="text-brand-600 hover:underline">
+                  My Tasks
+                </Link>{" "}
+                if you are the assignee, or check the Approval Flow tab for who is Active.
+              </p>
+            )}
+            {myPendingTask && (
+              <p className="max-w-xs text-right text-xs text-slate-500">
+                Your turn: approve or reject the active step &quot;{myPendingTask.step_name}&quot;.
               </p>
             )}
           </div>
@@ -475,12 +533,35 @@ export default function RequisitionDetailPage() {
         <div className="p-4">
           {secondaryTab === "approval" &&
             (workflowInstance ? (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <ApprovalFlowDiagram
                   docNumber={requisition.requisition_number || undefined}
                   title={requisition.title}
                   steps={approvalSteps}
                 />
+                {myPendingTask && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <p className="text-sm text-amber-900">
+                      You are the active approver for <span className="font-semibold">{myPendingTask.step_name}</span>.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        disabled={busy}
+                        onClick={() => handleWorkflowDecision(myPendingTask.id, "approve")}
+                        className="btn-primary"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        disabled={busy}
+                        onClick={() => handleWorkflowDecision(myPendingTask.id, "reject")}
+                        className="btn-secondary"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <Link
                   href={`/dashboard/workflow/instances/${workflowInstance.id}`}
                   className="text-xs text-slate-400 hover:text-brand-600 hover:underline"
