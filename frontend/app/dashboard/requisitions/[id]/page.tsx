@@ -8,6 +8,8 @@ import {
   deleteRequisition,
   getRequisition,
   getWorkflowDefinition,
+  getWorkflowInstance,
+  listMyWorkflowTasks,
   listPurchaseOrders,
   listWorkflowInstances,
   listRequisitionAuditEvents,
@@ -28,6 +30,40 @@ import {
   type DocumentTabSignals,
 } from "@/lib/documentTabs";
 import { useAuthStore } from "@/lib/auth-store";
+
+function sameId(a?: string | null, b?: string | null) {
+  return Boolean(a && b && String(a).toLowerCase() === String(b).toLowerCase());
+}
+
+function canActAsApprover(user: { id: string; role: string; is_superuser: boolean } | null) {
+  if (!user) return false;
+  return user.is_superuser || user.role === "administrator";
+}
+
+/** Pick the workflow task the current user should Approve/Reject on this PR. */
+function resolveActionableTask(
+  instance: WorkflowInstance | null,
+  user: { id: string; role: string; is_superuser: boolean } | null,
+  myTaskIds: Set<string>
+): WorkflowTask | null {
+  if (!instance || instance.status !== "in_progress" || !user) return null;
+  const pending = instance.tasks.filter((task) => task.status === "pending" || task.status === "escalated");
+  if (pending.length === 0) return null;
+
+  const mine =
+    pending.find((task) => sameId(task.assignee_id, user.id) || myTaskIds.has(String(task.id).toLowerCase())) ?? null;
+  if (mine) return mine;
+
+  // Admins can clear a stuck Active step from the PR page (backend already
+  // allows complete_task for any authenticated actor; the old UI only linked
+  // to My Tasks, which is empty when you aren't the assignee).
+  if (!canActAsApprover(user)) return null;
+  return (
+    pending.find((task) => task.step_index === instance.current_step_index) ??
+    pending[0] ??
+    null
+  );
+}
 
 const nextSteps: Record<string, { new_status: string; lifecycle_status: string; label: string }[]> = {
   draft: [
@@ -52,6 +88,10 @@ export default function RequisitionDetailPage() {
   const [requisition, setRequisition] = useState<Requisition | null>(null);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [workflowInstance, setWorkflowInstance] = useState<WorkflowInstance | null>(null);
+  // Prevents the 1-second flash of lifecycle Approve/Reject before we know
+  // whether a workflow task is owning the approval.
+  const [workflowCheckDone, setWorkflowCheckDone] = useState(false);
+  const [myTaskIds, setMyTaskIds] = useState<Set<string>>(new Set());
   const [approvalSteps, setApprovalSteps] = useState<ApprovalStep[]>([]);
   const [auditEvents, setAuditEvents] = useState<import("@/lib/types").ProcurementAuditEvent[]>([]);
   const [actorNames, setActorNames] = useState<Record<string, string>>({});
@@ -69,15 +109,18 @@ export default function RequisitionDetailPage() {
   const [secondaryTab, setSecondaryTab] = useState<"approval" | "audit" | "comments">("approval");
 
   async function load() {
+    setWorkflowCheckDone(false);
     try {
       const data = await getRequisition(params.id);
       setRequisition(data);
-      const [poRes, auditRes] = await Promise.all([
+      const [poRes, auditRes, myTasks] = await Promise.all([
         listPurchaseOrders({ requisition_id: params.id }),
         listRequisitionAuditEvents(params.id),
+        listMyWorkflowTasks({ status: "pending" }).catch(() => [] as WorkflowTask[]),
       ]);
       setPurchaseOrders(poRes.items);
       setAuditEvents(auditRes);
+      setMyTaskIds(new Set(myTasks.map((task) => String(task.id).toLowerCase())));
       // Ariba-style tab visibility: receipts/invoices existence drives which
       // document tabs are shown once the PO exists.
       setDocSignals(await fetchDocumentTabSignals(poRes.items[0]?.id ?? null));
@@ -92,12 +135,15 @@ export default function RequisitionDetailPage() {
       const directory = await listUserDirectory({ limit: 1000 });
       setActorNames(Object.fromEntries(directory.items.map((user) => [user.id, user.full_name || user.email])));
       // Surface the approval flow inline (Ariba-style stepper) if a workflow
-      // instance exists for this requisition.
+      // instance exists for this requisition. Prefer the detail endpoint so
+      // tasks are always present (list payloads have occasionally been empty
+      // in the UI race that hid Approve after 1s).
       const wfRes = await listWorkflowInstances({
         entity_type: "requisition",
         entity_id: params.id,
       });
-      const instance = wfRes.items[0] ?? null;
+      const listed = wfRes.items[0] ?? null;
+      const instance = listed ? await getWorkflowInstance(listed.id).catch(() => listed) : null;
       setWorkflowInstance(instance);
       if (instance) {
         const [definition, approverNames] = await Promise.all([
@@ -110,6 +156,8 @@ export default function RequisitionDetailPage() {
       }
     } catch (err) {
       setError(extractErrorMessage(err));
+    } finally {
+      setWorkflowCheckDone(true);
     }
   }
 
@@ -188,26 +236,20 @@ export default function RequisitionDetailPage() {
 
   // When a multi-step workflow is active, the lifecycle "Approve" shortcut is
   // blocked by the backend. Surface the assigned user's pending WorkflowTask
-  // here instead so Initial Review (etc.) can be approved on this page -- the
-  // Approval Flow diagram itself is read-only and used to flash-then-hide the
-  // old Approve button, which made admins think they couldn't act.
-  const myPendingTask: WorkflowTask | null =
-    currentUser && workflowInstance?.status === "in_progress"
-      ? workflowInstance.tasks.find(
-          (task) =>
-            (task.status === "pending" || task.status === "escalated") && task.assignee_id === currentUser.id
-        ) ?? null
-      : null;
+  // here (admins can also clear the Active step). Hold off showing lifecycle
+  // Approve/Reject until the workflow check finishes so they don't flash for
+  // ~1s and then vanish.
+  const myPendingTask = resolveActionableTask(workflowInstance, currentUser, myTaskIds);
   const pendingWorkflowTaskCount =
     workflowInstance?.status === "in_progress"
       ? workflowInstance.tasks.filter((task) => task.status === "pending" || task.status === "escalated").length
       : 0;
-  const workflowBlocksDirectApprove = pendingWorkflowTaskCount > 0;
+  const workflowBlocksDirectApprove =
+    !workflowCheckDone ||
+    pendingWorkflowTaskCount > 0 ||
+    (requisition.lifecycle_status === "pending_approval" && Boolean(workflowInstance));
   const actions = (nextSteps[requisition.lifecycle_status] ?? []).filter((action) => {
     if (!workflowBlocksDirectApprove) return true;
-    // Hide both lifecycle Approve and Reject while a workflow task is open --
-    // those go through the task engine below (or My Tasks if you're not the
-    // assignee). Direct Reject previously stayed visible and skipped the task.
     return action.lifecycle_status !== "approved" && action.lifecycle_status !== "rejected";
   });
   const actionBar = (
@@ -219,7 +261,7 @@ export default function RequisitionDetailPage() {
             onClick={() => handleWorkflowDecision(myPendingTask.id, "approve")}
             className="btn-primary"
           >
-            Approve
+            Approve{canActAsApprover(currentUser) && !sameId(myPendingTask.assignee_id, currentUser?.id) ? " (admin)" : ""}
           </button>
           <button
             disabled={busy}
@@ -368,7 +410,10 @@ export default function RequisitionDetailPage() {
               requisition.lifecycle_status === "submitted") && (
               <div className="flex flex-wrap justify-end gap-2">{actionBar}</div>
             )}
-            {requisition.lifecycle_status === "pending_approval" && pendingWorkflowTaskCount > 0 && !myPendingTask && (
+            {requisition.lifecycle_status === "pending_approval" &&
+              workflowCheckDone &&
+              pendingWorkflowTaskCount > 0 &&
+              !myPendingTask && (
               <p className="max-w-xs text-right text-xs text-slate-500">
                 Waiting on {pendingWorkflowTaskCount} pending approval
                 {pendingWorkflowTaskCount === 1 ? "" : "s"}. This step is assigned to someone else — open{" "}
@@ -380,8 +425,13 @@ export default function RequisitionDetailPage() {
             )}
             {myPendingTask && (
               <p className="max-w-xs text-right text-xs text-slate-500">
-                Your turn: approve or reject the active step &quot;{myPendingTask.step_name}&quot;.
+                {sameId(myPendingTask.assignee_id, currentUser?.id)
+                  ? `Your turn: approve or reject "${myPendingTask.step_name}".`
+                  : `Admin override: clear the active step "${myPendingTask.step_name}".`}
               </p>
+            )}
+            {requisition.lifecycle_status === "pending_approval" && !workflowCheckDone && (
+              <p className="max-w-xs text-right text-xs text-slate-400">Checking approval workflow…</p>
             )}
           </div>
         </div>
