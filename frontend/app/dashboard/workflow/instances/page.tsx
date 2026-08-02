@@ -18,12 +18,13 @@ const ENTITY_TYPES = [
   "supplier",
 ];
 
-const STATUSES = ["in_progress", "completed", "rejected"];
+const STATUSES = ["in_progress", "completed", "rejected", "blocked"];
 
 const statusColors: Record<string, string> = {
   in_progress: "bg-amber-100 text-amber-700",
   completed: "bg-green-100 text-green-700",
   rejected: "bg-red-100 text-red-700",
+  blocked: "bg-orange-100 text-orange-700",
 };
 
 export default function WorkflowInstancesPage() {

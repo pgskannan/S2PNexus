@@ -272,6 +272,38 @@ async def transition_requisition_endpoint(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> ProcurementRequisitionResponse:
+    if transition_data.lifecycle_status == "approved":
+        # Block the one-click "Approve" shortcut whenever a real multi-step
+        # approval workflow is actively waiting on OTHER approvers -- without
+        # this, anyone who can reach this endpoint could force-complete the
+        # whole instance (auto-approving every remaining pending task, see
+        # below) and skip straight to PO creation, which is exactly what
+        # happened 2026-08-02 (Admin clicked "Approve" on a PR with 2 of 3
+        # approval steps still pending; confirmed via the audit log jumping
+        # straight from "Workflow Started" to "Transition Approved" with no
+        # individual task-approval events in between). This shortcut still
+        # works unchanged for requisitions with NO workflow definition
+        # configured at all (no in_progress instance exists to block on).
+        pending_result = await db.execute(
+            select(WorkflowTask.id)
+            .join(WorkflowInstance, WorkflowTask.instance_id == WorkflowInstance.id)
+            .where(
+                WorkflowInstance.entity_type == "requisition",
+                WorkflowInstance.entity_id == requisition_id,
+                WorkflowInstance.status == "in_progress",
+                WorkflowTask.status.in_(["pending", "escalated"]),
+            )
+        )
+        pending_count = len(pending_result.scalars().all())
+        if pending_count > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"This requisition has {pending_count} pending approval task(s) in an active workflow. "
+                    "Approve via the assigned approver's task inbox instead of this direct action."
+                ),
+            )
+
     handler = TransitionRequisitionCommandHandler(transition_requisition_service=transition_requisition)
     command = TransitionRequisitionCommand(
         requisition_id=requisition_id,

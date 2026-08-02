@@ -1,12 +1,15 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import ReactFlow, {
   Background,
   Controls,
+  Handle,
   MarkerType,
+  Position,
   type Edge,
   type Node,
+  type NodeProps,
   useEdgesState,
   type OnConnect,
   type Connection,
@@ -28,6 +31,9 @@ export interface WorkflowStepValue {
   escalate_after_hours?: number;
   escalate_to?: string;
   rules?: Record<string, unknown>;
+  // Free-text "why this approval" -- shown as a hover tooltip on the canvas
+  // node and editable / AI-drafted in the node inspector.
+  reason?: string;
   recipients?: string[];
   message_template?: string;
   // True parallel branches: two or more approval/notification/auto steps
@@ -57,66 +63,240 @@ const nodeColors: Record<string, string> = {
   end: "#dc2626",
 };
 
+const STEP_HINTS: Record<string, string> = {
+  start: "Start of the workflow",
+  condition: "Routes the flow based on a rule",
+  approval: "Requires an approver to sign off",
+  notification: "Sends a notification",
+  auto: "Approves automatically",
+  ai: "AI-assisted decision",
+  end: "End of the workflow",
+};
+
+/** Custom canvas node: shows the step label plus a hover tooltip explaining
+ * why the step exists. The tooltip surfaces the step's `reason` (the editable
+ * / AI-drafted "why this approval" text) or, for approval steps with no
+ * reason set yet, a gentle nudge to add one in the inspector. */
+function WorkflowNode({ data, selected }: NodeProps) {
+  const [showTip, setShowTip] = useState(false);
+  const label = String(data.label ?? "");
+  const color = String(data.color ?? "#64748b");
+  const stepType = String(data.step_type ?? "");
+  const reason = typeof data.reason === "string" ? data.reason.trim() : "";
+
+  const tipTitle = reason ? "Why this step" : stepType === "approval" ? "Why this approval" : STEP_HINTS[stepType] ?? "Workflow step";
+
+  return (
+    <div className="relative" onMouseEnter={() => setShowTip(true)} onMouseLeave={() => setShowTip(false)}>
+      <div
+        className="rounded-md border bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition-shadow hover:shadow-md"
+        style={{ borderColor: selected ? "#2563eb" : color, borderLeftWidth: 4 }}
+      >
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+          <span className="whitespace-nowrap">{label}</span>
+        </span>
+      </div>
+      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+      {showTip && (
+        <div className="absolute left-1/2 top-full z-50 mt-1.5 w-64 -translate-x-1/2 rounded-lg border border-slate-200 bg-white p-2.5 text-left text-xs shadow-xl">
+          <p className="font-semibold text-slate-700">{tipTitle}</p>
+          {reason ? (
+            <p className="mt-0.5 text-slate-600">{reason}</p>
+          ) : stepType === "approval" ? (
+            <p className="mt-0.5 text-slate-400">
+              No reason set — select this step and add one (or use ✨ AI) in the inspector below.
+            </p>
+          ) : (
+            <p className="mt-0.5 text-slate-400">{STEP_HINTS[stepType] ?? "Workflow step"}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const nodeTypes = { workflow: WorkflowNode };
+
+/**
+ * Turn the step array into a faithful ReactFlow graph.
+ *
+ * The edges mirror the runtime engine (backend/app/crud/workflow.py
+ * `_run_from_step`):
+ *  - a `condition` step routes via its on_true/on_false targets (green "Yes"
+ *    / red "No" edges), falling through to the next index when unset;
+ *  - steps sharing a `parallel_group` fan out from the group entry to every
+ *    member and converge on the group's `parallel_next_step` (or the index
+ *    after the last member when unset) -- drawn as purple "‖" edges;
+ *  - everything else follows the main line to the next step, then to End.
+ */
 function buildInitialFlow(steps: Array<Record<string, unknown>>) {
-  const startNode = {
-    id: "start",
-    type: "default",
-    position: { x: 40, y: 60 },
-    data: { label: "Start", step_type: "start", color: nodeColors.start },
-  };
+  const n = steps.length;
 
-  const nodes: Node[] = [startNode];
-  const edges: Edge[] = [];
-
+  // Same grouping the engine uses: indices of every member per parallel_group.
+  const groups = new Map<string, number[]>();
   steps.forEach((step, index) => {
-    const id = `step-${index}`;
+    const group = typeof step.parallel_group === "string" ? step.parallel_group.trim() : "";
+    if (!group) return;
+    const bucket = groups.get(group) ?? [];
+    bucket.push(index);
+    groups.set(group, bucket);
+  });
+  const memberSet = new Set<number>();
+  groups.forEach((members) => members.forEach((m) => memberSet.add(m)));
+
+  // Layout: left-to-right columns; parallel members stack vertically so the
+  // fan-out reads clearly.
+  const positions: Record<number, { x: number; y: number }> = {};
+  let cursorX = 40;
+  let i = 0;
+  while (i < n) {
+    if (memberSet.has(i)) {
+      const members = groups.get(String(steps[i].parallel_group))!;
+      members.forEach((memberIndex, offset) => {
+        positions[memberIndex] = { x: cursorX, y: 60 + offset * 130 };
+      });
+      cursorX += 230;
+      i += members.length;
+    } else {
+      positions[i] = { x: cursorX, y: 60 };
+      cursorX += 230;
+      i += 1;
+    }
+  }
+
+  const nodes: Node[] = [
+    {
+      id: "start",
+      type: "workflow",
+      position: { x: 40, y: 60 },
+      data: { label: "Start", step_type: "start", color: nodeColors.start },
+    },
+  ];
+  steps.forEach((step, index) => {
     const stepType = String(step.step_type || "approval");
-    const parallelGroup = typeof step.parallel_group === "string" ? step.parallel_group : "";
+    const parallelGroup = typeof step.parallel_group === "string" ? step.parallel_group.trim() : "";
     const label = parallelGroup
       ? `‖ ${String(step.name || `Step ${index + 1}`)} (${parallelGroup})`
       : String(step.name || `Step ${index + 1}`);
-    const node = {
-      id,
-      type: "default",
-      position: { x: 260 + Math.floor(index / 2) * 220, y: 60 + (index % 2) * 140 },
+    nodes.push({
+      id: `step-${index}`,
+      type: "workflow",
+      position: positions[index],
       data: {
         label,
         step_type: stepType,
         color: nodeColors[stepType] || nodeColors.approval,
+        reason: typeof step.reason === "string" && step.reason ? step.reason : undefined,
       },
-    };
-    nodes.push(node);
-    edges.push({
-      id: `edge-${nodes.length - 1}`,
-      source: index === 0 ? startNode.id : `step-${index - 1}`,
-      target: id,
-      markerEnd: { type: MarkerType.ArrowClosed },
-      label: stepType === "condition" ? "next" : parallelGroup ? "‖" : undefined,
     });
   });
-
-  const endNode = {
+  nodes.push({
     id: "end",
-    type: "default",
-    position: { x: 260 + Math.floor((steps.length || 0) / 2) * 220, y: 60 + ((steps.length || 0) % 2) * 140 },
+    type: "workflow",
+    position: { x: cursorX, y: 60 },
     data: { label: "End", step_type: "end", color: nodeColors.end },
+  });
+
+  const edges: Edge[] = [];
+  const seen = new Set<string>();
+  const addEdge = (source: string, target: string, opts: Partial<Edge> = {}) => {
+    if (!source || !target || source === target) return;
+    const key = `${source}->${target}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    edges.push({
+      id: `edge-${edges.length}`,
+      source,
+      target,
+      markerEnd: { type: MarkerType.ArrowClosed },
+      ...opts,
+    } as Edge);
   };
-  nodes.push(endNode);
-  if (steps.length > 0) {
-    edges.push({
-      id: `edge-end-${steps.length}`,
-      source: `step-${steps.length - 1}`,
-      target: endNode.id,
-      markerEnd: { type: MarkerType.ArrowClosed },
-    });
-  } else {
-    edges.push({
-      id: "edge-start-end",
-      source: startNode.id,
-      target: endNode.id,
-      markerEnd: { type: MarkerType.ArrowClosed },
-    });
+
+  // Map a (possibly null) step reference to a node id; anything past the last
+  // step is the End node.
+  const resolveTarget = (indexOrNull: number | null | undefined, fallbackIndex: number): string => {
+    const target = indexOrNull == null ? fallbackIndex : indexOrNull;
+    return target >= n ? "end" : `step-${target}`;
+  };
+
+  // Entry source for each parallel group = the node just before its first
+  // member on the main line (Start when the group opens the flow).
+  const groupEntry: Record<number, string> = {};
+  groups.forEach((members) => {
+    const first = members[0];
+    groupEntry[first] = first === 0 ? "start" : `step-${first - 1}`;
+  });
+
+  for (let index = 0; index < n; index++) {
+    const step = steps[index];
+    const stepType = String(step.step_type || "approval");
+    const id = `step-${index}`;
+
+    if (memberSet.has(index)) {
+      const members = groups.get(String(step.parallel_group))!;
+      // Fan-out: group entry -> every member.
+      const entry = groupEntry[index];
+      if (entry) {
+        members.forEach((memberIndex) =>
+          addEdge(entry, `step-${memberIndex}`, {
+            label: "‖",
+            style: { stroke: nodeColors.condition },
+            labelStyle: { fill: nodeColors.condition, fontWeight: 700 },
+          })
+        );
+      }
+      // Converge: every member -> the shared continue target.
+      const parallelNext = typeof step.parallel_next_step === "number" ? (step.parallel_next_step as number) : null;
+      const fallback = Math.max(...members) + 1;
+      const target = resolveTarget(parallelNext, fallback);
+      addEdge(id, target, {
+        label: "‖",
+        style: { stroke: nodeColors.condition },
+        labelStyle: { fill: nodeColors.condition, fontWeight: 700 },
+      });
+    } else if (stepType === "condition") {
+      // Incoming edge, then the two branch edges.
+      addEdge(index === 0 ? "start" : `step-${index - 1}`, id, {});
+      const yesTarget = resolveTarget(
+        typeof step.on_true_next_step === "number" ? (step.on_true_next_step as number) : null,
+        index + 1
+      );
+      addEdge(id, yesTarget, {
+        label: "Yes",
+        style: { stroke: "#16a34a" },
+        labelStyle: { fill: "#16a34a", fontWeight: 700 },
+      });
+      const noTarget = resolveTarget(
+        typeof step.on_false_next_step === "number" ? (step.on_false_next_step as number) : null,
+        index + 1
+      );
+      addEdge(id, noTarget, {
+        label: "No",
+        style: { stroke: "#dc2626" },
+        labelStyle: { fill: "#dc2626", fontWeight: 700 },
+      });
+    } else {
+      // Plain main-line step. Its incoming edge is skipped when the previous
+      // step is a condition (that node's Yes/No edges route in instead) or a
+      // parallel member (the group's converge edges route in instead).
+      const prevIsCondition = index > 0 && String(steps[index - 1].step_type) === "condition";
+      const prevIsGroupMember = memberSet.has(index - 1);
+      if (!prevIsCondition && !prevIsGroupMember) {
+        addEdge(index === 0 ? "start" : `step-${index - 1}`, id, {});
+      }
+      if (index === n - 1) {
+        addEdge(id, "end", {});
+      }
+    }
   }
+
+  if (n === 0) {
+    addEdge("start", "end", {});
+  }
+
   return { nodes, edges };
 }
 
@@ -136,6 +316,7 @@ function mapStepsToValue(steps: Array<Record<string, unknown>>): WorkflowStepVal
     escalate_after_hours: typeof step.escalate_after_hours === "number" ? step.escalate_after_hours : undefined,
     escalate_to: typeof step.escalate_to === "string" ? step.escalate_to : undefined,
     rules: step.rules && typeof step.rules === "object" && !Array.isArray(step.rules) ? (step.rules as Record<string, unknown>) : undefined,
+    reason: typeof step.reason === "string" ? step.reason : undefined,
     recipients: Array.isArray(step.recipients) ? step.recipients.map((item) => String(item)) : [],
     message_template: typeof step.message_template === "string" ? step.message_template : undefined,
     parallel_group: typeof step.parallel_group === "string" && step.parallel_group ? step.parallel_group : undefined,
@@ -158,6 +339,7 @@ function mapValueToSteps(values: WorkflowStepValue[]): Array<Record<string, unkn
     escalate_after_hours: step.escalate_after_hours,
     escalate_to: step.escalate_to,
     rules: step.rules,
+    reason: step.reason || undefined,
     recipients: step.recipients || [],
     message_template: step.message_template,
     parallel_group: step.parallel_group || undefined,
@@ -310,6 +492,7 @@ export function WorkflowCanvas({ value, onChange, selectedNodeId, onSelectNode, 
         <ReactFlow
           nodes={flowNodes}
           edges={flowEdges}
+          nodeTypes={nodeTypes}
           onConnect={handleConnect}
           onNodeClick={(event, node) => onSelectNode?.(node.id)}
           fitView

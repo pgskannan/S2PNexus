@@ -57,6 +57,9 @@ class WorkflowStep(BaseModel):
     required_approvals: int = Field(default=1, ge=1)
     escalate_after_hours: Optional[int] = Field(default=None, ge=1)
     escalate_to: Optional[UUID] = None
+    # Human-readable "why this approval" -- shown as a hover tooltip on the
+    # designer canvas node and editable / AI-drafted in the node inspector.
+    reason: Optional[str] = Field(default=None, max_length=2000)
     rules: dict[str, Any] = Field(default_factory=dict)
 
     # notification
@@ -112,6 +115,20 @@ class WorkflowDefinitionCreate(BaseModel):
                 )
         return self
 
+    @model_validator(mode="after")
+    def _validate_approval_steps(self) -> "WorkflowDefinitionCreate":
+        """An approval step that can never resolve an approver is a silent
+        auto-approval waiting to happen. The runtime engine now blocks (rather
+        than skips) such steps, but rejecting the definition up front is
+        better. Mirrors the designer's client-side check."""
+        for index, step in enumerate(self.steps):
+            if step.step_type == "approval" and not step.approvers and not step.role_code:
+                raise ValueError(
+                    f"Step {index} ('{step.name}'): approval steps need at least one "
+                    "approver, or a role_code to resolve approvers from"
+                )
+        return self
+
 
 class WorkflowDefinitionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -151,6 +168,7 @@ class WorkflowTaskResponse(BaseModel):
     instance_id: UUID
     step_index: int
     step_name: str
+    reason: Optional[str] = None
     assignee_id: UUID
     status: str
     due_at: Optional[datetime] = None

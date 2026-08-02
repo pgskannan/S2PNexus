@@ -234,6 +234,51 @@ async def test_amount_tiered_role_seeds_still_work_inside_a_group(db_session):
     assert LEGAL_USER_ID in assignees
 
 
+@pytest.mark.asyncio
+async def test_unresolvable_role_code_in_group_blocks_instance_not_silently_satisfied(db_session):
+    """Regression guard for the gap found while reconciling with the
+    top-level "block, don't skip" fix (2026-08-02): a parallel-group member
+    with a role_code that resolves to zero approvers must block the whole
+    instance, the same way an unresolvable top-level approval step does --
+    NOT be silently treated as instantly satisfied by
+    _parallel_group_is_complete, which would let the group (and the
+    instance) complete with a branch nobody ever actually signed off on."""
+    steps = [
+        WorkflowStep(
+            name="Finance approval",
+            step_type="approval",
+            approvers=[FINANCE_USER_ID],
+            parallel_group="fin_legal",
+            parallel_next_step=2,
+        ),
+        WorkflowStep(
+            name="Legal approval",
+            step_type="approval",
+            role_code="LEGAL_ROLE_WITH_NO_SEED",
+            parallel_group="fin_legal",
+            parallel_next_step=2,
+        ),
+        WorkflowStep(name="Final sign-off", step_type="approval", approvers=[uuid.uuid4()]),
+    ]
+    definition = await create_workflow_definition(
+        db_session,
+        WorkflowDefinitionCreate(name="Parallel t8", entity_type="test_parallel", steps=steps),
+        created_by=USER_ID,
+    )
+    instance = await _start(db_session, definition)
+
+    assert instance.status == "blocked"
+    assert instance.current_step_index == 0
+    # The resolvable member (Finance) still gets its task -- only the group
+    # as a whole is blocked, mirroring the top-level approval path's
+    # "block, don't skip" behavior instead of hanging with no visible cause.
+    assignees = {t.assignee_id for t in instance.tasks}
+    assert assignees == {FINANCE_USER_ID}
+    # Never silently completes past the group.
+    assert not any(t.step_index == 2 for t in instance.tasks)
+    assert instance.completed_at is None
+
+
 # ---------------------------------------------------------------------------
 # Schema validation (WorkflowDefinitionCreate._validate_parallel_groups)
 # ---------------------------------------------------------------------------

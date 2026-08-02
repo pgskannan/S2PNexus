@@ -93,6 +93,11 @@ export default function WorkflowPage() {
                   >
                     {task.step_name}
                   </Link>
+                  {task.reason && (
+                    <p className="mt-0.5 max-w-md text-xs text-slate-500">
+                      <span className="font-medium text-slate-600">Why:</span> {task.reason}
+                    </p>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`badge ${statusColors[task.status] ?? "bg-slate-100 text-slate-700"}`}>

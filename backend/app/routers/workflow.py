@@ -12,6 +12,7 @@ from app.crud.workflow import (
     delete_workflow_definition,
     escalate_overdue_tasks,
     get_my_tasks,
+    retry_blocked_instance,
     get_notifications,
     get_notifications_count,
     get_workflow_definition,
@@ -204,6 +205,29 @@ async def get_workflow_instance_endpoint(
     instance = await get_workflow_instance(db, instance_id)
     if not instance:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow instance not found")
+    return WorkflowInstanceResponse.model_validate(instance)
+
+
+@router.post(
+    "/instances/{instance_id}/retry",
+    response_model=WorkflowInstanceResponse,
+    summary="Retry a blocked workflow instance",
+    description="Re-runs a blocked instance from the step it stalled on, after the "
+    "approver-resolution problem is fixed (e.g. an approver seed is activated). "
+    "Administrators only.",
+)
+async def retry_blocked_instance_endpoint(
+    instance_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> WorkflowInstanceResponse:
+    _require_admin(current_user)
+    instance = await retry_blocked_instance(db, instance_id)
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Instance not found or not in a blocked state",
+        )
     return WorkflowInstanceResponse.model_validate(instance)
 
 

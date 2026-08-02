@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 VALID_STEP_TYPES = {"condition", "approval", "notification"}
-VALID_INSTANCE_STATUSES = {"in_progress", "completed", "rejected", "cancelled"}
+VALID_INSTANCE_STATUSES = {"in_progress", "completed", "rejected", "cancelled", "blocked"}
 VALID_TASK_STATUSES = {"pending", "approved", "rejected", "escalated", "cancelled"}
 
 
@@ -85,6 +85,7 @@ class WorkflowTask(Base):
     instance_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("workflow_instances.id", ondelete="CASCADE"), nullable=False, index=True)
     step_index: Mapped[int] = mapped_column(Integer, nullable=False)
     step_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True, comment="Snapshot of the approval step's 'why' (reason) at task creation")
     assignee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

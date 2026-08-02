@@ -1048,6 +1048,16 @@ export async function updateAiProvider(provider: string): Promise<AiProviderResp
   return data;
 }
 
+// Single-prompt text generation via the configured AI provider (POST
+// /ai/generate). Used by the workflow designer's "✨ AI-draft reason" button.
+export async function generateAiText(prompt: string, systemPrompt?: string): Promise<string> {
+  const { data } = await api.post<{ text: string }>("/ai/generate", {
+    prompt,
+    system_prompt: systemPrompt,
+  });
+  return data.text;
+}
+
 // ---- AI Agents ----
 
 export async function queryAgent(

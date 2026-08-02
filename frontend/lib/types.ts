@@ -664,6 +664,7 @@ export interface WorkflowTask {
   instance_id: string;
   step_index: number;
   step_name: string;
+  reason?: string | null;
   assignee_id: string;
   status: string;
   due_at?: string | null;

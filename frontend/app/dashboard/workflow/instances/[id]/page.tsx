@@ -58,10 +58,19 @@ export default function WorkflowInstanceDetailPage() {
             <h1 className="text-xl font-semibold">Workflow instance</h1>
             <p className="mt-1 text-sm text-slate-500">{instance.entity_type}</p>
           </div>
-          <span className="badge bg-slate-100 text-slate-700">
+          <span
+            className={`badge ${instance.status === "blocked" ? "bg-orange-100 text-orange-700" : "bg-slate-100 text-slate-700"}`}
+          >
             {instance.status}
           </span>
         </div>
+
+        {instance.status === "blocked" && (
+          <p className="rounded border border-orange-200 bg-orange-50 px-3 py-2 text-sm text-orange-700">
+            This instance is blocked: an approval step cannot resolve any approvers. Fix the approver matrix / definition,
+            then an administrator can retry it.
+          </p>
+        )}
 
         <dl className="grid grid-cols-2 gap-4 text-sm">
           <div>

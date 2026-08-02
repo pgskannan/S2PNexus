@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { MousePointerClick, X } from "lucide-react";
 import { createWorkflowDefinition, deleteWorkflowDefinition, extractErrorMessage, listWorkflowDefinitions, updateWorkflowDefinition } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth-store";
 import type { WorkflowDefinition } from "@/lib/types";
@@ -48,6 +49,7 @@ export default function WorkflowDefinitionsPage() {
       escalate_after_hours: typeof step.escalate_after_hours === "number" ? step.escalate_after_hours : undefined,
       escalate_to: typeof step.escalate_to === "string" ? step.escalate_to : undefined,
       rules: step.rules && typeof step.rules === "object" && !Array.isArray(step.rules) ? (step.rules as Record<string, unknown>) : undefined,
+      reason: typeof step.reason === "string" ? step.reason : undefined,
       recipients: Array.isArray(step.recipients) ? step.recipients.map((item) => String(item)) : [],
       message_template: typeof step.message_template === "string" ? step.message_template : undefined,
       parallel_group: typeof step.parallel_group === "string" && step.parallel_group ? step.parallel_group : undefined,
@@ -339,34 +341,71 @@ export default function WorkflowDefinitionsPage() {
         </div>
       </div>
 
-      {/* Canvas + inspector get the full page width below the table/fields
-          row -- cramming them into the narrow 0.9fr form column made the
-          condition true/false selects and the parallel-group field easy to
-          miss (2026-08-02 feedback: they read as "missing" when they were
-          actually just squeezed off-screen). */}
-      <div className="card space-y-4">
-        <div>
-          <h3 className="text-base font-semibold text-slate-900">Workflow canvas</h3>
-          <p className="text-sm text-slate-500">
-            Click a step to edit it below -- including a condition's true/false targets and a step's parallel group.
-          </p>
-        </div>
-        <WorkflowCanvas
-          value={form.steps}
-          onChange={(steps) => setForm((current) => ({ ...current, steps }))}
-          selectedNodeId={selectedNodeId}
-          onSelectNode={setSelectedNodeId}
-        />
-        <div className="rounded-lg border border-slate-200 p-4">
-          <h3 className="text-sm font-semibold">Node inspector</h3>
+      {/* Designer: canvas on top, node inspector docked as a bottom panel.
+          The inspector is the one place a condition's Yes/No branch targets and
+          a step's parallel group are set, so it gets a dedicated full-width
+          panel instead of being buried in the form column (2026-08-02). */}
+      <div className="card overflow-hidden">
+        <div className="p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-slate-900">Workflow canvas</h3>
+              <p className="text-sm text-slate-500">
+                Build the flow left to right. Conditions route via green Yes / red No branches; steps sharing a purple
+                “‖” group run in parallel. Click a step to edit it in the inspector panel below.
+              </p>
+            </div>
+          </div>
           <div className="mt-3">
-            <WorkflowNodeInspector
-              selectedNode={selectedNode as WorkflowStepValue | null}
-              onUpdate={updateSelectedNode}
-              entityType={form.entity_type}
-              allSteps={form.steps}
+            <WorkflowCanvas
+              value={form.steps}
+              onChange={(steps) => setForm((current) => ({ ...current, steps }))}
+              selectedNodeId={selectedNodeId}
+              onSelectNode={setSelectedNodeId}
             />
           </div>
+        </div>
+
+        {/* Bottom-docked node inspector panel */}
+        <div className="border-t border-slate-200 bg-slate-50">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2.5">
+            <div className="flex min-w-0 items-center gap-2 text-sm">
+              <span className="shrink-0 font-semibold text-slate-700">Node inspector</span>
+              {selectedNode && (
+                <>
+                  <span className="text-slate-300">·</span>
+                  <span className="truncate text-slate-500">
+                    Editing <span className="font-medium text-slate-700">{selectedNode.name}</span>
+                  </span>
+                </>
+              )}
+            </div>
+            {selectedNode && (
+              <button
+                type="button"
+                className="flex shrink-0 items-center gap-1 text-xs text-slate-500 hover:text-slate-700"
+                onClick={() => setSelectedNodeId(null)}
+              >
+                <X className="h-3.5 w-3.5" />
+                Close
+              </button>
+            )}
+          </div>
+          {selectedNode ? (
+            <div className="max-h-[520px] overflow-y-auto p-4">
+              <WorkflowNodeInspector
+                selectedNode={selectedNode as WorkflowStepValue | null}
+                onUpdate={updateSelectedNode}
+                entityType={form.entity_type}
+                allSteps={form.steps}
+              />
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 p-4 text-sm text-slate-500">
+              <MousePointerClick className="h-4 w-4 text-slate-400" />
+              Select a step on the canvas to edit its properties in this panel.
+            </div>
+          )}
         </div>
       </div>
 

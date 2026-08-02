@@ -246,11 +246,25 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
             ).first() is not None
 
             if not already_activated:
+                any_unresolved = False
                 for member_index in member_indices:
                     member_step = steps[member_index]
                     member_type = member_step.get("step_type")
                     if member_type == "approval":
-                        await _create_approval_tasks(db, instance, member_step, member_index)
+                        created = await _create_approval_tasks(db, instance, member_step, member_index)
+                        if not created:
+                            # Same principle as the non-parallel approval path
+                            # below: a member that can't resolve any approver
+                            # (e.g. its role_code's ApproverSeed got
+                            # deactivated after this definition was
+                            # published -- the schema validator can't catch
+                            # that ahead of time) must not be silently
+                            # treated as "satisfied" by
+                            # _parallel_group_is_complete, or the group -- and
+                            # the whole instance -- could complete with a
+                            # branch that no human ever actually signed off
+                            # on.
+                            any_unresolved = True
                     elif member_type == "notification":
                         template = member_step.get("message_template") or member_step.get("name") or "Workflow notification"
                         message = (
@@ -280,6 +294,12 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
                     # "condition"/"ai" aren't valid parallel_group members --
                     # rejected at the schema level (WorkflowDefinitionCreate's
                     # _validate_parallel_groups), so nothing to handle here.
+
+                if any_unresolved:
+                    instance.status = "blocked"
+                    instance.current_step_index = step_index
+                    await db.flush()
+                    return
 
             if not await _parallel_group_is_complete(db, instance, steps, member_indices):
                 instance.status = "in_progress"
@@ -360,9 +380,15 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
         if step_type == "approval":
             created = await _create_approval_tasks(db, instance, step, step_index)
             if not created:
-                # No approvers resolvable -- skip this node rather than hang.
-                step_index += 1
-                continue
+                # No approvers resolvable. Never silently skip this node --
+                # skipping would let the instance "complete" with no human
+                # sign-off and e.g. auto-create a PO. Block the instance for
+                # intervention instead; an admin can fix approver resolution
+                # and retry via POST /workflow/instances/{id}/retry.
+                instance.status = "blocked"
+                instance.current_step_index = step_index
+                await db.flush()
+                return
             instance.status = "in_progress"
             return  # wait for human input
 
@@ -420,6 +446,9 @@ async def _create_approval_tasks(
                 instance_id=instance.id,
                 step_index=step_index,
                 step_name=step.get("name", "Approval"),
+                # Snapshot the step's "why" so the approver sees it even if the
+                # definition is later edited/versioned.
+                reason=step.get("reason"),
                 assignee_id=approver_id,
                 status="pending",
                 due_at=due_at,
@@ -502,6 +531,41 @@ async def start_workflow_instance(
     steps = definition_steps_override if definition_steps_override is not None else definition.steps
     await _run_from_step(db, instance, steps, 0)
 
+    await db.commit()
+    await db.refresh(instance)
+    return instance
+
+
+async def retry_blocked_instance(db: AsyncSession, instance_id: UUID | str) -> Optional[WorkflowInstance]:
+    """Re-run a blocked workflow instance from the step it stalled on.
+
+    A blocked instance is one where an approval step could not resolve any
+    approvers (e.g. a role with no active approver seed) -- see
+    _run_from_step. After an admin fixes the underlying cause (activates a
+    seed, etc.), this re-enters the engine at the blocked step. Returns None
+    if the instance doesn't exist or isn't blocked.
+    """
+    instance = await get_workflow_instance(db, instance_id)
+    if not instance or instance.status != "blocked":
+        return None
+
+    definition = await get_workflow_definition(db, instance.definition_id)
+    if not definition:
+        return None
+
+    # Cancel any stray pending tasks (a blocked instance normally has none,
+    # but be defensive -- e.g. a parallel-group sibling left waiting).
+    result = await db.execute(
+        select(WorkflowTask).where(
+            WorkflowTask.instance_id == instance.id,
+            WorkflowTask.status == "pending",
+        )
+    )
+    for task in result.scalars().all():
+        task.status = "cancelled"
+
+    instance.status = "in_progress"
+    await _run_from_step(db, instance, definition.steps, instance.current_step_index)
     await db.commit()
     await db.refresh(instance)
     return instance

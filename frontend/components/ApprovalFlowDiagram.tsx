@@ -21,6 +21,8 @@ export type ApprovalStep = {
   status: ApprovalStepStatus;
   decided_at?: string;
   comment?: string;
+  // The approval step's "why" -- shown on hover and in the detail panel.
+  reason?: string;
 };
 
 type Props = {
@@ -35,6 +37,8 @@ function norm(status: ApprovalStepStatus): string {
   if (s === "APPROVED") return "APPROVED";
   if (s === "REJECTED") return "REJECTED";
   if (s === "WAITING") return "WAITING";
+  if (s === "BLOCKED") return "BLOCKED";
+  if (s === "NOT_IN_PATH") return "NOT_IN_PATH";
   return "PENDING";
 }
 
@@ -66,6 +70,8 @@ function StatusPill({ status }: { status: ApprovalStepStatus }) {
     PENDING: { dot: "bg-amber-500", label: "Active", cls: "text-amber-700" },
     WAITING: { dot: "bg-slate-300", label: "Waiting", cls: "text-slate-500" },
     REJECTED: { dot: "bg-red-500", label: "Rejected", cls: "text-red-700" },
+    BLOCKED: { dot: "bg-orange-500", label: "Blocked", cls: "text-orange-700" },
+    NOT_IN_PATH: { dot: "bg-slate-200", label: "Not in path", cls: "text-slate-400" },
   };
   const c = cfg[s] ?? { dot: "bg-slate-300", label: status, cls: "text-slate-500" };
   return (
@@ -105,18 +111,51 @@ function StepCard({
   const s = norm(step.status);
 
   const stripeColor =
-    s === "APPROVED" ? "bg-teal-500" : s === "PENDING" ? "bg-amber-400" : s === "REJECTED" ? "bg-red-400" : "bg-slate-300";
+    s === "APPROVED"
+      ? "bg-teal-500"
+      : s === "PENDING"
+      ? "bg-amber-400"
+      : s === "REJECTED"
+      ? "bg-red-400"
+      : s === "BLOCKED"
+      ? "bg-orange-400"
+      : s === "NOT_IN_PATH"
+      ? "bg-slate-200"
+      : "bg-slate-300";
 
   const borderColor =
-    s === "APPROVED" ? "border-teal-200" : s === "PENDING" ? "border-amber-200" : s === "REJECTED" ? "border-red-200" : "border-slate-200";
+    s === "APPROVED"
+      ? "border-teal-200"
+      : s === "PENDING"
+      ? "border-amber-200"
+      : s === "REJECTED"
+      ? "border-red-200"
+      : s === "BLOCKED"
+      ? "border-orange-200"
+      : s === "NOT_IN_PATH"
+      ? "border-slate-100"
+      : "border-slate-200";
 
-  const avatarCls = s === "APPROVED" ? "bg-teal-100 text-teal-800" : s === "PENDING" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600";
+  const avatarCls =
+    s === "APPROVED"
+      ? "bg-teal-100 text-teal-800"
+      : s === "PENDING"
+      ? "bg-amber-100 text-amber-800"
+      : s === "BLOCKED"
+      ? "bg-orange-100 text-orange-800"
+      : s === "NOT_IN_PATH"
+      ? "bg-slate-100 text-slate-300"
+      : "bg-slate-100 text-slate-600";
 
   return (
     <button
       type="button"
       onClick={() => onSelect(step)}
-      title={step.comment || `${step.approver_name}: ${norm(step.status).toLowerCase()}`}
+      title={
+        step.reason
+          ? `Why: ${step.reason}`
+          : step.comment || `${step.approver_name}: ${norm(step.status).toLowerCase()}`
+      }
       className={`relative flex-shrink-0 w-[180px] rounded-xl border bg-white shadow-sm text-left
         transition-all hover:shadow-md focus:outline-none
         ${borderColor} ${isSelected ? "ring-2 ring-offset-1 ring-slate-400" : ""}`}
@@ -173,6 +212,7 @@ function DetailsPanel({ step, onClose }: { step: ApprovalStep; onClose: () => vo
       </div>
       <div className="p-3 space-y-2 overflow-y-auto">
         {[
+          { label: "Reason", value: step.reason || "—" },
           { label: "Role", value: step.approver_role || "—" },
           { label: "Decided", value: step.decided_at ? new Date(step.decided_at).toLocaleString() : "—" },
           { label: "Comment", value: step.comment || "—" },

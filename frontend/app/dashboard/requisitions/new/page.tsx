@@ -142,6 +142,11 @@ export default function NewRequisitionPage() {
       setStep(1);
       return;
     }
+    if (!form.estimated_value || Number(form.estimated_value) <= 0) {
+      setError("Estimated value is required — the approval flow routes on it (estimated cost, not line-item totals).");
+      setStep(1);
+      return;
+    }
     setError(null);
     setLineItemWarning(null);
     setLoading(true);
@@ -342,10 +347,14 @@ export default function NewRequisitionPage() {
                     type="number"
                     min="0"
                     step="0.01"
+                    required
                     className="input-field"
                     value={form.estimated_value}
                     onChange={(e) => setForm({ ...form, estimated_value: e.target.value })}
                   />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Drives the approval flow — thresholds compare this estimated cost, not line-item totals.
+                  </p>
                 </div>
                 <div>
                   <label className="label" htmlFor="currency">

@@ -9,6 +9,91 @@ import type { ApprovalStep, ApprovalStepStatus } from "@/components/ApprovalFlow
 // order, including steps that haven't been reached yet (shown as "Waiting")
 // -- this maps one onto the other.
 
+type ConditionOp = "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "in";
+
+/** Client-side mirror of the backend condition evaluator
+ * (crud/workflow.py::_evaluate_condition) so the diagram can show which
+ * branch of a condition is actually active for this instance. Uses the
+ * instance's context snapshot (numbers stored as strings), so numeric
+ * comparisons coerce like the backend does. */
+function evaluateCondition(step: Record<string, unknown>, context: Record<string, unknown>): boolean {
+  const field = typeof step.field === "string" ? step.field : "";
+  const op = (typeof step.operator === "string" ? step.operator : "eq") as ConditionOp;
+  const actual = context[field];
+  const expected = step.value;
+  try {
+    switch (op) {
+      case "eq":
+        return actual == expected;
+      case "neq":
+        return actual != expected;
+      case "gt":
+        return Number(actual) > Number(expected);
+      case "gte":
+        return Number(actual) >= Number(expected);
+      case "lt":
+        return Number(actual) < Number(expected);
+      case "lte":
+        return Number(actual) <= Number(expected);
+      case "in":
+        return Array.isArray(expected) ? expected.includes(actual) : false;
+      default:
+        return false;
+    }
+  } catch {
+    return false;
+  }
+}
+
+/** Walk a definition from step 0 (following conditions against the instance's
+ * context snapshot and parallel-group fan-out) and return the set of step
+ * indices execution will actually visit. Approval steps outside this set are
+ * on a branch that won't trigger for this document -- shown as "Not in path"
+ * instead of a misleading "Waiting". */
+function computeReachableSteps(
+  definitionSteps: Array<Record<string, unknown>>,
+  context: Record<string, unknown>
+): Set<number> {
+  const reachable = new Set<number>();
+  const n = definitionSteps.length;
+  const groups = new Map<string, number[]>();
+  definitionSteps.forEach((step, index) => {
+    const g = typeof step.parallel_group === "string" && step.parallel_group ? step.parallel_group : "";
+    if (!g) return;
+    const bucket = groups.get(g) ?? [];
+    bucket.push(index);
+    groups.set(g, bucket);
+  });
+
+  let index = 0;
+  while (index >= 0 && index < n) {
+    reachable.add(index);
+    const step = definitionSteps[index];
+    const stepType = typeof step.step_type === "string" ? step.step_type : "";
+    if (step.parallel_group) {
+      const members = groups.get(String(step.parallel_group))!;
+      members.forEach((m) => reachable.add(m));
+      index =
+        typeof step.parallel_next_step === "number"
+          ? (step.parallel_next_step as number)
+          : Math.max(...members) + 1;
+    } else if (stepType === "condition") {
+      const result = evaluateCondition(step, context);
+      const target = result
+        ? typeof step.on_true_next_step === "number"
+          ? (step.on_true_next_step as number)
+          : index + 1
+        : typeof step.on_false_next_step === "number"
+        ? (step.on_false_next_step as number)
+        : index + 1;
+      index = target;
+    } else {
+      index += 1;
+    }
+  }
+  return reachable;
+}
+
 function mapTaskStatus(status: string, instanceStatus: string): ApprovalStepStatus {
   const normalized = (status || "").toLowerCase();
   if (normalized === "approved") return "APPROVED";
@@ -42,6 +127,7 @@ export function buildApprovalSteps(
   }
 
   const cards: ApprovalStep[] = [];
+  const reachable = computeReachableSteps(definitionSteps, instance.context);
 
   definitionSteps.forEach((step, index) => {
     const stepType = typeof step.step_type === "string" ? step.step_type : "approval";
@@ -55,15 +141,32 @@ export function buildApprovalSteps(
     const tasks = tasksByStepIndex.get(index) ?? [];
 
     if (tasks.length === 0) {
-      // Step hasn't produced any tasks yet -- either not reached yet, or
-      // reached but has zero approvers configured (a stuck step). Either way,
-      // show one placeholder card so the step is still visible in sequence.
+      // Step hasn't produced any tasks yet -- either not reached yet, reached
+      // but with zero approvers configured (a stuck step), or the instance is
+      // blocked on this step. Show one placeholder card so the step stays
+      // visible in sequence. Role-based steps (empty approvers list, role_code
+      // set) are labelled by their role -- NOT "Unassigned" -- and steps on a
+      // branch that can't trigger for this document's context are greyed out
+      // as "Not in path" so only the real approval chain reads as active.
       const approverCount = Array.isArray(step.approvers) ? step.approvers.length : 0;
+      const roleCode = typeof step.role_code === "string" && step.role_code ? step.role_code : "";
+      const isCurrent = index === instance.current_step_index;
+      const onPath = reachable.has(index);
+      const approverName = approverCount > 0 ? "Pending assignment" : roleCode ? `${roleCode} (role)` : "Unassigned";
+      const status =
+        isCurrent && instance.status === "blocked"
+          ? "BLOCKED"
+          : isCurrent && instance.status === "in_progress"
+          ? "PENDING"
+          : !onPath
+          ? "NOT_IN_PATH"
+          : "WAITING";
       cards.push({
         step_order: index,
-        approver_name: approverCount === 0 ? "Unassigned" : "Pending assignment",
+        approver_name: approverName,
         approver_role: stepName,
-        status: index === instance.current_step_index && instance.status === "in_progress" ? "PENDING" : "WAITING",
+        status,
+        reason: typeof step.reason === "string" ? step.reason : undefined,
       });
       return;
     }
@@ -76,6 +179,7 @@ export function buildApprovalSteps(
         status: mapTaskStatus(task.status, instance.status),
         decided_at: task.completed_at || undefined,
         comment: task.comments || undefined,
+        reason: task.reason || undefined,
       });
     });
   });

@@ -172,7 +172,18 @@ export default function RequisitionDetailPage() {
     return <p className="text-sm text-slate-400">Loading...</p>;
   }
 
-  const actions = nextSteps[requisition.lifecycle_status] ?? [];
+  // Mirrors the backend guard in transition_requisition_endpoint: hide the
+  // one-click "Approve" shortcut whenever a real multi-step workflow is
+  // actively waiting on other approvers, so the only path to approve is the
+  // assigned approver's own task. Still shown for requisitions with no
+  // workflow instance at all (workflowInstance stays null in that case).
+  const pendingWorkflowTaskCount =
+    workflowInstance?.status === "in_progress"
+      ? workflowInstance.tasks.filter((task) => task.status === "pending" || task.status === "escalated").length
+      : 0;
+  const actions = (nextSteps[requisition.lifecycle_status] ?? []).filter(
+    (action) => !(action.lifecycle_status === "approved" && pendingWorkflowTaskCount > 0)
+  );
   const actionBar = (
     <>
       {actions.map((action) => (
@@ -214,6 +225,9 @@ export default function RequisitionDetailPage() {
   }
 
   const prRecommendation = (() => {
+    if (workflowInstance?.status === "blocked") {
+      return "Approval is blocked: a step cannot resolve any approvers. Check the Approval Flow tab — an administrator must fix the approver setup (or retry the instance) before this can proceed.";
+    }
     switch (requisition.lifecycle_status) {
       case "draft":
         return "This requisition is still a draft. Submit it for approval when it's ready.";
@@ -304,6 +318,12 @@ export default function RequisitionDetailPage() {
             </span>
             {(actions.length > 0 || requisition.lifecycle_status === "draft" || requisition.lifecycle_status === "submitted") && (
               <div className="flex flex-wrap justify-end gap-2">{actionBar}</div>
+            )}
+            {requisition.lifecycle_status === "pending_approval" && pendingWorkflowTaskCount > 0 && (
+              <p className="max-w-xs text-right text-xs text-slate-500">
+                Waiting on {pendingWorkflowTaskCount} pending approval{pendingWorkflowTaskCount === 1 ? "" : "s"} in the
+                Approval Flow tab below -- approve from there, not here.
+              </p>
             )}
           </div>
         </div>
