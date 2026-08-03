@@ -211,7 +211,12 @@ async def publish_template_admin(
     return TemplateDefinitionOut.model_validate(definition)
 
 
-@router.delete("/admin/{template_id}", status_code=status.HTTP_204_NO_CONTENT, summary="[Admin] Delete a draft template")
+@router.delete(
+    "/admin/{template_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    summary="[Admin] Delete a draft template",
+)
 async def delete_template_admin(
     template_id: UUID,
     current_user: Annotated[User, Depends(get_current_active_user)],
