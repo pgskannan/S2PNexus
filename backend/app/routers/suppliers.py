@@ -115,6 +115,7 @@ from app.crud.supplier_qualification import (
     upsert_supplier_qualification,
 )
 from app.schemas.supplier_registration import (
+    RegistrationImportResultOut,
     SupplierRegistrationCreate,
     SupplierRegistrationListResponse,
     SupplierRegistrationResponse,
@@ -615,6 +616,179 @@ async def convert_supplier_registration_endpoint(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return SupplierRegistrationResponse.model_validate(registration)
+
+
+@router.post(
+    "/registrations/{registration_id}/send",
+    response_model=SupplierRegistrationResponse,
+    summary="Send (or re-send) the Excel registration workbook (MANUAL mode / SLP Admin)",
+)
+async def send_registration_workbook_endpoint(
+    registration_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierRegistrationResponse:
+    # FS Section 3: Creator or SLP Admin (administrator / supplier_manager) can trigger MANUAL send.
+    registration = await get_supplier_registration(db, registration_id, tenant_id=current_user.tenant_id)
+    if not registration:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier registration not found")
+    is_creator = registration.submitted_by == current_user.id
+    is_slp = current_user.role in (UserRole.ADMINISTRATOR, UserRole.SUPPLIER_MANAGER) or current_user.is_superuser
+    if not (is_creator or is_slp):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Creator or SLP Admin can send registration")
+    from app.services.registration_trigger import send_registration_workbook
+
+    updated = await send_registration_workbook(db, registration_id, actor_id=current_user.id, commit=True)
+    return SupplierRegistrationResponse.model_validate(updated)
+
+
+@router.get(
+    "/registrations/{registration_id}/workbook",
+    summary="Download the sent registration workbook",
+    response_model=None,
+)
+async def download_registration_workbook_endpoint(
+    registration_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    from fastapi.responses import Response
+
+    from app.services import file_storage
+
+    registration = await get_supplier_registration(db, registration_id, tenant_id=current_user.tenant_id)
+    if not registration or not registration.sent_workbook_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workbook not found")
+    try:
+        data = file_storage.load_bytes(registration.sent_workbook_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workbook file missing on disk") from exc
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{registration.registration_number}.xlsx"'},
+    )
+
+
+@router.post(
+    "/registrations/{registration_id}/import",
+    response_model=RegistrationImportResultOut,
+    summary="Import a completed registration workbook (SLP Admin)",
+)
+async def import_registration_workbook_endpoint(
+    registration_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+) -> RegistrationImportResultOut:
+    if current_user.role != UserRole.ADMINISTRATOR and not current_user.is_superuser:
+        # SLP Admin maps to administrator (and supplier_manager as practical stand-in)
+        if current_user.role != UserRole.SUPPLIER_MANAGER:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only SLP Admin can import workbooks")
+
+    from sqlalchemy import select
+
+    from app.models.supplier_type import SupplierType
+    from app.schemas.supplier_registration import RegistrationImportFailureOut, RegistrationImportResultOut
+    from app.services import file_storage
+    from app.services.excel_registration import (
+        SHEET_INSTRUCTIONS,
+        SHEET_SUPPLIER_INFO,
+        _module_sheet_name,
+        parse_and_validate_workbook,
+    )
+    from app.services.registration_trigger import apply_import_result, _resolve_templates
+    from dataclasses import asdict
+
+    registration = await get_supplier_registration(db, registration_id, tenant_id=current_user.tenant_id)
+    if not registration:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier registration not found")
+    if not registration.structure_hash:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration workbook has not been sent yet")
+
+    supplier_type = None
+    if registration.supplier_type_id:
+        supplier_type = (
+            await db.execute(select(SupplierType).where(SupplierType.id == registration.supplier_type_id))
+        ).scalar_one_or_none()
+    module_codes = list(supplier_type.required_questionnaire_modules or []) if supplier_type else []
+    templates = await _resolve_templates(db, module_codes, registration.tenant_id)
+    # Preserve the send-time sheet order: Instructions, Supplier Information, then
+    # modules in the type's required_questionnaire_modules order (same as generate).
+    expected_sheets = [SHEET_INSTRUCTIONS, SHEET_SUPPLIER_INFO] + [
+        _module_sheet_name(c) for c in module_codes if c in templates
+    ]
+    raw = await file.read()
+
+    result = parse_and_validate_workbook(
+        raw,
+        registration,
+        expected_hash=registration.structure_hash,
+        expected_template_version=registration.template_version or "1.0",
+        expected_questionnaire_version=registration.questionnaire_version or "1.0",
+        expected_sheets=expected_sheets,
+        templates_by_module_code=templates,
+    )
+
+    returned_key = file_storage.build_key(registration.id, "returned")
+    file_storage.save_bytes(returned_key, raw)
+
+    if not result.ok:
+        if result.error_report_bytes:
+            err_key = file_storage.build_key(registration.id, "error_report")
+            file_storage.save_bytes(err_key, result.error_report_bytes)
+        if result.import_summary_text:
+            file_storage.save_bytes(
+                file_storage.build_key(registration.id, "import_summary"),
+                result.import_summary_text.encode("utf-8"),
+            )
+        return RegistrationImportResultOut(
+            ok=False,
+            failures=[RegistrationImportFailureOut(**asdict(f)) for f in result.failures],
+            registration=SupplierRegistrationResponse.model_validate(registration),
+            import_summary=result.import_summary_text,
+            error_report_available=bool(result.error_report_bytes),
+        )
+
+    updated = await apply_import_result(
+        db, registration, result, actor_id=current_user.id, returned_path=returned_key, commit=True
+    )
+    return RegistrationImportResultOut(
+        ok=True,
+        failures=[],
+        registration=SupplierRegistrationResponse.model_validate(updated),
+        import_summary=result.import_summary_text,
+        error_report_available=False,
+    )
+
+
+@router.get(
+    "/registrations/{registration_id}/error-report",
+    summary="Download ErrorReport.xlsx from the last failed import",
+    response_model=None,
+)
+async def download_registration_error_report_endpoint(
+    registration_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+):
+    from fastapi.responses import Response
+
+    from app.services import file_storage
+
+    registration = await get_supplier_registration(db, registration_id, tenant_id=current_user.tenant_id)
+    if not registration:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier registration not found")
+    key = file_storage.build_key(registration.id, "error_report")
+    try:
+        data = file_storage.load_bytes(key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No error report available") from exc
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="ErrorReport.xlsx"'},
+    )
 
 
 @router.get(

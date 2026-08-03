@@ -7,10 +7,11 @@ import {
   createSupplierRequest,
   extractErrorMessage,
   getEffectiveTemplate,
+  listSupplierTypes,
   transitionSupplierRequest,
 } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth-store";
-import type { TemplateAnswers, TemplateDefinition } from "@/lib/types";
+import type { SupplierType, TemplateAnswers, TemplateDefinition } from "@/lib/types";
 
 export default function NewSupplierRequestPage() {
   const router = useRouter();
@@ -18,6 +19,8 @@ export default function NewSupplierRequestPage() {
 
   const [template, setTemplate] = useState<TemplateDefinition | null>(null);
   const [templateMissing, setTemplateMissing] = useState(false);
+  const [supplierTypes, setSupplierTypes] = useState<SupplierType[]>([]);
+  const [supplierTypeId, setSupplierTypeId] = useState("");
   const [title, setTitle] = useState("");
   const [answers, setAnswers] = useState<TemplateAnswers>({});
   const [error, setError] = useState<string | null>(null);
@@ -27,20 +30,26 @@ export default function NewSupplierRequestPage() {
     getEffectiveTemplate("supplier_request")
       .then(setTemplate)
       .catch(() => {
-        // No published template: page still works, questionnaire section is
-        // simply absent (legacy fixed-column behavior on the backend).
         setTemplateMissing(true);
       });
+    listSupplierTypes({ active_only: true, limit: 200 })
+      .then((res) => setSupplierTypes(res.items.filter((t) => t.is_active)))
+      .catch(() => setSupplierTypes([]));
   }, []);
 
   async function save(submit: boolean) {
     if (!user) return;
+    if (!supplierTypeId) {
+      setError("Supplier Type is required.");
+      return;
+    }
     setError(null);
     setLoading(true);
     try {
       const request = await createSupplierRequest({
         title,
         requestor_id: user.id,
+        supplier_type_id: supplierTypeId,
         answers,
       });
       if (submit) {
@@ -81,6 +90,31 @@ export default function NewSupplierRequestPage() {
               onChange={(e) => setTitle(e.target.value)}
             />
           </div>
+          <div>
+            <label className="label" htmlFor="supplier_type">
+              Supplier Type <span className="text-red-500">*</span>
+            </label>
+            <select
+              id="supplier_type"
+              required
+              className="input-field"
+              value={supplierTypeId}
+              onChange={(e) => setSupplierTypeId(e.target.value)}
+            >
+              <option value="">Select a supplier type…</option>
+              {supplierTypes.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.code}) — {String(t.registration_mode).toUpperCase()}
+                </option>
+              ))}
+            </select>
+            {!supplierTypes.length && (
+              <p className="mt-1 text-xs text-slate-500">
+                No active supplier types found. Ask an admin to seed or create them under Admin →
+                Supplier Types.
+              </p>
+            )}
+          </div>
         </div>
 
         {template && (
@@ -94,18 +128,22 @@ export default function NewSupplierRequestPage() {
         {templateMissing && (
           <div className="card text-sm text-gray-500">
             No supplier request questionnaire is published for your organization; the request
-            will be created with the title only.
+            will be created with the title and supplier type only.
           </div>
         )}
 
         <div className="flex gap-3">
-          <button type="submit" className="btn-primary" disabled={loading || !title}>
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={loading || !title || !supplierTypeId}
+          >
             {loading ? "Saving..." : "Submit request"}
           </button>
           <button
             type="button"
             className="btn-secondary"
-            disabled={loading || !title}
+            disabled={loading || !title || !supplierTypeId}
             onClick={() => void save(false)}
           >
             Save draft

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { extractErrorMessage, getPurchaseOrder, listInvoices } from "@/lib/api";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
 import DocumentTabs from "@/components/DocumentTabs";
+import Pagination, { usePagination } from "@/components/Pagination";
 import type { ProcurementInvoice } from "@/lib/types";
 
 const statusColors: Record<string, string> = {
@@ -92,6 +93,13 @@ export default function InvoicesPage() {
       return true;
     });
   }, [scopedItems, search, statusFilter, quickFilter]);
+
+  const { page, setPage, totalPages, pageItems } = usePagination(displayedItems);
+
+  useEffect(() => {
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayedItems]);
 
   const activeFilterCount = [statusFilter, quickFilter].filter((v) => v).length;
 
@@ -219,7 +227,7 @@ export default function InvoicesPage() {
                 </td>
               </tr>
             )}
-            {displayedItems.map((item) => (
+            {pageItems.map((item) => (
               <tr key={item.id} className="hover:bg-slate-50">
                 <td className="px-4 py-3 font-medium text-brand-700">{item.invoice_number}</td>
                 <td className="px-4 py-3">
@@ -236,6 +244,13 @@ export default function InvoicesPage() {
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          totalItems={displayedItems.length}
+          pageSize={10}
+          onPageChange={setPage}
+        />
       </div>
     </div>
   );

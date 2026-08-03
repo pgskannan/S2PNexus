@@ -12,6 +12,7 @@ import pytest
 
 from app.services.template_engine import (
     evaluate_visibility,
+    grade_bands_for_module,
     grade_for_score,
     score_response,
     validate_mandatory,
@@ -131,6 +132,41 @@ class TestGrading:
     )
     def test_spec_section_7_bands(self, score, grade):
         assert grade_for_score(score) == grade
+
+
+class TestFSRegistrationGrading:
+    """Supplier Type/Registration FS Section 9's 4-band scale (no F), scoped
+    to supplier_registration_* modules only -- every other module (including
+    the default/no-module case above) keeps the original 5-band scale."""
+
+    def test_module_resolution(self):
+        assert grade_bands_for_module("supplier_registration_core")[0] == (Decimal("90"), "A")
+        assert grade_bands_for_module("slp") == grade_bands_for_module(None)
+
+    @pytest.mark.parametrize(
+        "score,grade",
+        [
+            (Decimal("100"), "A"),
+            (Decimal("90"), "A"),
+            (Decimal("89.99"), "B"),
+            (Decimal("75"), "B"),
+            (Decimal("74.99"), "C"),
+            (Decimal("50"), "C"),
+            (Decimal("49.99"), "D"),
+            (Decimal("0"), "D"),
+        ],
+    )
+    def test_fs_section_9_boundaries(self, score, grade):
+        assert grade_for_score(score, module="supplier_registration_core") == grade
+
+    def test_score_response_uses_module_bands_automatically(self):
+        """score_response reads template.module -- callers never pass bands
+        explicitly for the common case."""
+        tpl = template([section([q("iso9001", "yes_no", scoring={"weight": 100, "map": {"yes": 10, "no": 0}})])])
+        tpl.module = "supplier_registration_compliance"
+        score, grade = score_response(tpl, {"iso9001": "no"})
+        assert score == Decimal("0.00")
+        assert grade == "D"  # not "F" -- FS bands have no F
 
 
 class TestScoreResponse:

@@ -38,6 +38,13 @@ APPROVER_ROLE_CODES = (
     "CATEGORY_MGR",
     "RISK_TEAM",
     "COMPLIANCE",
+    # Supplier Type / Excel Registration (FS Section 17 matrix roles that
+    # don't already map onto an existing code). RISK is distinct from
+    # RISK_TEAM (high-risk vendor chain vs generic risk analysts).
+    "BU_MANAGER",
+    "LEGAL",
+    "RISK",
+    "SLP_ADMIN",
 )
 APPROVAL_ACTIONS = ("APPROVED", "REJECTED", "ESCALATED", "AUTO_APPROVED")
 NODE_TYPES = ("APPROVAL", "AUTO", "AI", "SYSTEM")

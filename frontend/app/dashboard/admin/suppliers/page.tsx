@@ -19,6 +19,19 @@ const cards = [
     href: "/dashboard/suppliers",
   },
   {
+    title: "Supplier Types",
+    description:
+      "Registration mode, questionnaire modules, approval chains, and notification SLAs per supplier type.",
+    status: "Live" as const,
+    href: "/dashboard/admin/supplier-types",
+  },
+  {
+    title: "Excel Registrations",
+    description: "Send, download, and import supplier registration workbooks; review validation errors.",
+    status: "Live" as const,
+    href: "/dashboard/admin/registrations",
+  },
+  {
     title: "Preferred Supplier Management",
     description:
       "Composite scoring (qualification, performance, risk, spend), auto-classification, and reviewed manual overrides.",

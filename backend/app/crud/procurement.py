@@ -84,6 +84,7 @@ async def get_requisitions(
     limit: int = 100,
     search: Optional[str] = None,
     status: Optional[str] = None,
+    approval_status: Optional[str] = None,
     category: Optional[str] = None,
     supplier_id: Optional[UUID] = None,
     created_after: Optional[str] = None,
@@ -97,6 +98,8 @@ async def get_requisitions(
     query = select(ProcurementRequisition)
     if status:
         query = query.where(ProcurementRequisition.status == status)
+    if approval_status:
+        query = query.where(ProcurementRequisition.approval_status == approval_status)
     if category:
         query = query.where(ProcurementRequisition.category == category)
     if supplier_id is not None:
@@ -131,6 +134,7 @@ async def get_requisitions(
 async def get_requisitions_count(
     db: AsyncSession,
     status: Optional[str] = None,
+    approval_status: Optional[str] = None,
     search: Optional[str] = None,
     category: Optional[str] = None,
     supplier_id: Optional[UUID] = None,
@@ -145,6 +149,8 @@ async def get_requisitions_count(
     query = select(func.count(ProcurementRequisition.id))
     if status:
         query = query.where(ProcurementRequisition.status == status)
+    if approval_status:
+        query = query.where(ProcurementRequisition.approval_status == approval_status)
     if category:
         query = query.where(ProcurementRequisition.category == category)
     if supplier_id is not None:

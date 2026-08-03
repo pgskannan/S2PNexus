@@ -913,6 +913,13 @@ export const TEMPLATE_MODULES = [
   "performance",
   "sourcing",
   "contracts",
+  "supplier_registration_core",
+  "supplier_registration_tax",
+  "supplier_registration_bank",
+  "supplier_registration_compliance",
+  "supplier_registration_esg",
+  "supplier_registration_infosec",
+  "supplier_registration_financial",
 ] as const;
 export type TemplateModule = (typeof TEMPLATE_MODULES)[number];
 
@@ -1045,6 +1052,8 @@ export interface SupplierRequest {
   id: string;
   title: string;
   requestor_id: string;
+  supplier_type_id?: string | null;
+  supplier_id?: string | null;
   business_justification?: string | null;
   commodity_categories?: string | null;
   suggested_supplier_name?: string | null;
@@ -1066,6 +1075,103 @@ export interface SupplierRequestListResponse {
   total: number;
   skip: number;
   limit: number;
+}
+
+// ---- Supplier Type / Excel Registration (FS Sections 4, 13-16) ----
+
+export type RegistrationMode = "auto" | "manual" | "none";
+
+export interface SupplierType {
+  id: string;
+  tenant_id?: string | null;
+  code: string;
+  name: string;
+  registration_mode: RegistrationMode | string;
+  registration_method: string;
+  required_questionnaire_modules: string[];
+  qualification_rule?: Record<string, unknown> | null;
+  preferred_supplier_rule?: Record<string, unknown> | null;
+  ad_hoc_task_templates: Array<Record<string, unknown>>;
+  notification_rule?: {
+    sla_days?: number;
+    reminder_at_days?: number[];
+    escalation_at_days?: number;
+  } | null;
+  approval_workflow_config: string[];
+  description?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupplierTypeListResponse {
+  items: SupplierType[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface SupplierTypeInput {
+  code: string;
+  name: string;
+  registration_mode: RegistrationMode | string;
+  registration_method?: string;
+  required_questionnaire_modules?: string[];
+  qualification_rule?: Record<string, unknown> | null;
+  preferred_supplier_rule?: Record<string, unknown> | null;
+  ad_hoc_task_templates?: Array<Record<string, unknown>>;
+  notification_rule?: Record<string, unknown> | null;
+  approval_workflow_config?: string[];
+  description?: string | null;
+  is_active?: boolean;
+}
+
+export interface SupplierRegistrationSummary {
+  id: string;
+  registration_number: string;
+  company_name: string;
+  status: string;
+  lifecycle_status: string;
+  registration_mode?: string | null;
+  supplier_type_id?: string | null;
+  supplier_id?: string | null;
+  supplier_request_id?: string | null;
+  template_version?: string | null;
+  questionnaire_version?: string | null;
+  workbook_sent_at?: string | null;
+  workbook_returned_at?: string | null;
+  sla_due_at?: string | null;
+  total_score?: string | null;
+  grade?: string | null;
+  qualification_status?: string | null;
+  preferred_supplier_flag?: boolean | null;
+  module_scores?: Record<string, { score?: number | string; grade?: string }> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupplierRegistrationListResponse {
+  items: SupplierRegistrationSummary[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface ImportValidationFailure {
+  category: string;
+  sheet: string;
+  cell?: string | null;
+  rule: string;
+  expected?: string | null;
+  actual?: string | null;
+}
+
+export interface RegistrationImportResult {
+  ok: boolean;
+  failures: ImportValidationFailure[];
+  registration?: SupplierRegistrationSummary | null;
+  import_summary?: string | null;
+  error_report_available?: boolean;
 }
 
 // ---- Preferred Supplier Framework (Phase 3-5) ----

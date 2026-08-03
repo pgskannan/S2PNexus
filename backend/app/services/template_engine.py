@@ -4,11 +4,16 @@ Three pure-ish entry points:
 
 - evaluate_visibility(rule, answers): condition-tree evaluation for
   section/question visibility_rule JSON.
-- score_response(template, answers): weighted 0-100 composite + A-F grade
-  per spec Section 7.
+- score_response(template, answers): weighted 0-100 composite + letter grade.
 - get_effective_template(db, module, tenant_id): spec Section 4 inheritance
   (tenant-published template wins over global-published; "local" mode is a
   reserved value with no resolution logic in this batch).
+
+Grade bands (2026-08-03 decision): score_response accepts optional
+grade_bands, and defaults via grade_bands_for_module(template.module).
+supplier_registration_* modules use FS Section 9's 4-band scale
+(A/B/C/D, no F). All other modules keep the Template Framework 5-band
+A-F scale. Do not silently change the global default.
 
 The condition grammar here is the single source of truth. The frontend's
 DynamicTemplateForm mirrors evaluate_visibility exactly -- if you change the
@@ -37,11 +42,18 @@ from app.models.template import (
     TemplateQuestion,
 )
 
-GRADE_BANDS = (  # spec Section 7, exact bands
+GRADE_BANDS = (  # Template Framework spec Section 7 (5 bands, F below 60)
     (Decimal("90"), "A"),
     (Decimal("80"), "B"),
     (Decimal("70"), "C"),
     (Decimal("60"), "D"),
+)
+
+# FS Section 9 (supplier registration questionnaires): 4 bands, no F.
+FS_REGISTRATION_GRADE_BANDS = (
+    (Decimal("90"), "A"),
+    (Decimal("75"), "B"),
+    (Decimal("50"), "C"),
 )
 
 _ORDERING_OPS = {"gt", "gte", "lt", "lte"}
@@ -96,7 +108,6 @@ def evaluate_visibility(rule: Optional[dict], answers: dict[str, Any]) -> bool:
         return actual == expected
     if op == "in":
         if isinstance(actual, (list, tuple, set)):
-            # multiselect answer vs expected list: any overlap
             expected_items = expected if isinstance(expected, (list, tuple, set)) else [expected]
             return any(item in expected_items for item in actual)
         return actual in (expected if isinstance(expected, (list, tuple, set)) else [expected])
@@ -112,26 +123,12 @@ def evaluate_visibility(rule: Optional[dict], answers: dict[str, Any]) -> bool:
                 return left < right
             return left <= right
         except TypeError:
-            # Incomparable after best-effort coercion (e.g. text vs number).
-            # Fail closed but LOUD in the rule's semantics: the question stays
-            # hidden, and the mismatch is a template-authoring bug -- do not
-            # extend coercion here to paper over it.
             return False
-    # Unknown operator: fail closed rather than guessing.
     return False
 
 
 def _score_question(question: TemplateQuestion, answer: Any) -> Optional[tuple[Decimal, Decimal]]:
-    """Return (weight, score_0_10) for one question, or None if unscored.
-
-    scoring_rule shapes (models/template.py docstring):
-      choice/yes_no: {"weight": W, "map": {"<answer>": score}}
-      numeric:       {"weight": W, "threshold": T, "above": s, "below": s}
-      free text:     {"weight": W, "present": s}  -- any non-empty answer
-                     scores s, empty/missing scores 0 (completeness scoring)
-    Unanswered scored questions score 0 with full weight -- a blank answer to
-    a weighted question is a real signal, not a skip.
-    """
+    """Return (weight, score_0_10) for one question, or None if unscored."""
     rule = question.scoring_rule
     if not rule:
         return None
@@ -151,8 +148,6 @@ def _score_question(question: TemplateQuestion, answer: Any) -> Optional[tuple[D
     if "map" in rule:
         mapped = rule["map"].get(str(answer))
         if mapped is None and isinstance(answer, bool):
-            # yes_no answers may arrive as booleans; map keys are authored
-            # as "yes"/"no" or "true"/"false" -- try both spellings.
             mapped = rule["map"].get("yes" if answer else "no")
             if mapped is None:
                 mapped = rule["map"].get("true" if answer else "false")
@@ -174,23 +169,37 @@ def _score_question(question: TemplateQuestion, answer: Any) -> Optional[tuple[D
     return None
 
 
-def grade_for_score(score: Decimal) -> str:
-    """Map a 0-100 score to A-F per spec Section 7's exact bands."""
-    for floor, grade in GRADE_BANDS:
+def grade_bands_for_module(module: str | None) -> tuple[tuple[Decimal, str], ...]:
+    if module and str(module).startswith("supplier_registration_"):
+        return FS_REGISTRATION_GRADE_BANDS
+    return GRADE_BANDS
+
+
+def grade_for_score(
+    score: Decimal,
+    *,
+    module: str | None = None,
+    bands: tuple[tuple[Decimal, str], ...] | None = None,
+) -> str:
+    """Map a 0-100 score to a letter grade (module-specific bands)."""
+    active = bands if bands is not None else grade_bands_for_module(module)
+    for floor, grade in active:
         if score >= floor:
             return grade
+    if active is FS_REGISTRATION_GRADE_BANDS or (
+        module and str(module).startswith("supplier_registration_")
+    ):
+        return "D"
     return "F"
 
 
-def score_response(template: TemplateDefinition, answers: dict[str, Any]) -> tuple[Optional[Decimal], Optional[str]]:
-    """Weighted composite score (0-100) + grade for a full submission.
-
-    Only questions that are (a) scored and (b) currently visible given the
-    answers count -- a hidden conditional question must not drag the score
-    down for respondents it doesn't apply to. Weights are normalized over the
-    participating questions, so scores are comparable across respondents who
-    saw different subsets. Returns (None, None) if nothing scoreable.
-    """
+def score_response(
+    template: TemplateDefinition,
+    answers: dict[str, Any],
+    *,
+    grade_bands: tuple[tuple[Decimal, str], ...] | None = None,
+) -> tuple[Optional[Decimal], Optional[str]]:
+    """Weighted composite score (0-100) + grade for a full submission."""
     total_weight = Decimal("0")
     weighted_sum = Decimal("0")
     for section in template.sections:
@@ -206,23 +215,17 @@ def score_response(template: TemplateDefinition, answers: dict[str, Any]) -> tup
                 continue
             weight, score_0_10 = scored
             total_weight += weight
-            weighted_sum += weight * score_0_10 * 10  # 0-10 -> 0-100 scale
+            weighted_sum += weight * score_0_10 * 10
 
     if total_weight == 0:
         return None, None
     composite = (weighted_sum / total_weight).quantize(Decimal("0.01"))
-    return composite, grade_for_score(composite)
+    module = getattr(template, "module", None)
+    return composite, grade_for_score(composite, module=module, bands=grade_bands)
 
 
 def validate_mandatory(template: TemplateDefinition, answers: dict[str, Any]) -> list[str]:
-    """Return question_keys of visible, mandatory, unanswered questions.
-
-    Visibility-aware on purpose: a mandatory question hidden by its
-    visibility rule is not missing (spec Section 8 -- conditional questions
-    are only required when shown). Also rejects answers to questions whose
-    type is declared but unimplemented (reserved QUESTION_TYPES tail), so
-    an authored-but-unsupported template fails loudly at submit time.
-    """
+    """Return question_keys of visible, mandatory, unanswered questions."""
     missing: list[str] = []
     for section in template.sections:
         if not evaluate_visibility(section.visibility_rule, answers):
@@ -248,12 +251,7 @@ async def get_effective_template(
     module: str,
     tenant_id: Optional[UUID] = None,
 ) -> Optional[TemplateDefinition]:
-    """Spec Section 4 inheritance: tenant-published beats global-published.
-
-    Within a scope, the highest version wins. Returns None when nothing is
-    published for the module (callers fall back to legacy fixed-column
-    behavior -- same zero-regression contract as the workflow integrations).
-    """
+    """Spec Section 4 inheritance: tenant-published beats global-published."""
     if tenant_id is not None:
         result = await db.execute(
             select(TemplateDefinition)

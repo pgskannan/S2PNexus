@@ -87,6 +87,21 @@ class SupplierRegistrationUpdate(BaseModel):
 class SupplierRegistrationResponse(SupplierRegistrationBase):
     id: UUID
     supplier_id: Optional[UUID] = None
+    supplier_type_id: Optional[UUID] = None
+    supplier_request_id: Optional[UUID] = None
+    registration_mode: Optional[str] = None
+    template_version: Optional[str] = None
+    questionnaire_version: Optional[str] = None
+    workbook_sent_at: Optional[datetime] = None
+    workbook_returned_at: Optional[datetime] = None
+    sla_due_at: Optional[datetime] = None
+    total_score: Optional[Decimal] = None
+    grade: Optional[str] = None
+    qualification_status: Optional[str] = None
+    preferred_supplier_flag: Optional[bool] = None
+    module_scores: Optional[dict] = None
+    bank_account_number: Optional[str] = None
+    bank_routing_number: Optional[str] = None
     reviewed_by: Optional[UUID] = None
     approved_by: Optional[UUID] = None
     rejected_by: Optional[UUID] = None
@@ -97,6 +112,23 @@ class SupplierRegistrationResponse(SupplierRegistrationBase):
     approved_at: Optional[datetime] = None
     rejected_at: Optional[datetime] = None
     cancelled_at: Optional[datetime] = None
+
+
+class RegistrationImportFailureOut(BaseModel):
+    category: str
+    sheet: str
+    cell: Optional[str] = None
+    rule: str
+    expected: Optional[str] = None
+    actual: Optional[str] = None
+
+
+class RegistrationImportResultOut(BaseModel):
+    ok: bool
+    failures: list[RegistrationImportFailureOut] = Field(default_factory=list)
+    registration: Optional[SupplierRegistrationResponse] = None
+    import_summary: Optional[str] = None
+    error_report_available: bool = False
 
 
 class SupplierRegistrationListResponse(BaseModel):

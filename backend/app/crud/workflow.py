@@ -292,6 +292,21 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
                     tenant_id=_normalize_uuid(instance.context.get("tenant_id")) if instance.context.get("tenant_id") else None,
                     commit=False,  # this function's caller owns the transaction
                 )
+            elif instance.entity_type == "supplier_request":
+                # Supplier Type / Excel Registration Phase 2 (FS 5.2 steps
+                # 5-6): approving a supplier_request previously did nothing
+                # beyond flipping its own status -- this is the missing
+                # Supplier-creation + registration-trigger link.
+                from app.services.registration_trigger import on_supplier_request_approved
+
+                await on_supplier_request_approved(db, instance.entity_id, actor_id=instance.started_by, commit=False)
+            elif instance.entity_type == "supplier_registration_pending":
+                # MANUAL registration_mode: completing this single-step task
+                # (Creator or SLP Admin) sends the workbook. entity_id here is
+                # the SupplierRegistration.id, not the SupplierRequest.id.
+                from app.services.registration_trigger import send_registration_workbook
+
+                await send_registration_workbook(db, instance.entity_id, actor_id=instance.started_by, commit=False)
             return
 
         step = steps[step_index]
@@ -787,6 +802,25 @@ async def complete_task(
                         details={"task_id": str(task.id), "comments": comments},
                     )
                 )
+        elif instance.entity_type == "supplier_request":
+            from app.crud.supplier_request import get_supplier_request as _get_supplier_request
+            from app.models.supplier_audit import SupplierAuditEvent
+
+            supplier_request = await _get_supplier_request(db, instance.entity_id)
+            if supplier_request is not None:
+                supplier_request.status = "rejected"
+                supplier_request.lifecycle_status = "rejected"
+                supplier_request.approval_status = "rejected"
+                db.add(
+                    SupplierAuditEvent(
+                        entity_type="supplier_request",
+                        entity_id=supplier_request.id,
+                        actor_id=actor_id,
+                        action="workflow:rejected",
+                        details={"task_id": str(task.id), "comments": comments},
+                        tenant_id=supplier_request.tenant_id,
+                    )
+                )
         # Cancel any other still-pending tasks so they don't linger. For a
         # parallel-group member this spans every sibling branch (a rejection
         # anywhere in the group rejects the whole instance, same as a
@@ -925,6 +959,81 @@ async def escalate_overdue_tasks(db: AsyncSession) -> list[WorkflowTask]:
     if escalated:
         await db.commit()
     return escalated
+
+
+async def process_registration_sla_reminders(db: AsyncSession) -> int:
+    """Emit in-app SLA reminder notifications for open Excel registrations.
+
+    Hooks into the same on-demand/scheduled pattern as escalate_overdue_tasks
+    (no second cron). For each registration with status=sent and sla_due_at
+    set, fires a reminder when today crosses a reminder_at_days offset from
+    send (from SupplierType.notification_rule), and an escalation notice at
+    escalation_at_days / sla_due_at. Dedupes via a lightweight check on
+    existing Notification titles for the registration.
+    """
+    from app.models.supplier_registration import SupplierRegistration
+    from app.models.supplier_type import SupplierType
+
+    now = datetime.now(timezone.utc)
+    rows = list(
+        (
+            await db.execute(
+                select(SupplierRegistration).where(
+                    SupplierRegistration.status == "sent",
+                    SupplierRegistration.workbook_sent_at.is_not(None),
+                    SupplierRegistration.sla_due_at.is_not(None),
+                )
+            )
+        ).scalars().all()
+    )
+    sent = 0
+    for reg in rows:
+        supplier_type = None
+        if reg.supplier_type_id:
+            supplier_type = (
+                await db.execute(select(SupplierType).where(SupplierType.id == reg.supplier_type_id))
+            ).scalar_one_or_none()
+        rule = (supplier_type.notification_rule if supplier_type else None) or {}
+        reminder_days = rule.get("reminder_at_days") or []
+        sent_at = reg.workbook_sent_at
+        if sent_at is None:
+            continue
+        if sent_at.tzinfo is None:
+            sent_at = sent_at.replace(tzinfo=timezone.utc)
+        elapsed_days = (now - sent_at).days
+        titles_to_send: list[str] = []
+        for day in reminder_days:
+            if elapsed_days >= int(day):
+                titles_to_send.append(f"Registration SLA reminder (day {day}): {reg.registration_number}")
+        if reg.sla_due_at:
+            due = reg.sla_due_at if reg.sla_due_at.tzinfo else reg.sla_due_at.replace(tzinfo=timezone.utc)
+            if now >= due:
+                titles_to_send.append(f"Registration SLA escalation: {reg.registration_number}")
+
+        for title in titles_to_send:
+            existing = (
+                await db.execute(
+                    select(Notification.id).where(
+                        Notification.recipient_id == reg.submitted_by,
+                        Notification.related_entity_id == reg.id,
+                        Notification.title == title,
+                    )
+                )
+            ).first()
+            if existing:
+                continue
+            await _create_notification(
+                db,
+                reg.submitted_by,
+                title=title,
+                message=f"Registration {reg.registration_number} for {reg.company_name} needs attention.",
+                entity_type="supplier_registration",
+                entity_id=reg.id,
+            )
+            sent += 1
+    if sent:
+        await db.commit()
+    return sent
 
 
 # --- Notifications -----------------------------------------------------

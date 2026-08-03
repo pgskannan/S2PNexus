@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { listPurchaseOrders, listSuppliers, extractErrorMessage } from "@/lib/api";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
+import Pagination, { usePagination } from "@/components/Pagination";
 import type { PurchaseOrder, Supplier } from "@/lib/types";
 
 const statusColors: Record<string, string> = {
@@ -89,6 +90,13 @@ export default function PurchaseOrdersPage() {
       return true;
     });
   }, [items, search, supplierFilter, highValueOnly]);
+
+  const { page, setPage, totalPages, pageItems } = usePagination(displayedItems);
+
+  useEffect(() => {
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayedItems]);
 
   const needsApprovalCount = allItems.filter((po) => po.lifecycle_status === "pending_approval").length;
   const openForReceivingCount = allItems.filter((po) => OPEN_FOR_RECEIVING.has(po.lifecycle_status)).length;
@@ -234,7 +242,7 @@ export default function PurchaseOrdersPage() {
                 </td>
               </tr>
             )}
-            {displayedItems.map((po) => (
+            {pageItems.map((po) => (
               <tr key={po.id} className="hover:bg-slate-50">
                 <td className="px-4 py-3">
                   <Link
@@ -267,6 +275,13 @@ export default function PurchaseOrdersPage() {
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          totalItems={displayedItems.length}
+          pageSize={10}
+          onPageChange={setPage}
+        />
       </div>
     </div>
   );

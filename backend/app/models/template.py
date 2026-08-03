@@ -65,6 +65,17 @@ TEMPLATE_MODULES = (
     "performance",
     "sourcing",
     "contracts",
+    # Supplier Type / Excel Registration (FS Section 8): one module per
+    # questionnaire sheet so SupplierType.required_questionnaire_modules can
+    # reference them independently and get_effective_template() (one active
+    # template per module) still holds.
+    "supplier_registration_core",
+    "supplier_registration_tax",
+    "supplier_registration_bank",
+    "supplier_registration_compliance",
+    "supplier_registration_esg",
+    "supplier_registration_infosec",
+    "supplier_registration_financial",
 )
 TEMPLATE_STATUSES = ("draft", "published", "deprecated")
 TEMPLATE_INHERITANCE_MODES = ("global", "tenant", "local")

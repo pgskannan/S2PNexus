@@ -87,6 +87,11 @@ ROLE_LADDER = [
     ("CATEGORY_MGR", "Demo Category Manager", UserRole.CATEGORY_MANAGER, None, "USD"),
     ("RISK_TEAM", "Demo Risk Analyst", UserRole.SUPPLIER_MANAGER, None, "USD"),
     ("COMPLIANCE", "Demo Compliance Officer", UserRole.CONTRACT_MANAGER, None, "USD"),
+    # Supplier Type / Excel Registration (FS Section 17) new role codes
+    ("BU_MANAGER", "Demo BU Manager", UserRole.PROCUREMENT_MANAGER, None, "USD"),
+    ("LEGAL", "Demo Legal Counsel", UserRole.CONTRACT_MANAGER, None, "USD"),
+    ("RISK", "Demo Risk Officer", UserRole.SUPPLIER_MANAGER, None, "USD"),
+    ("SLP_ADMIN", "Demo SLP Admin", UserRole.ADMINISTRATOR, None, "USD"),
 ]
 
 

@@ -13,6 +13,8 @@ from app.database.database import Base
 
 if TYPE_CHECKING:
     from app.models.user import User
+    from app.models.supplier import Supplier
+    from app.models.supplier_type import SupplierType
 
 
 class SupplierRequest(Base):
@@ -21,6 +23,20 @@ class SupplierRequest(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     requestor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=False)
+    supplier_type_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("supplier_types.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Drives registration_mode / questionnaire / approval chain (FS Section 4)",
+    )
+    supplier_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("suppliers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Set when the request is approved and a Supplier is created (FS 5.2 step 5)",
+    )
     business_justification: Mapped[str | None] = mapped_column(Text, nullable=True)
     commodity_categories: Mapped[str | None] = mapped_column(String(255), nullable=True)
     suggested_supplier_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -37,3 +53,5 @@ class SupplierRequest(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     requester: Mapped["User"] = relationship("User", lazy="selectin")
+    supplier_type: Mapped["SupplierType | None"] = relationship("SupplierType", lazy="selectin")
+    supplier: Mapped["Supplier | None"] = relationship("Supplier", foreign_keys=[supplier_id], lazy="selectin")

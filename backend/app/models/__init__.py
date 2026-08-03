@@ -5,6 +5,8 @@ All models are imported here to ensure they are registered with SQLAlchemy's met
 
 from app.models.user import User  # noqa: F401
 from app.models.supplier import Supplier  # noqa: F401
+from app.models.supplier_address import SupplierAddress  # noqa: F401
+from app.models.supplier_bank_account import SupplierBankAccount  # noqa: F401
 from app.models.supplier_request import SupplierRequest  # noqa: F401
 from app.models.supplier_registration import SupplierRegistration  # noqa: F401
 from app.models.contract import Contract  # noqa: F401
@@ -52,6 +54,8 @@ from app.models.approval import ApproverSeed, ApprovalEvent, SlaDefinition, SlaM
 from app.models.act_as import ActAsSession  # noqa: F401
 from app.models.supplier_qualification import SupplierQualification  # noqa: F401
 from app.models.preferred_supplier import PreferredSupplierStatus  # noqa: F401
+from app.models.supplier_type import SupplierType  # noqa: F401
+from app.models.supplier_audit import SupplierAuditEvent  # noqa: F401
 from app.models.template import (  # noqa: F401
     TemplateDefinition,
     TemplateSection,
@@ -70,6 +74,8 @@ from app.metadata_engine.models import (
 __all__ = [
     "User",
     "Supplier",
+    "SupplierAddress",
+    "SupplierBankAccount",
     "SupplierRequest",
     "SupplierRegistration",
     "Contract",
@@ -110,6 +116,8 @@ __all__ = [
     "ActAsSession",
     "SupplierQualification",
     "PreferredSupplierStatus",
+    "SupplierType",
+    "SupplierAuditEvent",
     "TemplateDefinition",
     "TemplateSection",
     "TemplateQuestion",

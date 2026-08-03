@@ -11,7 +11,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,6 +20,8 @@ from app.database.database import Base
 if TYPE_CHECKING:
     from app.models.user import User
     from app.models.supplier import Supplier
+    from app.models.supplier_type import SupplierType
+    from app.models.supplier_request import SupplierRequest
 
 
 class SupplierRegistration(Base):
@@ -52,6 +54,10 @@ class SupplierRegistration(Base):
     parent_company: Mapped[str | None] = mapped_column(String(255), nullable=True)
     subsidiaries: Mapped[str | None] = mapped_column(Text, nullable=True)
     banking_info: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Split bank fields for Excel columns G/H (FS Section 14); banking_info
+    # kept for backward compatibility and is synced as "acct / routing" on import.
+    bank_account_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    bank_routing_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
     payment_terms: Mapped[str | None] = mapped_column(String(100), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), default="USD", nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="draft", nullable=False, index=True)
@@ -59,6 +65,45 @@ class SupplierRegistration(Base):
     approval_status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)
     risk_score: Mapped[int | None] = mapped_column(nullable=True)
     risk_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Excel registration (FS Sections 13-16)
+    supplier_type_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("supplier_types.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    supplier_request_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("supplier_requests.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    registration_mode: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, comment="Snapshot of SupplierType.registration_mode at creation"
+    )
+    template_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    questionnaire_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    structure_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        comment="SHA-256 of structural workbook elements at send time (FS 15.1)",
+    )
+    sent_workbook_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    returned_workbook_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    workbook_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    workbook_returned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    total_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    grade: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    qualification_status: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, comment="pending | qualified | not_qualified"
+    )
+    preferred_supplier_flag: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    module_scores: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="module_code -> {score, grade} snapshot from last successful import",
+    )
     submitted_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=False)
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

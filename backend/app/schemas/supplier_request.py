@@ -15,6 +15,9 @@ class SupplierRequestBase(BaseModel):
 
     title: str = Field(..., min_length=1, max_length=255)
     requestor_id: UUID
+    supplier_type_id: Optional[UUID] = Field(
+        None, description="Drives registration_mode / questionnaire / approval chain (FS Section 4)"
+    )
     business_justification: Optional[str] = None
     commodity_categories: Optional[str] = None
     suggested_supplier_name: Optional[str] = None
@@ -42,6 +45,7 @@ class SupplierRequestUpdate(BaseModel):
 
     title: Optional[str] = Field(None, min_length=1, max_length=255)
     requestor_id: Optional[UUID] = None
+    supplier_type_id: Optional[UUID] = None
     business_justification: Optional[str] = None
     commodity_categories: Optional[str] = None
     suggested_supplier_name: Optional[str] = None
@@ -57,6 +61,9 @@ class SupplierRequestUpdate(BaseModel):
 
 class SupplierRequestResponse(SupplierRequestBase):
     id: UUID
+    supplier_id: Optional[UUID] = Field(
+        None, description="Set once the request is approved and a Supplier is created (FS 5.2 step 5)"
+    )
     created_at: datetime
     updated_at: datetime
     # Populated on the detail endpoint only (None in list responses):

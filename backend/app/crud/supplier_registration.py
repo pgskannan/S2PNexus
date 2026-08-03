@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,14 @@ _TRANSITION_MAP: dict[str, tuple[str, str]] = {
     "reject": ("rejected", "rejected"),
     "cancel": ("cancelled", "cancelled"),
 }
+
+
+def generate_registration_number() -> str:
+    """REG-{8 hex chars}. No central sequence table exists for registrations
+    (unlike DocumentNumberingSequence for PR/PO) -- a random short uuid is
+    collision-safe at this volume and avoids the extra round-trip a real
+    sequence would need. Never all-zero (uuid4 is cryptographically random)."""
+    return f"REG-{uuid4().hex[:8].upper()}"
 
 
 async def get_supplier_registrations(

@@ -229,6 +229,21 @@ export default function SupplierDetailPage() {
           </span>
         </div>
 
+        {(supplier.lifecycle_status === "pending_registration" ||
+          supplier.lifecycle_status === "active") && (
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+            <div className="font-medium text-slate-800">Registration</div>
+            <p className="mt-1 text-slate-600">
+              Lifecycle: {supplier.lifecycle_status.replace(/_/g, " ")}. Manage Excel
+              workbooks under{" "}
+              <Link href="/dashboard/admin/registrations" className="underline">
+                Admin → Registrations
+              </Link>
+              .
+            </p>
+          </div>
+        )}
+
         <dl className="grid grid-cols-2 gap-4 text-sm">
           <div>
             <dt className="text-slate-500">Contact email</dt>

@@ -6,6 +6,7 @@ import { listRequisitions, listSuppliers, listUserDirectory, deleteRequisition, 
 import CategoryInput from "@/components/CategoryInput";
 import { StatusBadge } from "@/components/StatusBadge";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
+import Pagination, { usePagination } from "@/components/Pagination";
 import type { Requisition, Supplier } from "@/lib/types";
 
 type StatusFilter = "" | "draft" | "submitted" | "pending_approval" | "approved" | "rejected" | "returned" | "po_created" | "closed";
@@ -215,6 +216,16 @@ export default function RequisitionsPage() {
       return sortDirection === "asc" ? cmp : -cmp;
     });
     return data;
+  }, [items, sortField, sortDirection]);
+
+  const { page, setPage, totalPages, pageItems } = usePagination(sortedItems);
+
+  // Jump back to page 1 whenever the underlying result set changes (new
+  // filters/search/sort applied) -- staying on page 4 of a now-2-page result
+  // would just show an empty table.
+  useEffect(() => {
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, sortField, sortDirection]);
 
   async function handleDelete(id: string) {
@@ -486,7 +497,7 @@ export default function RequisitionsPage() {
                 </td>
               </tr>
             )}
-            {sortedItems.map((item) => (
+            {pageItems.map((item) => (
               <tr key={item.id} className="hover:bg-slate-50">
                 <td className="px-4 py-3 font-mono text-xs text-slate-500">
                   <HighlightedText text={item.requisition_number || "—"} query={search} />
@@ -539,6 +550,13 @@ export default function RequisitionsPage() {
             ))}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          totalItems={sortedItems.length}
+          pageSize={10}
+          onPageChange={setPage}
+        />
       </div>
     </div>
   );

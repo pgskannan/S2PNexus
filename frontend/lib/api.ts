@@ -146,6 +146,7 @@ export async function getMe(token: string): Promise<User> {
 export async function listRequisitions(params?: {
   search?: string;
   status?: string;
+  approval_status?: string;
   category?: string;
   supplier_id?: string;
   created_after?: string;
@@ -1408,6 +1409,7 @@ export async function getSupplierRequest(
 export async function createSupplierRequest(payload: {
   title: string;
   requestor_id: string;
+  supplier_type_id?: string;
   answers?: import("@/lib/types").TemplateAnswers;
 }): Promise<import("@/lib/types").SupplierRequest> {
   const { data } = await api.post<import("@/lib/types").SupplierRequest>(
@@ -1426,6 +1428,119 @@ export async function transitionSupplierRequest(
     { action }
   );
   return data;
+}
+
+// ---- Supplier Types (FS Section 4) ----
+
+export async function listSupplierTypes(params?: {
+  active_only?: boolean;
+  skip?: number;
+  limit?: number;
+}): Promise<import("@/lib/types").SupplierTypeListResponse> {
+  const { data } = await api.get<import("@/lib/types").SupplierTypeListResponse>(
+    "/supplier-types",
+    { params }
+  );
+  return data;
+}
+
+export async function getSupplierType(
+  typeId: string
+): Promise<import("@/lib/types").SupplierType> {
+  const { data } = await api.get<import("@/lib/types").SupplierType>(
+    `/supplier-types/${typeId}`
+  );
+  return data;
+}
+
+export async function createSupplierType(
+  payload: import("@/lib/types").SupplierTypeInput
+): Promise<import("@/lib/types").SupplierType> {
+  const { data } = await api.post<import("@/lib/types").SupplierType>(
+    "/supplier-types",
+    payload
+  );
+  return data;
+}
+
+export async function updateSupplierType(
+  typeId: string,
+  payload: Partial<import("@/lib/types").SupplierTypeInput>
+): Promise<import("@/lib/types").SupplierType> {
+  const { data } = await api.put<import("@/lib/types").SupplierType>(
+    `/supplier-types/${typeId}`,
+    payload
+  );
+  return data;
+}
+
+export async function deactivateSupplierType(
+  typeId: string
+): Promise<import("@/lib/types").SupplierType> {
+  const { data } = await api.post<import("@/lib/types").SupplierType>(
+    `/supplier-types/${typeId}/deactivate`
+  );
+  return data;
+}
+
+// ---- Excel Registration ----
+
+export async function listSupplierRegistrations(params?: {
+  status?: string;
+  skip?: number;
+  limit?: number;
+}): Promise<import("@/lib/types").SupplierRegistrationListResponse> {
+  const { data } = await api.get<import("@/lib/types").SupplierRegistrationListResponse>(
+    "/suppliers/registrations",
+    { params }
+  );
+  return data;
+}
+
+export async function getSupplierRegistration(
+  id: string
+): Promise<import("@/lib/types").SupplierRegistrationSummary> {
+  const { data } = await api.get<import("@/lib/types").SupplierRegistrationSummary>(
+    `/suppliers/registrations/${id}`
+  );
+  return data;
+}
+
+export async function sendSupplierRegistration(
+  id: string
+): Promise<import("@/lib/types").SupplierRegistrationSummary> {
+  const { data } = await api.post<import("@/lib/types").SupplierRegistrationSummary>(
+    `/suppliers/registrations/${id}/send`
+  );
+  return data;
+}
+
+export async function downloadRegistrationWorkbook(id: string): Promise<Blob> {
+  const { data } = await api.get(`/suppliers/registrations/${id}/workbook`, {
+    responseType: "blob",
+  });
+  return data as Blob;
+}
+
+export async function importRegistrationWorkbook(
+  id: string,
+  file: File
+): Promise<import("@/lib/types").RegistrationImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post<import("@/lib/types").RegistrationImportResult>(
+    `/suppliers/registrations/${id}/import`,
+    form,
+    { headers: { "Content-Type": "multipart/form-data" } }
+  );
+  return data;
+}
+
+export async function downloadRegistrationErrorReport(id: string): Promise<Blob> {
+  const { data } = await api.get(`/suppliers/registrations/${id}/error-report`, {
+    responseType: "blob",
+  });
+  return data as Blob;
 }
 
 // ---- Preferred Supplier Framework (Phase 3-5) ----

@@ -74,6 +74,29 @@ async def start_supplier_request_workflow(
         "estimated_annual_spend": spend,
     }
 
+    # Supplier Type / Excel Registration (FS Section 17): when the request
+    # has a SupplierType with its own approval_workflow_config, that ordered
+    # role-code chain drives the approval steps for THIS instance instead of
+    # the generic supplier_request definition's own steps -- same
+    # ephemeral-override pattern services/procurement_workflow.py uses for
+    # requisition tier filtering (definition_steps_override), so the definition
+    # row above is only needed to satisfy the WorkflowInstance FK; tenants
+    # without any SupplierType configured (or with an empty
+    # approval_workflow_config) keep today's definition-driven steps with zero
+    # regression.
+    supplier_type = getattr(supplier_request, "supplier_type", None)
+    call_kwargs: dict[str, Any] = {"started_by": started_by}
+    if supplier_type is not None and supplier_type.approval_workflow_config:
+        call_kwargs["definition_steps_override"] = [
+            {
+                "step_type": "approval",
+                "name": f"{role_code} Approval",
+                "role_code": role_code,
+                "required_approvals": 1,
+            }
+            for role_code in supplier_type.approval_workflow_config
+        ]
+
     return await start_workflow_instance(
         db,
         WorkflowInstanceStart(
@@ -82,7 +105,7 @@ async def start_supplier_request_workflow(
             entity_id=supplier_request.id,
             context=context,
         ),
-        started_by=started_by,
+        **call_kwargs,
     )
 
 

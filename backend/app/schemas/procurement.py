@@ -282,11 +282,17 @@ class PurchaseOrderLineItemResponse(BaseModel):
     line_number: int
     description: str
     quantity: Decimal
+    unit_of_measure: Optional[str] = None
     unit_price: Optional[Decimal] = None
     line_total: Optional[Decimal] = None
+    tax_code: Optional[str] = None
+    tax_amount: Optional[Decimal] = None
     account_code: Optional[str] = None
     account_code_is_override: bool = False
     allocated_shipping_amount: Optional[Decimal] = None
+    need_by_date: Optional[datetime] = None
+    promised_date: Optional[datetime] = None
+    notes: Optional[str] = None
     weight: Optional[Decimal] = None
     created_at: datetime
     # Line-state fields (spec section 1) -- computed on demand from goods-receipt
