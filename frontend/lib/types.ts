@@ -362,6 +362,7 @@ export interface ProcurementInvoice {
 
 export type SupplierLifecycleStatus =
   | "active"
+  | "pending_registration"
   | "under_monitoring"
   | "requalification_due"
   | "requalification_in_progress"
