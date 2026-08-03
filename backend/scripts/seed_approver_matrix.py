@@ -77,6 +77,13 @@ ROLE_LADDER = [
     ("CFO", "Demo CFO", UserRole.ADMINISTRATOR, None, "USD"),  # no ceiling -- final authority
     ("AP_HEAD", "Demo AP Head", UserRole.AP_CLERK, Decimal("250000.00"), "USD"),
     ("AP_PROCESSOR", "Demo AP Processor", UserRole.AP_CLERK, Decimal("10000.00"), "USD"),
+    # Template Framework Phase 4 roles (supplier request + preferred supplier
+    # review). No approval ceilings: these are review roles, not spend
+    # authorities -- and their flows carry no "amount" context key, so the
+    # ceiling check is inert for them anyway (see _tiered_steps caveat).
+    ("CATEGORY_MGR", "Demo Category Manager", UserRole.CATEGORY_MANAGER, None, "USD"),
+    ("RISK_TEAM", "Demo Risk Analyst", UserRole.SUPPLIER_MANAGER, None, "USD"),
+    ("COMPLIANCE", "Demo Compliance Officer", UserRole.CONTRACT_MANAGER, None, "USD"),
 ]
 
 
@@ -530,6 +537,117 @@ async def seed_supplier_workflow(users_by_role: dict[str, dict[str, str]]) -> No
         print(f"Published supplier workflow definition: {definition.id}")
 
 
+async def seed_supplier_request_workflow(users_by_role: dict[str, dict[str, str]]) -> None:
+    """Template Framework Phase 4: default supplier-request intake flow.
+
+    services/supplier_workflow.py::start_supplier_request_workflow precomputes
+    `compliance_review_required` ("yes"/"no": diversity required OR risk
+    justification present) into the instance context, so one condition step
+    covers the spec's OR.
+
+    Step shape note: the COMPLIANCE arm carries an explicit `next_step: 2` so
+    the flow is Compliance THEN Procurement Head. Without it, crud/workflow's
+    condition-diamond handling (_condition_sibling_arm) treats steps 1 and 2
+    as sibling arms and would jump from Compliance straight past PROC_HEAD to
+    the merge point -- explicit next_step wins over the sibling-arm jump.
+    """
+    async with db_manager.session_factory() as session:
+        await _archive_active_definitions(session, "supplier_request")
+        steps = [
+            {
+                "name": "Compliance review needed?",
+                "step_type": "condition",
+                "field": "compliance_review_required",
+                "operator": "eq",
+                "value": "yes",
+                "on_true_next_step": 1,
+                "on_false_next_step": 2,
+            },
+            {
+                "name": "Compliance review",
+                "step_type": "approval",
+                "role_code": "COMPLIANCE",
+                "required_approvals": 1,
+                "next_step": 2,  # Compliance THEN PROC_HEAD -- see docstring
+                "escalate_after_hours": 48,
+                "escalate_to": users_by_role["PROC_HEAD"]["id"],
+            },
+            {
+                "name": "Procurement head approval",
+                "step_type": "approval",
+                "role_code": "PROC_HEAD",
+                "required_approvals": 1,
+                "escalate_after_hours": 72,
+                "escalate_to": users_by_role["CFO"]["id"],
+            },
+        ]
+        payload = WorkflowDefinitionCreate(
+            name="Supplier request approval (role-based)",
+            entity_type="supplier_request",
+            description=(
+                "Diversity-required or risk-flagged requests route through Compliance "
+                "before the Procurement Head; plain requests go straight to the "
+                "Procurement Head. Condition reads the precomputed "
+                "compliance_review_required context flag."
+            ),
+            steps=steps,
+            is_active=True,
+            status="published",
+        )
+        definition = await create_workflow_definition(
+            session, payload, created_by=UUID(users_by_role["PROC_HEAD"]["id"])
+        )
+        print(f"Published supplier_request workflow definition: {definition.id}")
+
+
+async def seed_preferred_supplier_review_workflow(users_by_role: dict[str, dict[str, str]]) -> None:
+    """Template Framework Phase 4: manual preferred-status override review.
+
+    Spec Section 17's workflow list, in order: Category Manager ->
+    Procurement Director (= PROC_HEAD) -> Risk Team -> Compliance Team.
+    Sequential single approvals; auto-preferred/auto-block classifications
+    bypass this entirely (spec allows auto-classification) -- only manual
+    overrides route here (see PATCH /suppliers/{id}/preferred/override).
+    """
+    async with db_manager.session_factory() as session:
+        await _archive_active_definitions(session, "preferred_supplier_review")
+        chain = [
+            ("CATEGORY_MGR", "Category manager review"),
+            ("PROC_HEAD", "Procurement head review"),
+            ("RISK_TEAM", "Risk team review"),
+            ("COMPLIANCE", "Compliance review"),
+        ]
+        steps = [
+            {
+                "name": step_name,
+                "step_type": "approval",
+                "role_code": role_code,
+                "required_approvals": 1,
+                "escalate_after_hours": 72,
+                "escalate_to": users_by_role["CFO"]["id"],
+            }
+            for role_code, step_name in chain
+        ]
+        payload = WorkflowDefinitionCreate(
+            name="Preferred supplier override review (role-based)",
+            entity_type="preferred_supplier_review",
+            description=(
+                "Four-eyes-plus review for manual preferred-status overrides: "
+                "Category Manager -> Procurement Head -> Risk Team -> Compliance, "
+                "per Template Framework spec Section 17. The override applies only "
+                "when the instance completes; rejection leaves the engine-computed "
+                "status in place."
+            ),
+            steps=steps,
+            is_active=True,
+            status="published",
+        )
+        definition = await create_workflow_definition(
+            session, payload, created_by=UUID(users_by_role["PROC_HEAD"]["id"])
+        )
+        print(f"Published preferred_supplier_review workflow definition: {definition.id}")
+
+
 async def main() -> None:
     users_by_role = await seed_approver_matrix()
     await seed_requisition_workflow(users_by_role)
@@ -540,12 +658,15 @@ async def main() -> None:
     await seed_invoice_approval_workflow(users_by_role)
     await seed_invoice_exception_workflow(users_by_role)
     await seed_supplier_workflow(users_by_role)
+    await seed_supplier_request_workflow(users_by_role)
+    await seed_preferred_supplier_review_workflow(users_by_role)
     print(
         "\nDemo accounts created under "
         f"*@{DEMO_DOMAIN}, password: {DEMO_PASSWORD!r} (for local testing only -- "
         "these are placeholder people, not real staff; swap them out before customer use).\n"
         "Published starter approval flows for: requisition, purchase_order, contract, "
-        "sourcing_event, goods_receipt, invoice_approval, invoice_exception, supplier -- "
+        "sourcing_event, goods_receipt, invoice_approval, invoice_exception, supplier, "
+        "supplier_request, preferred_supplier_review -- "
         "review and republish via the workflow designer as real thresholds/roles are known."
     )
 

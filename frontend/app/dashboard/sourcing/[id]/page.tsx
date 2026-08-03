@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getSourcingEvent, extractErrorMessage } from "@/lib/api";
 import type { SourcingEvent } from "@/lib/types";
+import InviteSuppliersCard from "@/components/InviteSuppliersCard";
 
 export default function SourcingDetailPage() {
   const params = useParams<{ id: string }>();
@@ -81,6 +82,9 @@ export default function SourcingDetailPage() {
             <dd>{event.line_items.length}</dd>
           </div>
         </dl>
+
+        {/* Preferred-supplier recommendation nudge (Template Framework Phase 5) */}
+        <InviteSuppliersCard event={event} onInvited={() => void load()} />
 
         <div className="rounded-lg border border-slate-200 p-4">
           <h2 className="font-semibold">Line items</h2>

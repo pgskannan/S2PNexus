@@ -718,6 +718,9 @@ export const APPROVER_ROLE_CODES = [
   "PROC_HEAD",
   "AP_HEAD",
   "AP_PROCESSOR",
+  "CATEGORY_MGR",
+  "RISK_TEAM",
+  "COMPLIANCE",
 ] as const;
 
 export type ApproverRoleCode = (typeof APPROVER_ROLE_CODES)[number];
@@ -866,4 +869,146 @@ export interface DocumentNumberingFormatListResponse {
 export interface DocumentNumberingPreviewResponse {
   sample: string;
   next_number: string;
+}
+
+// ---- Universal Template Framework (Phase 1) ----
+
+export interface TemplateVisibilityRule {
+  field?: string;
+  op?: "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "in";
+  value?: unknown;
+  all?: TemplateVisibilityRule[];
+  any?: TemplateVisibilityRule[];
+}
+
+export interface TemplateQuestion {
+  id: string;
+  question_key: string;
+  question_type:
+    | "text"
+    | "textarea"
+    | "numeric"
+    | "date"
+    | "yes_no"
+    | "dropdown"
+    | "multiselect"
+    | "file_upload"
+    | string;
+  question_text: string;
+  help_text?: string | null;
+  placeholder?: string | null;
+  default_value?: string | null;
+  options?: string[] | null;
+  editable_flag: boolean;
+  visible_flag: boolean;
+  mandatory_flag: boolean;
+  visibility_rule?: TemplateVisibilityRule | null;
+  parent_question_key?: string | null;
+  order: number;
+}
+
+export interface TemplateSection {
+  id: string;
+  name: string;
+  order: number;
+  visibility_rule?: TemplateVisibilityRule | null;
+  mandatory_flag: boolean;
+  questions: TemplateQuestion[];
+}
+
+export interface TemplateDefinition {
+  id: string;
+  tenant_id?: string | null;
+  module: string;
+  name: string;
+  description?: string | null;
+  version: number;
+  status: string;
+  sections: TemplateSection[];
+}
+
+export type TemplateAnswers = Record<string, unknown>;
+
+export interface TemplateResponse {
+  id: string;
+  template_id: string;
+  entity_type: string;
+  entity_id: string;
+  answers: TemplateAnswers;
+  computed_score?: string | null;
+  computed_grade?: string | null;
+  submitted_at?: string | null;
+}
+
+export interface SupplierRequest {
+  id: string;
+  title: string;
+  requestor_id: string;
+  business_justification?: string | null;
+  commodity_categories?: string | null;
+  suggested_supplier_name?: string | null;
+  existing_supplier_check: boolean;
+  preferred_region?: string | null;
+  estimated_annual_spend?: string | null;
+  diversity_required: boolean;
+  risk_justification?: string | null;
+  status: string;
+  lifecycle_status: string;
+  approval_status: string;
+  created_at: string;
+  updated_at: string;
+  template_response?: TemplateResponse | null;
+}
+
+export interface SupplierRequestListResponse {
+  items: SupplierRequest[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+// ---- Preferred Supplier Framework (Phase 3-5) ----
+
+export type PreferredStatus = "strategic" | "preferred" | "approved" | "blocked" | "none";
+
+export interface PreferredSupplierStatus {
+  id: string;
+  supplier_id: string;
+  preferred_status: PreferredStatus | string;
+  composite_score?: string | null;
+  qualification_score?: number | null;
+  performance_score?: string | null;
+  risk_score?: number | null;
+  spend_tier?: number | null;
+  has_active_contract: boolean;
+  category?: string | null;
+  region?: string | null;
+  classification_reason?: string | null;
+  computed_at?: string | null;
+  override_flag: boolean;
+  override_reason?: string | null;
+  updated_at: string;
+}
+
+export interface PreferredSupplierListResponse {
+  items: PreferredSupplierStatus[];
+  total: number;
+}
+
+export interface PreferredOverrideResponse {
+  applied: boolean;
+  review_instance_id?: string | null;
+  status: PreferredSupplierStatus;
+}
+
+export interface SupplierQualification {
+  id: string;
+  supplier_id: string;
+  score: number;
+  grade: string;
+  status: string;
+  valid_until?: string | null;
+  notes?: string | null;
+  updated_by?: string | null;
+  updated_at: string;
 }

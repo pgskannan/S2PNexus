@@ -20,7 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contract import Contract
-from app.models.procurement import ProcurementInvoice, ProcurementRequisition, PurchaseOrder
+from app.models.procurement import GoodsReceipt, ProcurementInvoice, ProcurementRequisition, PurchaseOrder
 from app.models.supplier import Supplier
 from app.schemas.analytics import (
     ContractAnalyticsResponse,
@@ -276,3 +276,132 @@ async def get_dashboard_metrics(db: AsyncSession) -> DashboardMetricsResponse:
         spend_by_month=spend_by_month,
         top_suppliers=top_suppliers,
     )
+
+
+# --- Preferred Supplier composite inputs (Template Framework Phase 2) -------
+
+# SystemSetting key holding comma-separated ascending spend-tier boundaries
+# (three numbers -> four tiers). Configurable per deployment because tenants
+# have wildly different spend scales; these defaults suit a small business.
+SPEND_TIER_THRESHOLDS_KEY = "supplier_spend_tier_thresholds"
+DEFAULT_SPEND_TIER_THRESHOLDS = (Decimal("10000"), Decimal("100000"), Decimal("500000"))
+
+PERFORMANCE_WINDOW_DAYS = 90
+
+
+async def compute_supplier_performance_score(
+    db: AsyncSession,
+    supplier_id: UUID,
+    *,
+    window_days: int = PERFORMANCE_WINDOW_DAYS,
+) -> Optional[Decimal]:
+    """Derived performance score (0-100) from live P2P execution data:
+
+        (1 - goods_receipt_exception_rate) * 0.5
+      + (1 - invoice_match_exception_rate) * 0.5, scaled to 0-100
+
+    over a trailing window. Receipts reach the supplier via their purchase
+    order; invoices carry supplier_id directly. Invoices still pending
+    matching are excluded from the denominator (they carry no signal yet);
+    match_status values counted are matched / matched_with_variance /
+    exception, mirroring crud.procurement's matching engine outputs.
+
+    Returns None -- not a fabricated default -- when the supplier has neither
+    receipts nor matched invoices in the window; the Preferred Supplier
+    composite re-normalizes around missing components. If only one side has
+    data, the score is that side alone (same re-normalization philosophy).
+
+    This is a proxy standing in for the spec's full Supplier Performance
+    module (dynamic KPIs, corrective actions); replace the internals when
+    that module lands, keeping the signature.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+
+    receipt_rows = (
+        await db.execute(
+            select(GoodsReceipt.has_exceptions)
+            .join(PurchaseOrder, GoodsReceipt.purchase_order_id == PurchaseOrder.id)
+            .where(
+                PurchaseOrder.supplier_id == supplier_id,
+                GoodsReceipt.created_at >= cutoff,
+            )
+        )
+    ).scalars().all()
+
+    invoice_rows = (
+        await db.execute(
+            select(ProcurementInvoice.match_status).where(
+                ProcurementInvoice.supplier_id == supplier_id,
+                ProcurementInvoice.created_at >= cutoff,
+                ProcurementInvoice.match_status.in_(
+                    ["matched", "matched_with_variance", "exception"]
+                ),
+            )
+        )
+    ).scalars().all()
+
+    components: list[Decimal] = []
+    if receipt_rows:
+        exception_rate = Decimal(sum(1 for flag in receipt_rows if flag)) / Decimal(len(receipt_rows))
+        components.append(Decimal("1") - exception_rate)
+    if invoice_rows:
+        exception_rate = Decimal(sum(1 for s in invoice_rows if s == "exception")) / Decimal(len(invoice_rows))
+        components.append(Decimal("1") - exception_rate)
+
+    if not components:
+        return None
+    score = sum(components) / Decimal(len(components)) * Decimal("100")
+    return score.quantize(Decimal("0.01"))
+
+
+async def get_spend_tier_thresholds(db: AsyncSession) -> tuple[Decimal, Decimal, Decimal]:
+    """Read the three ascending tier boundaries from SystemSetting, falling
+    back to defaults on missing/malformed values (never raises -- a bad
+    setting must not take supplier scoring down)."""
+    from app.crud.system_setting import get_setting
+
+    setting = await get_setting(db, SPEND_TIER_THRESHOLDS_KEY)
+    if setting is None:
+        return DEFAULT_SPEND_TIER_THRESHOLDS
+    try:
+        parts = [Decimal(part.strip()) for part in setting.value.split(",")]
+        if len(parts) != 3 or not (parts[0] < parts[1] < parts[2]):
+            return DEFAULT_SPEND_TIER_THRESHOLDS
+        return (parts[0], parts[1], parts[2])
+    except Exception:
+        return DEFAULT_SPEND_TIER_THRESHOLDS
+
+
+def spend_to_tier(total_spend: Decimal, thresholds: tuple[Decimal, Decimal, Decimal]) -> int:
+    """Bucket trailing spend into tiers 1-4 (higher tier = more strategic
+    spend relationship). Zero spend is a legitimate tier 1, not a missing
+    value."""
+    t1, t2, t3 = thresholds
+    if total_spend >= t3:
+        return 4
+    if total_spend >= t2:
+        return 3
+    if total_spend >= t1:
+        return 2
+    return 1
+
+
+async def compute_supplier_spend_tier(
+    db: AsyncSession,
+    supplier_id: UUID,
+    *,
+    window_days: int = 365,
+) -> int:
+    """Trailing-window invoice spend for the supplier, bucketed into tier 1-4
+    via the configurable thresholds."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+    total = (
+        await db.execute(
+            select(func.coalesce(func.sum(ProcurementInvoice.total_amount), 0)).where(
+                ProcurementInvoice.supplier_id == supplier_id,
+                ProcurementInvoice.created_at >= cutoff,
+            )
+        )
+    ).scalar_one()
+    thresholds = await get_spend_tier_thresholds(db)
+    return spend_to_tier(Decimal(str(total)), thresholds)

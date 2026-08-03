@@ -50,6 +50,14 @@ from app.models.address import Address  # noqa: F401
 from app.models.accounting_split import LineItemAccountingSplit, Budget  # noqa: F401
 from app.models.approval import ApproverSeed, ApprovalEvent, SlaDefinition, SlaMetric  # noqa: F401
 from app.models.act_as import ActAsSession  # noqa: F401
+from app.models.supplier_qualification import SupplierQualification  # noqa: F401
+from app.models.preferred_supplier import PreferredSupplierStatus  # noqa: F401
+from app.models.template import (  # noqa: F401
+    TemplateDefinition,
+    TemplateSection,
+    TemplateQuestion,
+    TemplateResponse,
+)
 from app.metadata_engine.models import (
     MetadataAuditEvent,
     MetadataField,
@@ -100,4 +108,10 @@ __all__ = [
     "LineItemAccountingSplit",
     "Budget",
     "ActAsSession",
+    "SupplierQualification",
+    "PreferredSupplierStatus",
+    "TemplateDefinition",
+    "TemplateSection",
+    "TemplateQuestion",
+    "TemplateResponse",
 ]

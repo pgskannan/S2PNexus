@@ -275,6 +275,23 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
                     started_by=instance.started_by,
                     tenant_id=tenant_id,
                 )
+            elif instance.entity_type == "preferred_supplier_review":
+                # Template Framework Phase 4: a completed override-review
+                # instance APPLIES the pending manual override that started
+                # it (rejection simply never reaches here, leaving the
+                # engine-computed status untouched). The pending override
+                # lives only in the instance context until this point.
+                from app.services.preferred_supplier import apply_preferred_override
+
+                await apply_preferred_override(
+                    db,
+                    supplier_id=_normalize_uuid(instance.context.get("supplier_id")),
+                    target_status=str(instance.context.get("target_status") or ""),
+                    reason=instance.context.get("override_reason"),
+                    actor_id=_normalize_uuid(instance.context.get("override_by")),
+                    tenant_id=_normalize_uuid(instance.context.get("tenant_id")) if instance.context.get("tenant_id") else None,
+                    commit=False,  # this function's caller owns the transaction
+                )
             return
 
         step = steps[step_index]

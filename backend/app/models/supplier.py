@@ -137,6 +137,22 @@ class Supplier(Base):
         comment="Post-onboarding lifecycle state: active, under_monitoring, "
         "requalification_due, requalification_in_progress, offboarding, offboarded",
     )
+    # Live mirror of the one risk number that already exists in the system
+    # (SupplierRegistration.risk_score/risk_level, set at intake), copied here
+    # at registration->supplier conversion and admin-editable afterwards.
+    # This is NOT the full Supplier Risk module from the Template Framework
+    # spec (weighted multi-factor scoring, external data feeds) -- it exists
+    # so the Preferred Supplier composite (spec Section 17) has a real risk
+    # input today. Replace the write path when the real Risk module lands.
+    current_risk_score: Mapped[int | None] = mapped_column(
+        nullable=True,
+        comment="0-100, higher = riskier; mirrored from registration at conversion",
+    )
+    current_risk_level: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="low / medium / high / critical",
+    )
     last_qualified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

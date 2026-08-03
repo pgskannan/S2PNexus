@@ -2,7 +2,7 @@
 Supplier schemas for S2PNexus.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
@@ -91,6 +91,10 @@ class SupplierUpdate(BaseModel):
     w9_on_file: Optional[bool] = None
     external_supplier_code: Optional[str] = Field(None, max_length=50)
     is_active: Optional[bool] = None
+    # Risk mirror (Template Framework Phase 2) -- admin-adjustable between
+    # requalifications; feeds the Preferred Supplier composite score.
+    current_risk_score: Optional[int] = Field(None, ge=0, le=100)
+    current_risk_level: Optional[str] = Field(None, max_length=20)
 
 
 class SupplierResponse(SupplierBase):
@@ -98,6 +102,8 @@ class SupplierResponse(SupplierBase):
 
     id: UUID
     lifecycle_status: str = "active"
+    current_risk_score: Optional[int] = None
+    current_risk_level: Optional[str] = None
     last_qualified_at: Optional[datetime] = None
     next_requalification_due_at: Optional[datetime] = None
     offboarding_reason: Optional[str] = None
@@ -107,6 +113,83 @@ class SupplierResponse(SupplierBase):
     merged_into_supplier_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
+
+
+class SupplierQualificationUpsert(BaseModel):
+    """Manual qualification entry (placeholder for the future template-driven
+    qualification module -- see models/supplier_qualification.py)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    score: int = Field(..., ge=0, le=100)
+    status: str = Field(default="qualified", max_length=30)
+    valid_until: Optional[date] = None
+    notes: Optional[str] = None
+
+
+class SupplierQualificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    supplier_id: UUID
+    score: int
+    grade: str
+    status: str
+    valid_until: Optional[date] = None
+    notes: Optional[str] = None
+    updated_by: Optional[UUID] = None
+    updated_at: datetime
+
+
+class PreferredSupplierStatusResponse(BaseModel):
+    """Preferred Supplier classification + component breakdown (spec Section 17)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    supplier_id: UUID
+    preferred_status: str
+    composite_score: Optional[Decimal] = None
+    qualification_score: Optional[int] = None
+    performance_score: Optional[Decimal] = None
+    risk_score: Optional[int] = None
+    spend_tier: Optional[int] = None
+    has_active_contract: bool = False
+    category: Optional[str] = None
+    region: Optional[str] = None
+    classification_reason: Optional[str] = None
+    computed_at: Optional[datetime] = None
+    override_flag: bool = False
+    override_reason: Optional[str] = None
+    updated_at: datetime
+
+
+class PreferredSupplierListResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    items: list[PreferredSupplierStatusResponse]
+    total: int
+
+
+class PreferredOverrideRequest(BaseModel):
+    """Manual preferred-status override -- reason is mandatory (audit)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    status: str = Field(..., max_length=20, description="strategic | preferred | approved | blocked | none")
+    reason: str = Field(..., min_length=5, max_length=2000)
+
+
+class PreferredOverrideResponse(BaseModel):
+    """Either the applied override (no review workflow configured) or the
+    pending review instance (workflow configured -- override applies on
+    approval)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    applied: bool
+    review_instance_id: Optional[UUID] = None
+    status: PreferredSupplierStatusResponse
 
 
 class SupplierAddressBase(BaseModel):

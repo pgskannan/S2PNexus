@@ -81,7 +81,11 @@ from app.crud.supplier_request import (
     update_supplier_request,
 )
 from app.database.session import get_db
+from sqlalchemy import select
+
+from app.models.supplier import Supplier
 from app.models.user import User, UserRole
+from app.services.preferred_supplier import recompute_preferred_status
 from app.schemas.supplier import (
     SupplierAddressCreate,
     SupplierAddressResponse,
@@ -95,10 +99,20 @@ from app.schemas.supplier import (
     SupplierHierarchyUpdate,
     SupplierLifecycleTransitionRequest,
     SupplierListResponse,
+    PreferredOverrideRequest,
+    PreferredOverrideResponse,
+    PreferredSupplierListResponse,
+    PreferredSupplierStatusResponse,
     SupplierMergeRequest,
+    SupplierQualificationResponse,
+    SupplierQualificationUpsert,
     SupplierResponse,
     SupplierSpendRollupResponse,
     SupplierUpdate,
+)
+from app.crud.supplier_qualification import (
+    get_supplier_qualification,
+    upsert_supplier_qualification,
 )
 from app.schemas.supplier_registration import (
     SupplierRegistrationCreate,
@@ -123,10 +137,66 @@ from app.services.supplier_workflow import (
     apply_supplier_transition_workflow,
     trigger_supplier_requalification_workflow,
 )
+from app.crud.template import TemplateValidationError, get_response_for_entity, upsert_template_response
 from app.utils.dependencies import get_current_active_user
 
 router = APIRouter(prefix="", tags=["Suppliers"])
 settings = get_settings()
+
+# Template answer keys that mirror legacy SupplierRequest columns one-for-one
+# (question_key == column name by construction, see
+# scripts/seed_supplier_request_template.py). yes_no answers arrive as
+# "yes"/"no" strings; booleans/Decimals are coerced for the fixed columns.
+_LEGACY_ANSWER_KEYS = (
+    "business_justification",
+    "commodity_categories",
+    "suggested_supplier_name",
+    "existing_supplier_check",
+    "preferred_region",
+    "estimated_annual_spend",
+    "diversity_required",
+    "risk_justification",
+)
+_LEGACY_BOOL_KEYS = {"existing_supplier_check", "diversity_required"}
+
+
+def _legacy_fields_from_answers(answers: dict) -> dict:
+    """Mirror known template answers onto the legacy fixed columns."""
+    from decimal import Decimal, InvalidOperation
+
+    fields: dict = {}
+    for key in _LEGACY_ANSWER_KEYS:
+        if key not in answers or answers[key] is None:
+            continue
+        value = answers[key]
+        if key in _LEGACY_BOOL_KEYS:
+            fields[key] = value is True or str(value).strip().lower() in {"yes", "true", "1"}
+        elif key == "estimated_annual_spend":
+            try:
+                fields[key] = Decimal(str(value))
+            except (InvalidOperation, ValueError):
+                continue  # unparseable spend stays template-only
+        else:
+            fields[key] = str(value)
+    return fields
+
+
+def _answers_from_legacy_fields(legacy_data: dict) -> dict:
+    """Mirror legacy fixed-column values into template answers ("yes"/"no"
+    strings for booleans, stringified Decimal for spend -- same encoding as
+    the backfill script)."""
+    answers: dict = {}
+    for key in _LEGACY_ANSWER_KEYS:
+        value = legacy_data.get(key)
+        if value is None:
+            continue
+        if key in _LEGACY_BOOL_KEYS:
+            answers[key] = "yes" if value else "no"
+        elif key == "estimated_annual_spend":
+            answers[key] = str(value)
+        else:
+            answers[key] = value
+    return answers
 
 
 def _require_admin(current_user: User) -> None:
@@ -262,14 +332,42 @@ async def create_supplier_request_endpoint(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> SupplierRequestResponse:
+    # Template Framework Phase 1: `answers` is the dynamic-questionnaire
+    # payload, not a SupplierRequest column -- split it off before the legacy
+    # create path, and mirror known legacy keys from answers into the fixed
+    # columns so both representations stay consistent regardless of whether
+    # the client sent legacy fields, answers, or both (answers win).
+    answers = request_data.answers or {}
+    legacy_data = request_data.model_dump(exclude={"answers"})
+    legacy_data.update(_legacy_fields_from_answers(answers))
+
     handler = CreateSupplierRequestCommandHandler(create_supplier_request_service=create_supplier_request)
-    command = CreateSupplierRequestCommand(supplier_request_data=request_data.model_dump(), tenant_id=current_user.tenant_id)
+    command = CreateSupplierRequestCommand(supplier_request_data=legacy_data, tenant_id=current_user.tenant_id)
     supplier_request = await handler.handle(command, db=db)
+
+    # Persist the full answer set (legacy-mirrored + template-only keys) as
+    # the request's TemplateResponse. Returns None when no supplier_request
+    # template is published -- legacy behavior unchanged in that case.
+    # submit=False on purpose: creation produces a draft, and drafts may have
+    # gaps. Mandatory-answer validation + scoring run at the submit
+    # transition (see transition_supplier_request), matching when the spec's
+    # conditional-mandatory rules are actually enforceable.
+    template_response = await upsert_template_response(
+        db,
+        module="supplier_request",
+        entity_type="supplier_request",
+        entity_id=supplier_request.id,
+        answers={**_answers_from_legacy_fields(legacy_data), **answers},
+        submitted_by=current_user.id,
+        tenant_id=current_user.tenant_id,
+        submit=False,
+    )
 
     response_payload = {
         **supplier_request.__dict__,
         "created_at": getattr(supplier_request, "created_at", datetime.now(timezone.utc)),
         "updated_at": getattr(supplier_request, "updated_at", datetime.now(timezone.utc)),
+        "template_response": template_response,
     }
     return SupplierRequestResponse.model_validate(response_payload)
 
@@ -284,10 +382,14 @@ async def get_supplier_request_endpoint(
     if not supplier_request:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier request not found")
 
+    template_response = await get_response_for_entity(
+        db, "supplier_request", supplier_request.id, tenant_id=current_user.tenant_id
+    )
     response_payload = {
         **supplier_request.__dict__,
         "created_at": getattr(supplier_request, "created_at", datetime.now(timezone.utc)),
         "updated_at": getattr(supplier_request, "updated_at", datetime.now(timezone.utc)),
+        "template_response": template_response,
     }
     return SupplierRequestResponse.model_validate(response_payload)
 
@@ -325,16 +427,24 @@ async def transition_supplier_request_endpoint(
 
     action = str(transition_data.get("action", "submit"))
     handler = TransitionSupplierRequestCommandHandler(transition_supplier_request_service=transition_supplier_request)
-    transitioned_request = await handler.handle(
-        TransitionSupplierRequestCommand(
-            supplier_request_id=str(supplier_request_id),
-            action=action,
-            details={"details": transition_data.get("details")},
-            tenant_id=current_user.tenant_id,
-        ),
-        db=db,
-        actor_id=current_user.id,
-    )
+    try:
+        transitioned_request = await handler.handle(
+            TransitionSupplierRequestCommand(
+                supplier_request_id=str(supplier_request_id),
+                action=action,
+                details={"details": transition_data.get("details")},
+                tenant_id=current_user.tenant_id,
+            ),
+            db=db,
+            actor_id=current_user.id,
+        )
+    except TemplateValidationError as exc:
+        # Submit with unanswered mandatory template questions: request stays
+        # in draft, client gets the exact missing question keys.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": "Missing mandatory template answers", "missing": exc.missing_keys},
+        ) from exc
     if not transitioned_request:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier request not found")
 
@@ -721,6 +831,241 @@ async def delete_all_supplier_bank_accounts_endpoint(
     _require_admin(current_user)
     deleted = await delete_all_supplier_bank_accounts(db)
     return {"deleted": deleted}
+
+
+# --- Preferred Supplier Framework (Template Framework Phase 3) --------------
+# NOTE: "/preferred-statuses" and "/preferred/recompute-all" are literal paths
+# and MUST stay registered before the generic "/{supplier_id}" routes below
+# (see the routing-order note further down).
+
+
+@router.get(
+    "/preferred-statuses",
+    response_model=PreferredSupplierListResponse,
+    summary="List preferred supplier statuses",
+)
+async def list_preferred_statuses_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+    status_filter: str | None = Query(None, alias="status"),
+    category: str | None = Query(None),
+    region: str | None = Query(None),
+) -> PreferredSupplierListResponse:
+    from app.models.preferred_supplier import PreferredSupplierStatus
+
+    query = select(PreferredSupplierStatus)
+    if current_user.tenant_id is not None:
+        query = query.where(
+            (PreferredSupplierStatus.tenant_id == current_user.tenant_id)
+            | (PreferredSupplierStatus.tenant_id.is_(None))
+        )
+    if status_filter:
+        query = query.where(PreferredSupplierStatus.preferred_status == status_filter)
+    if category:
+        query = query.where(PreferredSupplierStatus.category == category)
+    if region:
+        query = query.where(PreferredSupplierStatus.region == region)
+    rows = (await db.execute(query.order_by(PreferredSupplierStatus.composite_score.desc().nullslast()))).scalars().all()
+    return PreferredSupplierListResponse(
+        items=[PreferredSupplierStatusResponse.model_validate(row) for row in rows],
+        total=len(rows),
+    )
+
+
+@router.post(
+    "/preferred/recompute-all",
+    response_model=PreferredSupplierListResponse,
+    summary="Recompute preferred status for all suppliers (admin)",
+)
+async def recompute_all_preferred_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> PreferredSupplierListResponse:
+    _require_admin(current_user)
+    supplier_ids = (await db.execute(select(Supplier.id).where(Supplier.is_active.is_(True)))).scalars().all()
+    rows = []
+    for sid in supplier_ids:
+        rows.append(
+            await recompute_preferred_status(db, sid, tenant_id=current_user.tenant_id, commit=False)
+        )
+    await db.commit()
+    for row in rows:
+        await db.refresh(row)
+    return PreferredSupplierListResponse(
+        items=[PreferredSupplierStatusResponse.model_validate(row) for row in rows],
+        total=len(rows),
+    )
+
+
+@router.get(
+    "/{supplier_id}/preferred",
+    response_model=PreferredSupplierStatusResponse,
+    summary="Get a supplier's preferred status",
+)
+async def get_preferred_status_endpoint(
+    supplier_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> PreferredSupplierStatusResponse:
+    from app.models.preferred_supplier import PreferredSupplierStatus
+
+    row = (
+        await db.execute(
+            select(PreferredSupplierStatus).where(PreferredSupplierStatus.supplier_id == supplier_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No preferred status computed for this supplier yet -- POST .../preferred/recompute first",
+        )
+    return PreferredSupplierStatusResponse.model_validate(row)
+
+
+@router.post(
+    "/{supplier_id}/preferred/recompute",
+    response_model=PreferredSupplierStatusResponse,
+    summary="Recompute a supplier's preferred status (admin/category manager)",
+)
+async def recompute_preferred_endpoint(
+    supplier_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> PreferredSupplierStatusResponse:
+    if current_user.role not in (UserRole.ADMINISTRATOR, UserRole.CATEGORY_MANAGER) and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators and category managers can recompute preferred status",
+        )
+    try:
+        row = await recompute_preferred_status(db, supplier_id, tenant_id=current_user.tenant_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return PreferredSupplierStatusResponse.model_validate(row)
+
+
+@router.patch(
+    "/{supplier_id}/preferred/override",
+    response_model=PreferredOverrideResponse,
+    summary="Manually override a supplier's preferred status (admin, routed through review workflow when configured)",
+)
+async def override_preferred_status_endpoint(
+    supplier_id: UUID,
+    payload: PreferredOverrideRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> PreferredOverrideResponse:
+    """Template Framework Phase 4: manual overrides route through the
+    preferred_supplier_review workflow (Category Manager -> Procurement Head
+    -> Risk Team -> Compliance) when one is configured; the override applies
+    only when every reviewer approves. With no definition configured, the
+    override applies immediately (fallback contract). Auto-classification
+    (recompute) never routes here -- spec allows it to bypass review."""
+    from app.models.preferred_supplier import PreferredSupplierStatus
+    from app.services.preferred_supplier import (
+        apply_preferred_override,
+        start_preferred_override_workflow,
+    )
+
+    _require_admin(current_user)
+    supplier = await get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+
+    try:
+        instance = await start_preferred_override_workflow(
+            db,
+            supplier_id,
+            target_status=payload.status,
+            reason=payload.reason,
+            actor_id=current_user.id,
+            tenant_id=current_user.tenant_id,
+        )
+        if instance is None:
+            row = await apply_preferred_override(
+                db,
+                supplier_id=supplier_id,
+                target_status=payload.status,
+                reason=payload.reason,
+                actor_id=current_user.id,
+                tenant_id=current_user.tenant_id,
+            )
+            return PreferredOverrideResponse(
+                applied=True,
+                review_instance_id=None,
+                status=PreferredSupplierStatusResponse.model_validate(row),
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    # Workflow started: the override is pending review. Re-fetch the current
+    # row (start_workflow_instance commits, expiring loaded objects).
+    row = (
+        await db.execute(
+            select(PreferredSupplierStatus).where(PreferredSupplierStatus.supplier_id == supplier_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        # Override requested before any recompute: create the baseline row so
+        # the response (and the review's eventual completion) has a target.
+        from app.services.preferred_supplier import recompute_preferred_status
+
+        row = await recompute_preferred_status(db, supplier_id, tenant_id=current_user.tenant_id)
+    return PreferredOverrideResponse(
+        applied=False,
+        review_instance_id=instance.id,
+        status=PreferredSupplierStatusResponse.model_validate(row),
+    )
+
+
+# --- Supplier Qualification (placeholder, Template Framework Phase 2) -------
+
+
+@router.get(
+    "/{supplier_id}/qualification",
+    response_model=SupplierQualificationResponse,
+    summary="Get supplier qualification (placeholder record)",
+)
+async def get_supplier_qualification_endpoint(
+    supplier_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierQualificationResponse:
+    qualification = await get_supplier_qualification(db, supplier_id, tenant_id=current_user.tenant_id)
+    if not qualification:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No qualification record for this supplier")
+    return SupplierQualificationResponse.model_validate(qualification)
+
+
+@router.put(
+    "/{supplier_id}/qualification",
+    response_model=SupplierQualificationResponse,
+    summary="Set supplier qualification (admin/category manager)",
+)
+async def upsert_supplier_qualification_endpoint(
+    supplier_id: UUID,
+    payload: SupplierQualificationUpsert,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierQualificationResponse:
+    """Manual qualification entry -- the placeholder stand-in for the future
+    template-driven qualification module (see models/supplier_qualification.py).
+    Grade is derived server-side from score via the spec Section 7 bands."""
+    if current_user.role not in (UserRole.ADMINISTRATOR, UserRole.CATEGORY_MANAGER) and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators and category managers can set supplier qualifications",
+        )
+    supplier = await get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    try:
+        qualification = await upsert_supplier_qualification(
+            db, supplier_id, payload, actor_id=current_user.id, tenant_id=current_user.tenant_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return SupplierQualificationResponse.model_validate(qualification)
 
 
 # NOTE: The generic "/{supplier_id}" routes below must stay registered *after* every

@@ -25,6 +25,67 @@ def evaluate_supplier_request_approval(request: Any) -> dict[str, Any]:
     }
 
 
+async def start_supplier_request_workflow(
+    db: Any,
+    supplier_request: Any,
+    *,
+    started_by: UUID,
+    answers: dict[str, Any] | None = None,
+) -> Any | None:
+    """Kick off a WorkflowInstance for a supplier request submission, reusing
+    the generic workflow engine -- same pattern and fallback contract as
+    start_supplier_requalification_workflow below: returns None (does not
+    raise) when no WorkflowDefinition with entity_type='supplier_request' is
+    configured, so tenants with nothing configured keep today's plain
+    status-flip behavior with zero regression.
+
+    Context precomputes `compliance_review_required` ("yes"/"no") -- diversity
+    required OR a risk justification present (from template answers when
+    available, legacy columns otherwise) -- so a definition can branch to a
+    Compliance approval on a single condition step instead of needing OR
+    support in the condition grammar.
+    """
+    from app.crud.workflow import get_workflow_definitions, start_workflow_instance
+    from app.schemas.workflow import WorkflowInstanceStart
+
+    candidates = await get_workflow_definitions(db, entity_type="supplier_request", is_active=True, limit=1)
+    if not candidates:
+        return None
+    definition = candidates[0]
+
+    answers = answers or {}
+    diversity = str(answers.get("diversity_required", "") or "").lower()
+    if not diversity:
+        diversity = "yes" if getattr(supplier_request, "diversity_required", False) else "no"
+    risk_text = answers.get("risk_justification") or getattr(supplier_request, "risk_justification", None) or ""
+    compliance_required = "yes" if (diversity == "yes" or str(risk_text).strip()) else "no"
+
+    spend = answers.get("estimated_annual_spend")
+    if spend is None:
+        spend_value = getattr(supplier_request, "estimated_annual_spend", None)
+        spend = str(spend_value) if spend_value is not None else None
+
+    context = {
+        "supplier_request_id": str(supplier_request.id),
+        "title": getattr(supplier_request, "title", None),
+        "diversity_required": diversity,
+        "risk_justification_present": "yes" if str(risk_text).strip() else "no",
+        "compliance_review_required": compliance_required,
+        "estimated_annual_spend": spend,
+    }
+
+    return await start_workflow_instance(
+        db,
+        WorkflowInstanceStart(
+            definition_id=definition.id,
+            entity_type="supplier_request",
+            entity_id=supplier_request.id,
+            context=context,
+        ),
+        started_by=started_by,
+    )
+
+
 def evaluate_supplier_registration_approval(registration: Any) -> dict[str, Any]:
     estimated_annual_revenue = getattr(registration, "estimated_annual_revenue", 0) or 0
     risk_score = getattr(registration, "risk_score", None)
@@ -65,8 +126,17 @@ async def apply_supplier_transition_workflow(
     actor_id: Any | None = None,
     tenant_id: Any | None = None,
 ) -> dict[str, Any]:
-    decision = evaluate_supplier_request_approval(request)
-    request.approval_status = decision["approval_status"]
+    # When the generic workflow engine took ownership of this submission
+    # (transition_supplier_request started an instance and flagged the ORM
+    # object), the legacy hardcoded evaluator must not override the
+    # engine-driven approval_status -- two routing authorities fighting over
+    # one field is exactly the failure mode the Template Framework replaces.
+    # Event publishing below still runs either way.
+    if getattr(request, "workflow_instance_started", False):
+        decision = {"requires_approval": True, "approval_status": request.approval_status, "rule": "workflow_engine"}
+    else:
+        decision = evaluate_supplier_request_approval(request)
+        request.approval_status = decision["approval_status"]
 
     if state is not None:
         publish_supplier_event(state, event_type, payload)

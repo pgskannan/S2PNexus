@@ -18,6 +18,13 @@ const cards = [
     href: "/dashboard/suppliers",
   },
   {
+    title: "Preferred Supplier Management",
+    description:
+      "Composite scoring (qualification, performance, risk, spend), auto-classification, and reviewed manual overrides.",
+    status: "Live" as const,
+    href: "/dashboard/admin/preferred-suppliers",
+  },
+  {
     title: "Project/template version control",
     description: "Track supplier onboarding templates and project iterations over time.",
     status: "Coming soon" as const,

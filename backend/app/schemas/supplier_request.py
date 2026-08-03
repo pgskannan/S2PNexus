@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.schemas.template import TemplateResponseOut
 
 
 class SupplierRequestBase(BaseModel):
@@ -27,7 +29,12 @@ class SupplierRequestBase(BaseModel):
 
 
 class SupplierRequestCreate(SupplierRequestBase):
-    pass
+    # Template Framework Phase 1: dynamic questionnaire answers keyed by
+    # question_key. Known legacy keys (business_justification,
+    # diversity_required, ...) are mirrored into the fixed columns at the
+    # router; template-only keys (diversity_certification_upload,
+    # risk_mitigation_plan, ...) live only in the TemplateResponse.
+    answers: Optional[dict[str, Any]] = None
 
 
 class SupplierRequestUpdate(BaseModel):
@@ -52,6 +59,8 @@ class SupplierRequestResponse(SupplierRequestBase):
     id: UUID
     created_at: datetime
     updated_at: datetime
+    # Populated on the detail endpoint only (None in list responses):
+    template_response: Optional[TemplateResponseOut] = None
 
 
 class SupplierRequestListResponse(BaseModel):

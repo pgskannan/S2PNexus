@@ -1299,3 +1299,153 @@ export async function deleteAllCommodityGlMapping(): Promise<{ deleted: number }
   const { data } = await api.delete<{ deleted: number }>("/commodity-codes/mappings");
   return data;
 }
+
+// ---- Universal Template Framework (Phase 1) ----
+
+export async function getEffectiveTemplate(
+  module: string
+): Promise<import("@/lib/types").TemplateDefinition> {
+  const { data } = await api.get<import("@/lib/types").TemplateDefinition>(
+    `/templates/${module}/effective`
+  );
+  return data;
+}
+
+export async function getTemplateResponse(
+  entityType: string,
+  entityId: string
+): Promise<import("@/lib/types").TemplateResponse> {
+  const { data } = await api.get<import("@/lib/types").TemplateResponse>(
+    `/templates/responses/${entityType}/${entityId}`
+  );
+  return data;
+}
+
+// ---- Supplier Requests ----
+
+export async function listSupplierRequests(params?: {
+  skip?: number;
+  limit?: number;
+  search?: string;
+  status?: string;
+}): Promise<import("@/lib/types").SupplierRequestListResponse> {
+  const { data } = await api.get<import("@/lib/types").SupplierRequestListResponse>(
+    "/suppliers/requests",
+    { params }
+  );
+  return data;
+}
+
+export async function getSupplierRequest(
+  id: string
+): Promise<import("@/lib/types").SupplierRequest> {
+  const { data } = await api.get<import("@/lib/types").SupplierRequest>(
+    `/suppliers/requests/${id}`
+  );
+  return data;
+}
+
+export async function createSupplierRequest(payload: {
+  title: string;
+  requestor_id: string;
+  answers?: import("@/lib/types").TemplateAnswers;
+}): Promise<import("@/lib/types").SupplierRequest> {
+  const { data } = await api.post<import("@/lib/types").SupplierRequest>(
+    "/suppliers/requests",
+    payload
+  );
+  return data;
+}
+
+export async function transitionSupplierRequest(
+  id: string,
+  action: "submit" | "approve" | "reject" | "cancel"
+): Promise<import("@/lib/types").SupplierRequest> {
+  const { data } = await api.post<import("@/lib/types").SupplierRequest>(
+    `/suppliers/requests/${id}/transition`,
+    { action }
+  );
+  return data;
+}
+
+// ---- Preferred Supplier Framework (Phase 3-5) ----
+
+export async function listPreferredStatuses(params?: {
+  status?: string;
+  category?: string;
+  region?: string;
+}): Promise<import("@/lib/types").PreferredSupplierListResponse> {
+  const { data } = await api.get<import("@/lib/types").PreferredSupplierListResponse>(
+    "/suppliers/preferred-statuses",
+    { params }
+  );
+  return data;
+}
+
+export async function getPreferredStatus(
+  supplierId: string
+): Promise<import("@/lib/types").PreferredSupplierStatus> {
+  const { data } = await api.get<import("@/lib/types").PreferredSupplierStatus>(
+    `/suppliers/${supplierId}/preferred`
+  );
+  return data;
+}
+
+export async function recomputePreferredStatus(
+  supplierId: string
+): Promise<import("@/lib/types").PreferredSupplierStatus> {
+  const { data } = await api.post<import("@/lib/types").PreferredSupplierStatus>(
+    `/suppliers/${supplierId}/preferred/recompute`
+  );
+  return data;
+}
+
+export async function recomputeAllPreferredStatuses(): Promise<
+  import("@/lib/types").PreferredSupplierListResponse
+> {
+  const { data } = await api.post<import("@/lib/types").PreferredSupplierListResponse>(
+    "/suppliers/preferred/recompute-all"
+  );
+  return data;
+}
+
+export async function overridePreferredStatus(
+  supplierId: string,
+  payload: { status: string; reason: string }
+): Promise<import("@/lib/types").PreferredOverrideResponse> {
+  const { data } = await api.patch<import("@/lib/types").PreferredOverrideResponse>(
+    `/suppliers/${supplierId}/preferred/override`,
+    payload
+  );
+  return data;
+}
+
+export async function getSupplierQualification(
+  supplierId: string
+): Promise<import("@/lib/types").SupplierQualification> {
+  const { data } = await api.get<import("@/lib/types").SupplierQualification>(
+    `/suppliers/${supplierId}/qualification`
+  );
+  return data;
+}
+
+export async function upsertSupplierQualification(
+  supplierId: string,
+  payload: { score: number; status?: string; valid_until?: string | null; notes?: string | null }
+): Promise<import("@/lib/types").SupplierQualification> {
+  const { data } = await api.put<import("@/lib/types").SupplierQualification>(
+    `/suppliers/${supplierId}/qualification`,
+    payload
+  );
+  return data;
+}
+
+export async function inviteSupplierToSourcingEvent(
+  eventId: string,
+  supplierId: string
+): Promise<{ id: string; event_id: string; supplier_id: string; status: string }> {
+  const { data } = await api.post(`/sourcing/events/${eventId}/invitations`, {
+    supplier_id: supplierId,
+  });
+  return data;
+}

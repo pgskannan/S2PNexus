@@ -16,7 +16,11 @@ class UserBase(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    email: EmailStr = Field(..., description="User email address")
+    # Plain str, not EmailStr: the demo seed (seed_approver_matrix.py) creates
+    # users with emails like manager@s2pnexus-demo.local whose ".local" domain
+    # is rejected by pydantic's EmailStr validator ("special-use/reserved
+    # name"). Reading those users (GET /users, /auth/me) must never 500.
+    email: str = Field(..., description="User email address")
     full_name: str = Field(..., min_length=1, max_length=255, description="User full name")
     role: UserRole = Field(default=UserRole.REQUESTER, description="Enterprise RBAC role")
     is_active: bool = Field(default=True, description="User active status")
@@ -26,6 +30,9 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """User creation schema."""
 
+    # Keep strict email validation on creation (registration also validates via
+    # UserRegister), even though reads accept any stored string.
+    email: EmailStr = Field(..., description="User email address")
     hashed_password: str = Field(..., description="Hashed password")
 
 
@@ -34,7 +41,7 @@ class UserUpdate(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    email: Optional[EmailStr] = Field(None, description="User email address")
+    email: Optional[str] = Field(None, description="User email address")
     full_name: Optional[str] = Field(None, min_length=1, max_length=255, description="User full name")
     role: Optional[UserRole] = Field(None, description="Enterprise RBAC role")
     is_active: Optional[bool] = Field(None, description="User active status")

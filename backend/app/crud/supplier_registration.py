@@ -191,6 +191,10 @@ async def convert_registration_to_supplier(
         currency=registration.currency,
         is_active=True,
         created_by=actor_id,
+        # Preferred Supplier composite input (Template Framework Phase 2):
+        # mirror the intake risk assessment onto the live supplier record.
+        current_risk_score=registration.risk_score,
+        current_risk_level=registration.risk_level,
     )
     db.add(supplier)
     await db.flush()

@@ -20,6 +20,7 @@ import type {
   SupplierHierarchyResponse,
   SupplierRelationshipType,
 } from "@/lib/types";
+import PreferredStatusPanel from "@/components/PreferredStatusPanel";
 
 const lifecycleActions: Record<
   string,
@@ -313,6 +314,9 @@ export default function SupplierDetailPage() {
           </p>
         )}
       </div>
+
+      {/* Preferred Supplier status (Template Framework Phase 5) */}
+      <PreferredStatusPanel supplierId={params.id} />
 
       {/* Hierarchy */}
       <div className="card space-y-4">

@@ -32,6 +32,12 @@ APPROVER_ROLE_CODES = (
     "PROC_HEAD",
     "AP_HEAD",
     "AP_PROCESSOR",
+    # Template Framework Phase 4 (supplier request routing + preferred
+    # supplier review). The spec's "Procurement Director" maps onto the
+    # existing PROC_HEAD -- deliberately NOT a duplicate code.
+    "CATEGORY_MGR",
+    "RISK_TEAM",
+    "COMPLIANCE",
 )
 APPROVAL_ACTIONS = ("APPROVED", "REJECTED", "ESCALATED", "AUTO_APPROVED")
 NODE_TYPES = ("APPROVAL", "AUTO", "AI", "SYSTEM")
