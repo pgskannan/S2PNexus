@@ -564,7 +564,11 @@ export default function TemplateAdminPage() {
                 </option>
               ))}
             </select>
-            {editingDraftId && <p className="mt-1 text-xs text-slate-400">Module can't change once a draft exists -- start a new template instead.</p>}
+            {editingDraftId && (
+              <p className="mt-1 text-xs text-slate-400">
+                {"Module cannot change once a draft exists -- start a new template instead."}
+              </p>
+            )}
           </div>
           <div>
             <label className="label">Name</label>
@@ -868,7 +872,9 @@ function QuestionInspector({
 
       <div className="border-t border-slate-200 pt-3">
         <h4 className="mb-2 text-sm font-semibold text-slate-700">Scoring rule</h4>
-        <p className="mb-2 text-xs text-slate-500">Contributes to the response's weighted 0-100 score. Leave unscored if this question shouldn't affect scoring.</p>
+        <p className="mb-2 text-xs text-slate-500">
+          {"Contributes to the response's weighted 0-100 score. Leave unscored if this question shouldn't affect scoring."}
+        </p>
         <ScoringRuleEditor value={question.scoring_rule || null} onChange={(rule) => onUpdate({ scoring_rule: rule })} />
       </div>
     </div>
@@ -983,7 +989,7 @@ function VisibilityRuleEditor({
         )}
       </div>
       <button type="button" className="text-xs text-slate-500 hover:text-slate-800" onClick={() => setShowJson(true)}>
-        Advanced: edit as JSON (needed for "all"/"any" groups)
+        {'Advanced: edit as JSON (needed for "all"/"any" groups)'}
       </button>
     </div>
   );
