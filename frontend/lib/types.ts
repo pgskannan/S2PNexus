@@ -881,19 +881,54 @@ export interface TemplateVisibilityRule {
   any?: TemplateVisibilityRule[];
 }
 
+export type TemplateQuestionType =
+  | "text"
+  | "textarea"
+  | "numeric"
+  | "date"
+  | "yes_no"
+  | "dropdown"
+  | "multiselect"
+  | "file_upload";
+
+// Reserved in the backend's QUESTION_TYPES -- accepted by the enum but no
+// renderer/scoring exists yet, so the admin UI must not let you author
+// against these (mirrors IMPLEMENTED_QUESTION_TYPES in models/template.py).
+export const TEMPLATE_QUESTION_TYPES: TemplateQuestionType[] = [
+  "text",
+  "textarea",
+  "numeric",
+  "date",
+  "yes_no",
+  "dropdown",
+  "multiselect",
+  "file_upload",
+];
+
+export const TEMPLATE_MODULES = [
+  "supplier_request",
+  "slp",
+  "qualification",
+  "risk",
+  "performance",
+  "sourcing",
+  "contracts",
+] as const;
+export type TemplateModule = (typeof TEMPLATE_MODULES)[number];
+
+export interface TemplateScoringRule {
+  weight: number;
+  map?: Record<string, number>;
+  threshold?: number;
+  above?: number;
+  below?: number;
+  present?: number;
+}
+
 export interface TemplateQuestion {
   id: string;
   question_key: string;
-  question_type:
-    | "text"
-    | "textarea"
-    | "numeric"
-    | "date"
-    | "yes_no"
-    | "dropdown"
-    | "multiselect"
-    | "file_upload"
-    | string;
+  question_type: TemplateQuestionType | string;
   question_text: string;
   help_text?: string | null;
   placeholder?: string | null;
@@ -903,6 +938,7 @@ export interface TemplateQuestion {
   visible_flag: boolean;
   mandatory_flag: boolean;
   visibility_rule?: TemplateVisibilityRule | null;
+  scoring_rule?: TemplateScoringRule | null;
   parent_question_key?: string | null;
   order: number;
 }
@@ -924,7 +960,72 @@ export interface TemplateDefinition {
   description?: string | null;
   version: number;
   status: string;
+  effective_date?: string | null;
+  expiry_date?: string | null;
+  inheritance_mode?: string;
+  created_at?: string;
+  updated_at?: string;
   sections: TemplateSection[];
+}
+
+export interface TemplateDefinitionSummary {
+  id: string;
+  tenant_id?: string | null;
+  module: string;
+  name: string;
+  description?: string | null;
+  version: number;
+  status: string;
+  effective_date?: string | null;
+  expiry_date?: string | null;
+  inheritance_mode: string;
+  created_at: string;
+  updated_at: string;
+  section_count: number;
+  question_count: number;
+}
+
+export interface TemplateDefinitionListResponse {
+  items: TemplateDefinitionSummary[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+// Payload shape for create/update -- mirrors backend TemplateDefinitionCreate.
+export interface TemplateQuestionInput {
+  question_key: string;
+  question_type: TemplateQuestionType | string;
+  question_text: string;
+  help_text?: string | null;
+  placeholder?: string | null;
+  default_value?: string | null;
+  options?: string[] | null;
+  editable_flag: boolean;
+  visible_flag: boolean;
+  mandatory_flag: boolean;
+  visibility_rule?: TemplateVisibilityRule | null;
+  scoring_rule?: TemplateScoringRule | null;
+  parent_question_key?: string | null;
+  order: number;
+}
+
+export interface TemplateSectionInput {
+  name: string;
+  order: number;
+  visibility_rule?: TemplateVisibilityRule | null;
+  mandatory_flag: boolean;
+  questions: TemplateQuestionInput[];
+}
+
+export interface TemplateDefinitionInput {
+  module: string;
+  name: string;
+  description?: string | null;
+  effective_date?: string | null;
+  expiry_date?: string | null;
+  inheritance_mode: string;
+  sections: TemplateSectionInput[];
 }
 
 export type TemplateAnswers = Record<string, unknown>;

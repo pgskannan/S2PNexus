@@ -19,6 +19,7 @@ const links = [
   { href: "/dashboard/sourcing", label: "Sourcing", icon: "sourcing" },
   { href: "/dashboard/spend", label: "Spend & Savings", icon: "spend-savings" },
   { href: "/dashboard/workflow/definitions", label: "Workflow rules", icon: "workflow" },
+  { href: "/dashboard/admin/templates", label: "Templates", icon: "documents" },
   { href: "/dashboard/suppliers", label: "Suppliers", icon: "suppliers" },
   { href: "/dashboard/admin", label: "Admin", icon: "settings" },
   { href: "/dashboard/agent", label: "AI Agent", icon: "ai-agent" },

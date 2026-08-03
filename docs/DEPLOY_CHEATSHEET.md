@@ -77,6 +77,41 @@ gcloud run deploy s2pnexus-frontend --image=us-central1-docker.pkg.dev/s2pnexus/
   ```
   The global exception handler in `app/main.py` prints a full traceback on any unhandled exception, so the real error is almost always in there.
 
+## 6. Running one-off scripts against the DB from Cloud Shell (seed scripts, manual queries, etc.)
+
+The database is **not** Cloud SQL — it's a self-hosted Postgres instance on Compute Engine VM `s2pnexus-db-vm` (zone `us-central1-a`, internal IP `10.128.0.2`, port 5432). Cloud Run reaches it over the VPC connector; Cloud Shell is not on that network, so a direct connection times out. As of 2026-08-02, an IAP tunnel path is set up and working:
+
+**One-time setup already done** (don't repeat unless it breaks):
+- Firewall rule `allow-iap-postgres` allows `35.235.240.0/20` (IAP's range) to reach port 5432 on tag `postgres-db`.
+- `/etc/postgresql/15/main/pg_hba.conf` on the VM has `host s2pnexus s2pnexus_app 35.235.240.0/20 md5` appended (reloaded via `sudo systemctl reload postgresql`).
+
+**Every time you need to run a script:**
+
+Tab 1 — start the tunnel and leave it running:
+```
+gcloud compute start-iap-tunnel s2pnexus-db-vm 5432 \
+  --local-host-port=localhost:5433 \
+  --zone=us-central1-a --project=s2pnexus
+```
+
+Tab 2 — pull `SECRET_KEY`/`DATABASE_URL` fresh from the live Cloud Run service (don't rely on a local `.env` — there isn't one in `backend/`) and swap the DB host to the tunnel:
+```
+cd ~/S2PNexus/backend
+source .venv/bin/activate
+
+export SECRET_KEY="$(gcloud run services describe s2pnexus-backend \
+  --region=us-central1 --project=s2pnexus \
+  --format=json | python3 -c "import sys,json; envs=json.load(sys.stdin)['spec']['template']['spec']['containers'][0].get('env',[]); print(next(e['value'] for e in envs if e['name']=='SECRET_KEY'))")"
+
+export DATABASE_URL="$(gcloud run services describe s2pnexus-backend \
+  --region=us-central1 --project=s2pnexus \
+  --format=json | python3 -c "import sys,json; envs=json.load(sys.stdin)['spec']['template']['spec']['containers'][0].get('env',[]); print(next(e['value'] for e in envs if e['name']=='DATABASE_URL'))" | sed -E 's#@10\.128\.0\.2:5432/#@localhost:5433/#')"
+
+python -m scripts.<whatever_script>
+```
+
+Env vars don't carry across Cloud Shell tabs — re-export in whichever tab you're actually running the script from. If the tunnel test fails with `[4003: 'failed to connect to backend']`, that's the firewall rule missing/reverted; if `asyncpg.exceptions.InvalidAuthorizationSpecificationError: no pg_hba.conf entry...`, that's the `pg_hba.conf` line missing/reverted — both should already be in place per above.
+
 ## Service URLs
 
 - Backend: `https://s2pnexus-backend-120737021520.us-central1.run.app`

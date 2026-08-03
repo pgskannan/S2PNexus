@@ -26,7 +26,8 @@ const cards = [
   {
     title: "Custom fields / scoring rules for RFx",
     description: "Configure custom RFx scoring rules and sourcing field definitions.",
-    status: "Coming soon" as const,
+    status: "Live" as const,
+    href: "/dashboard/admin/templates",
   },
   {
     title: "Sync awarded events/contracts → PO/catalog",

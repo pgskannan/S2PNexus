@@ -9,7 +9,8 @@ const cards = [
   {
     title: "Questionnaire engine",
     description: "Build and manage supplier questionnaires and onboarding questionnaires.",
-    status: "Coming soon" as const,
+    status: "Live" as const,
+    href: "/dashboard/admin/templates",
   },
   {
     title: "Lifecycle & Status Rules",
@@ -27,7 +28,8 @@ const cards = [
   {
     title: "Project/template version control",
     description: "Track supplier onboarding templates and project iterations over time.",
-    status: "Coming soon" as const,
+    status: "Live" as const,
+    href: "/dashboard/admin/templates",
   },
   {
     title: "ERP integration sync",

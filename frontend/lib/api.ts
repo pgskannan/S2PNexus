@@ -1321,6 +1321,66 @@ export async function getTemplateResponse(
   return data;
 }
 
+// ---- Template Admin (Phase 2 authoring) ----
+
+export async function listTemplatesAdmin(params?: {
+  module?: string;
+  status?: string;
+  skip?: number;
+  limit?: number;
+}): Promise<import("@/lib/types").TemplateDefinitionListResponse> {
+  const { data } = await api.get<import("@/lib/types").TemplateDefinitionListResponse>(
+    "/templates/admin",
+    { params }
+  );
+  return data;
+}
+
+export async function getTemplateAdmin(
+  templateId: string
+): Promise<import("@/lib/types").TemplateDefinition> {
+  const { data } = await api.get<import("@/lib/types").TemplateDefinition>(
+    `/templates/admin/${templateId}`
+  );
+  return data;
+}
+
+export async function createTemplateAdmin(
+  payload: import("@/lib/types").TemplateDefinitionInput
+): Promise<import("@/lib/types").TemplateDefinition> {
+  const { data } = await api.post<import("@/lib/types").TemplateDefinition>(
+    "/templates/admin",
+    payload
+  );
+  return data;
+}
+
+export async function updateTemplateAdmin(
+  templateId: string,
+  payload: import("@/lib/types").TemplateDefinitionInput
+): Promise<import("@/lib/types").TemplateDefinition> {
+  const { data } = await api.put<import("@/lib/types").TemplateDefinition>(
+    `/templates/admin/${templateId}`,
+    payload
+  );
+  return data;
+}
+
+export async function publishTemplateAdmin(
+  templateId: string,
+  effectiveDate?: string
+): Promise<import("@/lib/types").TemplateDefinition> {
+  const { data } = await api.post<import("@/lib/types").TemplateDefinition>(
+    `/templates/admin/${templateId}/publish`,
+    { effective_date: effectiveDate || undefined }
+  );
+  return data;
+}
+
+export async function deleteTemplateAdmin(templateId: string): Promise<void> {
+  await api.delete(`/templates/admin/${templateId}`);
+}
+
 // ---- Supplier Requests ----
 
 export async function listSupplierRequests(params?: {
