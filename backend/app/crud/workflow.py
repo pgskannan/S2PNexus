@@ -332,8 +332,8 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
                     member_step = steps[member_index]
                     member_type = member_step.get("step_type")
                     if member_type == "approval":
-                        created = await _create_approval_tasks(db, instance, member_step, member_index)
-                        if not created:
+                        created, self_approval_only = await _create_approval_tasks(db, instance, member_step, member_index)
+                        if not created and not self_approval_only:
                             # Same principle as the non-parallel approval path
                             # below: a member that can't resolve any approver
                             # (e.g. its role_code's ApproverSeed got
@@ -346,6 +346,13 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
                             # branch that no human ever actually signed off
                             # on.
                             any_unresolved = True
+                        # self_approval_only: the sole resolvable approver for
+                        # this branch is the requester themself -- treat the
+                        # branch as not-required rather than blocking the
+                        # whole parallel group on a task no one could ever
+                        # complete (mirrors the sequential-step escalation
+                        # below, minus the "advance to next tier" part since
+                        # parallel branches don't have a linear next tier).
                     elif member_type == "notification":
                         template = member_step.get("message_template") or member_step.get("name") or "Workflow notification"
                         message = (
@@ -483,13 +490,24 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
                 instance.status = "in_progress"
                 return  # wait for remaining approvals on this step
 
-            created = await _create_approval_tasks(db, instance, step, step_index)
+            created, self_approval_only = await _create_approval_tasks(db, instance, step, step_index)
             if not created:
-                # No approvers resolvable. Never silently skip this node --
-                # skipping would let the instance "complete" with no human
-                # sign-off and e.g. auto-create a PO. Block the instance for
-                # intervention instead; an admin can fix approver resolution
-                # and retry via POST /workflow/instances/{id}/retry.
+                if self_approval_only:
+                    # The only resolvable approver(s) for this tier are the
+                    # same person who started the instance (e.g. one demo/
+                    # seed user per role, and they're also the requester).
+                    # complete_task() would reject their own approval anyway
+                    # -- auto-escalate to the next tier instead of handing
+                    # them a task they can never complete, same as an org
+                    # chart routing self-approval up to your manager.
+                    step_index = _continue_after_step(steps, step_index)
+                    continue
+                # No approvers resolvable at all. Never silently skip this
+                # node -- skipping would let the instance "complete" with no
+                # human sign-off and e.g. auto-create a PO. Block the
+                # instance for intervention instead; an admin can fix
+                # approver resolution and retry via
+                # POST /workflow/instances/{id}/retry.
                 instance.status = "blocked"
                 instance.current_step_index = step_index
                 await db.flush()
@@ -503,13 +521,25 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
 
 async def _create_approval_tasks(
     db: AsyncSession, instance: WorkflowInstance, step: dict[str, Any], step_index: int
-) -> bool:
+) -> tuple[bool, bool]:
     """Resolve approvers for `step` and create one pending WorkflowTask per
     approver at `step_index`. Shared by the top-level approval-step handling
     and by parallel-group member activation (see _run_from_step) so both
     paths get identical approver resolution, SLA/escalation due-date
-    computation, and notification behavior. Returns False (no tasks created)
-    if no approvers resolve -- callers treat that as "skip this node"."""
+    computation, and notification behavior.
+
+    Returns (created, self_approval_only):
+    - created=False, self_approval_only=False: no approvers resolved at all
+      (e.g. a misconfigured/deactivated role_code) -- callers block the
+      instance for admin intervention, they must NOT silently skip this.
+    - created=False, self_approval_only=True: at least one approver resolved,
+      but every one of them is the same user who started this instance (e.g.
+      exactly one demo/seed user for a tier, and they're also the requester).
+      complete_task() rejects a requester approving their own request, so
+      assigning the task would deadlock it -- callers should instead treat
+      this the same as "step satisfied" and advance to the next tier, the
+      way an org chart auto-escalates self-approval to your manager.
+    """
     approver_ids: list[UUID] = []
     explicit = step.get("approvers") or []
     if explicit:
@@ -529,8 +559,12 @@ async def _create_approval_tasks(
         )
         approver_ids = [UUID(a["user_id"]) for a in resolved]
 
+    had_candidates = bool(approver_ids)
+    if instance.started_by is not None:
+        approver_ids = [a for a in approver_ids if a != instance.started_by]
+
     if not approver_ids:
-        return False
+        return False, had_candidates
 
     escalate_after_hours = step.get("escalate_after_hours")
     due_at = None
@@ -568,7 +602,7 @@ async def _create_approval_tasks(
             entity_type=instance.entity_type,
             entity_id=instance.entity_id,
         )
-    return True
+    return True, False
 
 
 async def _parallel_group_is_complete(
