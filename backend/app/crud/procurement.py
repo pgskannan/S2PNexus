@@ -356,6 +356,19 @@ async def transition_requisition(
     return requisition
 
 
+async def _sync_requisition_estimated_value(db: AsyncSession, requisition: ProcurementRequisition) -> None:
+    """Recompute requisition.estimated_value from its current line items.
+
+    Bug found via XPRIZE P2P smoke test 2026-08-03: estimated_value was never
+    populated from line items, so amount-threshold approval workflows always
+    saw $0 and completed instantly with zero approval tasks -- silently
+    bypassing the whole tiered escalation ladder regardless of requisition
+    size. Called after any line item add/update/remove, before commit.
+    """
+    total = sum((li.line_total or Decimal("0.00")) for li in requisition.line_items)
+    requisition.estimated_value = total
+
+
 async def add_requisition_line_item(
     db: AsyncSession,
     requisition_id: UUID,
@@ -376,6 +389,10 @@ async def add_requisition_line_item(
     await ensure_default_split(
         db, "requisition_line", line_item.id, line_item.account_code, line_item.line_total, commit=False
     )
+    if requisition is not None:
+        if line_item not in requisition.line_items:
+            requisition.line_items.append(line_item)
+        await _sync_requisition_estimated_value(db, requisition)
     if actor_id is not None and requisition is not None:
         # Adding a line is a PO-relevant change (spec sec 2 "Line Add") -- bump
         # the PR version.
@@ -454,6 +471,8 @@ async def update_requisition_line_item(
             }
         )
 
+    await _sync_requisition_estimated_value(db, requisition)
+
     if actor_id is not None:
         await record_pr_version(db, requisition, actor_id=actor_id, changes=changes, commit=False)
 
@@ -492,6 +511,8 @@ async def remove_requisition_line_item(
             return "locked"
 
     await db.delete(line_item)
+    requisition.line_items.remove(line_item)
+    await _sync_requisition_estimated_value(db, requisition)
     if actor_id is not None:
         await record_pr_version(
             db,

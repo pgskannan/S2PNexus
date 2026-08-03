@@ -63,7 +63,10 @@ from app.models.approval import ApproverSeed
 from app.models.user import User, UserRole
 from app.schemas.workflow import WorkflowDefinitionCreate
 
-DEMO_DOMAIN = "s2pnexus-demo.local"
+DEMO_DOMAIN = "s2pnexus-demo.com"  # NOT .local -- pydantic's EmailStr/email-validator rejects
+# .local (and .test/.invalid/.example/.localhost) as reserved/special-use TLDs, which crashes
+# any endpoint that serializes UserResponse for these users (e.g. GET /auth/me -> 500). See
+# docs/DEPLOY_CHEATSHEET.md and memory feedback_email_validator_reserved_tld.
 DEMO_PASSWORD = "Demo!Approve2026"  # for local testing only -- rotate/discard before any real deployment.
 
 # (role_code, display name, login role, approval ceiling, currency)
