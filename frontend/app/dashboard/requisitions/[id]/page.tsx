@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
+  adminRemoveWorkflowTask,
   completeWorkflowTask,
   deleteRequisition,
   getRequisition,
@@ -197,6 +198,25 @@ export default function RequisitionDetailPage() {
     setError(null);
     try {
       await completeWorkflowTask(taskId, { decision });
+      await load();
+    } catch (err) {
+      setError(extractErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleAdminRemoveApproval(step: ApprovalStep) {
+    if (!step.taskId) return;
+    const confirmed = window.confirm(
+      `Remove ${step.approver_name}'s approval step? The document will advance to its next status. This is logged as an admin override.`
+    );
+    if (!confirmed) return;
+    const reason = window.prompt("Reason (optional):") ?? undefined;
+    setBusy(true);
+    setError(null);
+    try {
+      await adminRemoveWorkflowTask(step.taskId, reason || undefined);
       await load();
     } catch (err) {
       setError(extractErrorMessage(err));
@@ -626,6 +646,7 @@ export default function RequisitionDetailPage() {
                   docNumber={requisition.requisition_number || undefined}
                   title={requisition.title}
                   steps={approvalSteps}
+                  onAdminRemove={canActAsApprover(currentUser) ? handleAdminRemoveApproval : undefined}
                 />
                 {myPendingTask && (
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">

@@ -969,25 +969,59 @@ async def transition_purchase_order_lifecycle(
         if new_lifecycle_status == "approved":
             po.approved_at = now
 
-        # Audit trail (spec sec 8): record a version snapshot for every
-        # commercial lifecycle move (cancel / close / reopen).
+        # Commercial amendment bookkeeping (spec sec 8): only cancel / close /
+        # reopen bump the PO's version number and change-order reference.
         if new_lifecycle_status in ("cancelled", "closed", "reopened"):
             po.amendment_status = new_lifecycle_status
             po.version_number += 1
             po.change_order_reference = f"{new_lifecycle_status.upper()}-{po.version_number}"
-            db.add(
-                PurchaseOrderVersion(
-                    purchase_order_id=po.id,
-                    version_number=po.version_number,
-                    change_type=new_lifecycle_status,
-                    changes={
-                        "lifecycle": new_lifecycle_status,
-                        "previous": cur,
-                        "remaining_quantity": [str(getattr(l, "quantity", 0)) for l in po.line_items],
-                    },
-                    created_by=actor_id,
-                )
+
+        # Audit trail: record a History entry for every lifecycle move, not
+        # just cancel/close/reopen -- previously "sent to supplier", "approved",
+        # "ordered", "acknowledged", "*_received", and "invoiced" never wrote a
+        # PurchaseOrderVersion row, so the PO's History tab only ever showed
+        # cancel/close/reopen events (looked broken / empty for a normal PO
+        # that was never cancelled). version_number is reused as-is (not
+        # bumped) for these non-amendment moves since it isn't a table with a
+        # uniqueness constraint on it -- it's just descriptive metadata here.
+        db.add(
+            PurchaseOrderVersion(
+                purchase_order_id=po.id,
+                version_number=po.version_number,
+                change_type=new_lifecycle_status,
+                changes={
+                    "lifecycle": new_lifecycle_status,
+                    "previous": cur,
+                    "remaining_quantity": [str(getattr(l, "quantity", 0)) for l in po.line_items],
+                },
+                created_by=actor_id,
             )
+        )
+
+        # Cascade (spec: "If PO is cancelled -> PR and receipts also cancel +
+        # audit entries"). Only touches the PR / receipts if they're still in
+        # an open (non-terminal) state -- a PR/receipt that's already
+        # cancelled/closed/rejected/posted is left alone rather than
+        # overwritten to misrepresent what actually happened.
+        if new_lifecycle_status == "cancelled":
+            requisition = await get_requisition(db, po.requisition_id, tenant_id=tenant_id)
+            if requisition is not None and requisition.lifecycle_status not in ("cancelled", "closed", "rejected"):
+                requisition.status = "cancelled"
+                requisition.lifecycle_status = "cancelled"
+                requisition.cancelled_at = now
+                db.add(
+                    ProcurementAuditEvent(
+                        requisition_id=requisition.id,
+                        actor_id=actor_id,
+                        action="cascade_cancelled_from_po",
+                        details={"purchase_order_id": str(po.id), "order_number": po.order_number},
+                    )
+                )
+            for receipt in po.goods_receipts or []:
+                if receipt.status not in ("posted", "received", "rejected", "cancelled"):
+                    receipt.status = "cancelled"
+                    cascade_note = f"Cancelled automatically: purchase order {po.order_number} was cancelled."
+                    receipt.notes = f"{receipt.notes}\n{cascade_note}" if receipt.notes else cascade_note
 
         await db.commit()
         await db.refresh(po)

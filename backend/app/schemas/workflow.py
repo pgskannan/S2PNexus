@@ -220,6 +220,10 @@ class WorkflowTaskCompleteRequest(BaseModel):
     comments: Optional[str] = None
 
 
+class WorkflowTaskAdminRemoveRequest(BaseModel):
+    reason: Optional[str] = None
+
+
 class WorkflowFieldSpec(BaseModel):
     path: str
     label: str

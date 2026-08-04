@@ -398,6 +398,11 @@ export async function listGoodsReceipts(): Promise<{ items: import("@/lib/types"
   return data;
 }
 
+export async function getGoodsReceipt(id: string): Promise<import("@/lib/types").GoodsReceipt> {
+  const { data } = await api.get<import("@/lib/types").GoodsReceipt>(`/procurement/receipts/${id}`);
+  return data;
+}
+
 export interface GoodsReceiptLineItemCreate {
   purchase_order_line_item_id: string;
   quantity_received: string | number;
@@ -909,6 +914,11 @@ export async function completeWorkflowTask(
     `/workflow/tasks/${id}/complete`,
     payload
   );
+  return data;
+}
+
+export async function adminRemoveWorkflowTask(id: string, reason?: string): Promise<WorkflowTask> {
+  const { data } = await api.post<WorkflowTask>(`/workflow/tasks/${id}/admin-remove`, { reason });
   return data;
 }
 

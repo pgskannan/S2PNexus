@@ -217,7 +217,7 @@ export default function ReceiptsPage() {
               <tr key={item.id} className="hover:bg-slate-50">
                 <td className="px-4 py-3">
                   <Link
-                    href={`/dashboard/purchase-orders/${item.purchase_order_id}`}
+                    href={`/dashboard/receipts/${item.id}`}
                     className="font-medium text-brand-700 hover:underline"
                   >
                     {item.receipt_number}

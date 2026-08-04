@@ -111,7 +111,10 @@ export default function InvoicesPage() {
           <h1 className="text-2xl font-semibold">Invoices</h1>
           <p className="mt-1 text-sm text-slate-500">Monitor invoice status and three-way match progress.</p>
         </div>
-        <Link href="/dashboard/invoices/new" className="btn-primary">
+        <Link
+          href={poFilter ? `/dashboard/invoices/new?po=${poFilter}` : "/dashboard/invoices/new"}
+          className="btn-primary"
+        >
           + New Invoice
         </Link>
       </div>

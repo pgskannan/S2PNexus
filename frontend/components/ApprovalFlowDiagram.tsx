@@ -23,12 +23,26 @@ export type ApprovalStep = {
   comment?: string;
   // The approval step's "why" -- shown on hover and in the detail panel.
   reason?: string;
+  // Display name of who this step was delegated/escalated to, if any (see
+  // WorkflowTask.escalate_to) -- shown on hover and in the detail panel so
+  // the "who's actually acting on this" question doesn't require digging
+  // into the raw workflow instance.
+  delegatedToName?: string;
+  // The underlying WorkflowTask id -- only set for cards backed by a real
+  // task (not placeholder "not reached yet" cards). Required for the admin
+  // "remove this node" action below.
+  taskId?: string;
 };
 
 type Props = {
   docNumber?: string | null;
   title?: string | null;
   steps: ApprovalStep[];
+  // When provided (admin viewers only -- callers gate this), a pending
+  // step's detail panel shows a "Remove approval (admin)" button that calls
+  // back here with the step to remove. Presentation-only: the actual API
+  // call and reload live on the page that owns the workflow instance.
+  onAdminRemove?: (step: ApprovalStep) => void;
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -60,6 +74,29 @@ function fmtDate(iso?: string) {
   } catch {
     return "";
   }
+}
+
+function fmtDateTime(iso?: string) {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return "";
+  }
+}
+
+// Mouse-over summary for a step card: name, role, delegation, timestamp --
+// always present (not just when a reason/comment happens to be set), so
+// hovering any approver reliably answers "who is this and when did they
+// act/get assigned".
+function tooltipFor(step: ApprovalStep): string {
+  const lines = [`${step.approver_name}${step.approver_role ? ` — ${step.approver_role}` : ""}`];
+  lines.push(`Status: ${norm(step.status).toLowerCase().replace(/_/g, " ")}`);
+  if (step.delegatedToName) lines.push(`Delegated to: ${step.delegatedToName}`);
+  if (step.decided_at) lines.push(`Decided: ${fmtDateTime(step.decided_at)}`);
+  if (step.comment) lines.push(`Comment: ${step.comment}`);
+  if (step.reason) lines.push(`Why: ${step.reason}`);
+  return lines.join("\n");
 }
 
 // ─── Status pill ───────────────────────────────────────────────────────────────
@@ -151,11 +188,7 @@ function StepCard({
     <button
       type="button"
       onClick={() => onSelect(step)}
-      title={
-        step.reason
-          ? `Why: ${step.reason}`
-          : step.comment || `${step.approver_name}: ${norm(step.status).toLowerCase()}`
-      }
+      title={tooltipFor(step)}
       className={`relative flex-shrink-0 w-[180px] rounded-xl border bg-white shadow-sm text-left
         transition-all hover:shadow-md focus:outline-none
         ${borderColor} ${isSelected ? "ring-2 ring-offset-1 ring-slate-400" : ""}`}
@@ -193,7 +226,16 @@ function StepCard({
 }
 
 // ─── Detail panel ─────────────────────────────────────────────────────────────
-function DetailsPanel({ step, onClose }: { step: ApprovalStep; onClose: () => void }) {
+function DetailsPanel({
+  step,
+  onClose,
+  onAdminRemove,
+}: {
+  step: ApprovalStep;
+  onClose: () => void;
+  onAdminRemove?: (step: ApprovalStep) => void;
+}) {
+  const canRemove = Boolean(onAdminRemove && step.taskId && norm(step.status) === "PENDING");
   return (
     <div className="border-l border-slate-200 bg-slate-50 w-[220px] shrink-0 flex flex-col">
       <div className="flex items-start justify-between px-4 py-3 border-b border-slate-100">
@@ -214,6 +256,7 @@ function DetailsPanel({ step, onClose }: { step: ApprovalStep; onClose: () => vo
         {[
           { label: "Reason", value: step.reason || "—" },
           { label: "Role", value: step.approver_role || "—" },
+          { label: "Delegated to", value: step.delegatedToName || "—" },
           { label: "Decided", value: step.decided_at ? new Date(step.decided_at).toLocaleString() : "—" },
           { label: "Comment", value: step.comment || "—" },
         ].map(({ label, value }) => (
@@ -222,6 +265,15 @@ function DetailsPanel({ step, onClose }: { step: ApprovalStep; onClose: () => vo
             <div className="mt-0.5 text-[12px] text-slate-700">{value}</div>
           </div>
         ))}
+        {canRemove && (
+          <button
+            type="button"
+            onClick={() => onAdminRemove!(step)}
+            className="w-full rounded-lg border border-red-200 bg-white px-3 py-2 text-[11px] font-medium text-red-700 hover:bg-red-50"
+          >
+            Remove approval node (admin)
+          </button>
+        )}
       </div>
     </div>
   );
@@ -267,7 +319,7 @@ function Legend() {
 }
 
 // ─── Root component ───────────────────────────────────────────────────────────
-export function ApprovalFlowDiagram({ docNumber, title, steps }: Props) {
+export function ApprovalFlowDiagram({ docNumber, title, steps, onAdminRemove }: Props) {
   const [selectedStep, setSelectedStep] = useState<ApprovalStep | null>(null);
 
   const ordered = [...(steps || [])].sort((a, b) => (a.step_order ?? 0) - (b.step_order ?? 0));
@@ -321,7 +373,9 @@ export function ApprovalFlowDiagram({ docNumber, title, steps }: Props) {
         </div>
 
         {/* Detail panel */}
-        {selectedStep && <DetailsPanel step={selectedStep} onClose={() => setSelectedStep(null)} />}
+        {selectedStep && (
+          <DetailsPanel step={selectedStep} onClose={() => setSelectedStep(null)} onAdminRemove={onAdminRemove} />
+        )}
       </div>
     </div>
   );

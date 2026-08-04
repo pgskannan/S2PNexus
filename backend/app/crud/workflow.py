@@ -946,6 +946,33 @@ async def complete_task(
     return task
 
 
+async def admin_remove_task(
+    db: AsyncSession, task_id: UUID | str, *, actor_id: UUID, reason: Optional[str] = None
+) -> Optional[WorkflowTask]:
+    """Admin override: remove a pending approval node so the document advances
+    to its next status without waiting on that approver (spec: "Admin can
+    delete the approval node and document need to go next status").
+
+    Deliberately reuses `complete_task`'s "approve" path rather than adding a
+    parallel status/continuation code path -- that function already owns the
+    required-approvals counting, parallel-group handling, `_run_from_step`
+    continuation, requisition audit event, and ApprovalEvent/SLA logging, all
+    of which an admin-remove needs to trigger identically to a real approval
+    for the instance to advance correctly. The removal is still fully
+    traceable: `actor_id` is the admin (not the original assignee), and the
+    comment is prefixed so it reads as an override, not a genuine approval,
+    in the approval flow diagram and audit trail.
+    """
+    task = await get_workflow_task(db, task_id)
+    if not task:
+        return None
+    if task.status != "pending":
+        raise ValueError(f"Task is already '{task.status}' and cannot be removed")
+
+    comment = "Approval step removed by admin" + (f": {reason}" if reason else "")
+    return await complete_task(db, task_id, actor_id=actor_id, decision="approve", comments=comment)
+
+
 async def escalate_overdue_tasks(db: AsyncSession) -> list[WorkflowTask]:
     """Escalate every pending task past its due_at that hasn't been escalated yet.
 

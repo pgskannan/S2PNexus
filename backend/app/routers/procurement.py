@@ -1066,6 +1066,18 @@ async def list_receipts_endpoint(
     return GoodsReceiptListResponse(items=[GoodsReceiptResponse.model_validate(item) for item in receipts])
 
 
+@router.get("/receipts/{receipt_id}", response_model=GoodsReceiptResponse)
+async def get_receipt_endpoint(
+    receipt_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> GoodsReceiptResponse:
+    receipt = await get_goods_receipt(db, receipt_id, tenant_id=current_user.tenant_id)
+    if not receipt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Goods receipt not found")
+    return GoodsReceiptResponse.model_validate(receipt)
+
+
 @router.post("/receipts/{receipt_id}/submit", response_model=GoodsReceiptResponse)
 async def submit_receipt_endpoint(
     receipt_id: UUID,

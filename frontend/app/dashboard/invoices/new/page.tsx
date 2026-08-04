@@ -31,6 +31,11 @@ export default function NewInvoicePage() {
   const [existingInvoiceNumbers, setExistingInvoiceNumbers] = useState<string[]>([]);
   const [selectedPoId, setSelectedPoId] = useState("");
   const [selectedPo, setSelectedPo] = useState<PurchaseOrder | null>(null);
+  // Set when this page was opened from a specific PO (e.g. the "Invoice" tab
+  // or "+ New Invoice" from a PO-scoped list) via ?po=<id> -- the PO is then
+  // auto-bound and the picker is replaced with a read-only reference instead
+  // of asking the user to find and re-select the same PO.
+  const [lockedPoId, setLockedPoId] = useState<string | null>(null);
   const [lines, setLines] = useState<InvoiceLineEdit[]>([]);
   const [supplierId, setSupplierId] = useState("");
   const [description, setDescription] = useState("");
@@ -42,6 +47,9 @@ export default function NewInvoicePage() {
   const [created, setCreated] = useState<ProcurementInvoice | null>(null);
 
   useEffect(() => {
+    const poParam = new URLSearchParams(window.location.search).get("po");
+    if (poParam) setLockedPoId(poParam);
+
     Promise.all([
       listPurchaseOrders({ limit: 500 }),
       listSuppliers(),
@@ -51,13 +59,18 @@ export default function NewInvoicePage() {
         setPurchaseOrders(poRes.items);
         setSuppliers(supRes.items);
         setExistingInvoiceNumbers(invRes.items.map((i) => i.invoice_number));
+        if (poParam) {
+          setMode("po");
+          handleSelectPo(poParam, poRes.items);
+        }
       })
       .catch((err) => setError(extractErrorMessage(err)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function handleSelectPo(id: string) {
+  function handleSelectPo(id: string, source: PurchaseOrder[] = purchaseOrders) {
     setSelectedPoId(id);
-    const po = purchaseOrders.find((p) => p.id === id) ?? null;
+    const po = source.find((p) => p.id === id) ?? null;
     setSelectedPo(po);
     if (po) {
       setLines(
@@ -216,14 +229,33 @@ export default function NewInvoicePage() {
         <div className="card space-y-4">
           <div>
             <label className="text-xs text-slate-500">Purchase order</label>
-            <select className="input-field" value={selectedPoId} onChange={(e) => handleSelectPo(e.target.value)}>
-              <option value="">Select a purchase order...</option>
-              {purchaseOrders.map((po) => (
-                <option key={po.id} value={po.id}>
-                  {po.order_number} · {po.lifecycle_status} · {po.currency} {po.grand_total ?? po.total_amount ?? ""}
-                </option>
-              ))}
-            </select>
+            {lockedPoId ? (
+              <div className="input-field flex items-center justify-between bg-slate-50 text-slate-700">
+                <span className="font-mono">
+                  {selectedPo?.order_number ?? lockedPoId}
+                  {selectedPo && ` · ${selectedPo.lifecycle_status} · ${selectedPo.currency} ${selectedPo.grand_total ?? selectedPo.total_amount ?? ""}`}
+                </span>
+                <button
+                  type="button"
+                  className="text-xs font-medium text-brand-700 underline"
+                  onClick={() => {
+                    setLockedPoId(null);
+                    handleSelectPo("");
+                  }}
+                >
+                  Change
+                </button>
+              </div>
+            ) : (
+              <select className="input-field" value={selectedPoId} onChange={(e) => handleSelectPo(e.target.value)}>
+                <option value="">Select a purchase order...</option>
+                {purchaseOrders.map((po) => (
+                  <option key={po.id} value={po.id}>
+                    {po.order_number} · {po.lifecycle_status} · {po.currency} {po.grand_total ?? po.total_amount ?? ""}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           {selectedPo && (

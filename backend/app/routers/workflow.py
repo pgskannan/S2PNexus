@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crud.workflow import (
+    admin_remove_task,
     complete_task,
     create_workflow_definition,
     delete_workflow_definition,
@@ -38,6 +39,7 @@ from app.schemas.workflow import (
     WorkflowInstanceListResponse,
     WorkflowInstanceResponse,
     WorkflowInstanceStart,
+    WorkflowTaskAdminRemoveRequest,
     WorkflowTaskCompleteRequest,
     WorkflowTaskResponse,
 )
@@ -252,6 +254,27 @@ async def complete_task_endpoint(
         task = await complete_task(
             db, task_id, actor_id=current_user.id, decision=decision_data.decision, comments=decision_data.comments
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow task not found")
+    return WorkflowTaskResponse.model_validate(task)
+
+
+@router.post(
+    "/tasks/{task_id}/admin-remove",
+    response_model=WorkflowTaskResponse,
+    summary="Admin: remove a pending approval node so the document advances",
+)
+async def admin_remove_task_endpoint(
+    task_id: UUID,
+    remove_data: WorkflowTaskAdminRemoveRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> WorkflowTaskResponse:
+    _require_admin(current_user)
+    try:
+        task = await admin_remove_task(db, task_id, actor_id=current_user.id, reason=remove_data.reason)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if not task:

@@ -325,6 +325,10 @@ export interface GoodsReceipt {
   inspection_status: string;
   has_exceptions: boolean;
   approval_required: boolean;
+  carrier?: string | null;
+  tracking_number?: string | null;
+  delivery_note_reference?: string | null;
+  notes?: string | null;
   submitted_at?: string | null;
   approved_at?: string | null;
   posted_at?: string | null;
@@ -333,6 +337,7 @@ export interface GoodsReceipt {
   line_items: GoodsReceiptLineItem[];
   created_by: string;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface GrirRecord {

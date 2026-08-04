@@ -155,12 +155,26 @@ export default function PurchaseOrderDetailPage() {
   }, [params.id]);
 
   async function handleTransition(lifecycleStatus: string) {
+    if (lifecycleStatus === "cancelled") {
+      const confirmed = window.confirm(
+        "Cancelling this purchase order will also cancel its purchase requisition and any receipts " +
+          "that haven't been posted yet. This cannot be undone. Cancel this PO?"
+      );
+      if (!confirmed) return;
+    }
     setBusy(true);
     setError(null);
     try {
       const updated = await transitionPurchaseOrderLifecycle(params.id, lifecycleStatus);
       setPo(updated);
       setLastBudgetWarnings(updated.budget_warnings ?? null);
+      // Cancelling cascades to the PR and any open receipts on the backend --
+      // reload so this page (receipts panel, doc-tab signals) doesn't show
+      // stale pre-cancel state (same pattern as the requisition detail page's
+      // post-transition reload).
+      if (lifecycleStatus === "cancelled") {
+        await load();
+      }
     } catch (err) {
       setError(extractErrorMessage(err));
     } finally {

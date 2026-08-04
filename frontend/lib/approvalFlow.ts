@@ -210,6 +210,8 @@ export function buildApprovalSteps(
         decided_at: task.completed_at || undefined,
         comment: task.comments || undefined,
         reason: task.reason || undefined,
+        delegatedToName: task.escalate_to ? userNamesById[task.escalate_to] || "Unknown approver" : undefined,
+        taskId: task.id,
       });
     });
   });
@@ -225,7 +227,9 @@ export function buildApprovalSteps(
  * unreachable directory degrades to showing raw ids rather than failing the
  * whole diagram. */
 export async function resolveApproverNames(instance: WorkflowInstance): Promise<Record<string, string>> {
-  const ids = new Set(instance.tasks.map((t) => t.assignee_id).filter(Boolean));
+  const ids = new Set(
+    instance.tasks.flatMap((t) => [t.assignee_id, t.escalate_to]).filter((id): id is string => !!id)
+  );
   if (ids.size === 0) {
     return {};
   }
