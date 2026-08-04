@@ -30,6 +30,11 @@ from scripts.seed_suppliers import SUPPLIERS, seed_suppliers
 
 @pytest.mark.asyncio
 async def test_seed_suppliers_creates_demo_spread(db_session):
+    # The tests share one in-memory DB with other files, so start clean to
+    # keep the count assertions independent of ordering.
+    await db_session.execute(delete(Supplier))
+    await db_session.commit()
+
     stats = await seed_suppliers()
     assert stats["created"] == len(SUPPLIERS)
 
