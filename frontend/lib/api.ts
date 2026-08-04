@@ -1423,6 +1423,15 @@ export async function upsertEmailTemplateAdmin(
   return data;
 }
 
+// ---- Static catalog (backlog Section 3) ----
+
+export async function listCatalogItems(params?: {
+  category?: string;
+}): Promise<import("@/lib/types").CatalogItemListResponse> {
+  const { data } = await api.get<import("@/lib/types").CatalogItemListResponse>("/catalog", { params });
+  return data;
+}
+
 // ---- Supplier Requests ----
 
 export async function listSupplierRequests(params?: {

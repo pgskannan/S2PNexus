@@ -44,6 +44,7 @@ from app.models.workflow import (  # noqa: F401
 )
 from app.models.system_setting import SystemSetting  # noqa: F401
 from app.models.email_template import EmailTemplateOverride  # noqa: F401
+from app.models.catalog_item import CatalogItem  # noqa: F401
 from app.models.agent_activity import AgentActivityLog  # noqa: F401
 from app.models.document_numbering import DocumentNumberingFormat, DocumentNumberingSequence  # noqa: F401
 from app.models.commodity import CommodityCode, CommodityAccountMapping, CommodityMatchingPolicy  # noqa: F401

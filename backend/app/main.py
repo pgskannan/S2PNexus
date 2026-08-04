@@ -31,6 +31,7 @@ from app.routers.act_as import router as act_as_router
 from app.routers.template import router as template_router
 from app.routers.supplier_type import router as supplier_type_router
 from app.routers.email_templates import router as email_templates_router
+from app.routers.catalog import router as catalog_router
 from app.metadata_engine.bootstrap import bootstrap_metadata_registry
 from app.metadata_engine.exceptions.metadata_errors import MetadataConflictError, MetadataNotFoundError, MetadataValidationError
 from app.metadata_engine.router import router as metadata_router
@@ -332,6 +333,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
     app.include_router(template_router, prefix="/api/v1", tags=["Templates"])
     app.include_router(supplier_type_router, prefix="/api/v1", tags=["Supplier Types"])
     app.include_router(email_templates_router, prefix="/api/v1", tags=["Admin Email Templates"])
+    app.include_router(catalog_router, prefix="/api/v1", tags=["Catalog"])
 
     return app
 

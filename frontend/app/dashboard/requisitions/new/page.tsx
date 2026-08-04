@@ -6,7 +6,8 @@ import { createRequisition, addRequisitionLineItem, extractErrorMessage, listSup
 import { useAuthStore } from "@/lib/auth-store";
 import CommodityCodeInput from "@/components/CommodityCodeInput";
 import CategoryInput from "@/components/CategoryInput";
-import type { Supplier } from "@/lib/types";
+import CatalogQuickAdd from "@/components/CatalogQuickAdd";
+import type { CatalogItem, Supplier } from "@/lib/types";
 
 interface LineItemDraft {
   description: string;
@@ -115,6 +116,25 @@ export default function NewRequisitionPage() {
 
   function removeRow(index: number) {
     setLineItems((items) => items.filter((_, i) => i !== index));
+  }
+
+  function quickAddFromCatalog(item: CatalogItem) {
+    // Pre-fill a draft line item from the catalog entry so it flows through
+    // the same submit path (addRequisitionLineItem at submit time). The
+    // catalog's account_code is carried so the line clears the PO
+    // auto-creation GL validation gate at approval time.
+    setLineItems((items) => [
+      ...items,
+      {
+        description: item.description || item.name,
+        quantity: "1",
+        unit_price: item.unit_price || "",
+        commodity: item.commodity || "",
+        category: item.category || "",
+        account_code: item.account_code || "",
+      },
+    ]);
+    setLineItemWarning(null);
   }
 
   function goToStep(target: 1 | 2 | 3) {
@@ -494,6 +514,16 @@ export default function NewRequisitionPage() {
                 </button>
               </div>
               <p className="text-sm text-slate-500">Optional. Leave a row&apos;s description blank to skip it.</p>
+
+              {/* Catalog quick-add (backlog Section 3) — alternative to the
+                  manual form below. */}
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
+                <p className="mb-2 text-sm font-semibold text-slate-700">
+                  Quick add from catalog
+                </p>
+                <CatalogQuickAdd onQuickAdd={quickAddFromCatalog} />
+              </div>
+
               <div className="space-y-4">
                 {lineItems.map((li, index) => (
                   <div key={index} className="grid grid-cols-12 gap-3 border-b border-slate-100 pb-4 last:border-0 last:pb-0">

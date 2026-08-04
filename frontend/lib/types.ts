@@ -1281,3 +1281,28 @@ export interface EmailTemplateOverrideUpsert {
   tenant_id?: string | null;
 }
 
+// ---- Static catalog for PR quick-add (backlog Section 3) ----
+// Shapes match backend/app/schemas/catalog.py.
+
+export interface CatalogItem {
+  id: string;
+  name: string;
+  description?: string | null;
+  image_url?: string | null;
+  unit_price: string;
+  currency: string;
+  supplier_id?: string | null;
+  supplier_name?: string | null;
+  category?: string | null;
+  commodity?: string | null;
+  account_code?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CatalogItemListResponse {
+  items: CatalogItem[];
+  total: number;
+}
+
