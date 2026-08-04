@@ -183,6 +183,10 @@ class ProcurementAttachmentCreate(BaseModel):
     filename: str = Field(..., min_length=1, max_length=255)
     content_type: Optional[str] = Field(None, max_length=100)
     storage_key: Optional[str] = Field(None, max_length=500)
+    is_internal_only: bool = Field(
+        default=False,
+        description="True = internal-only attachment, never shared with the supplier",
+    )
 
 
 class ProcurementAttachmentResponse(BaseModel):
@@ -193,6 +197,7 @@ class ProcurementAttachmentResponse(BaseModel):
     filename: str
     content_type: Optional[str] = None
     storage_key: Optional[str] = None
+    is_internal_only: bool = False
     created_by: UUID
     created_at: datetime
 

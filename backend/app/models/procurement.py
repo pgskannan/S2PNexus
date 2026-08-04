@@ -165,6 +165,11 @@ class ProcurementAttachment(Base):
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Backlog Section 5: internal-only attachments (quotes, approvals) are
+    # never shared with the supplier; supplier-visible attachments ride along
+    # on the dispatch email. Defaults to False (supplier-visible) to preserve
+    # pre-existing behavior for rows created before this flag existed.
+    is_internal_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="True = internal-only, never shared with the supplier")
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

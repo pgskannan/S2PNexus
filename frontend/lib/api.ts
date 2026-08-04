@@ -1475,6 +1475,28 @@ export async function retryExceptionRequisition(
   return data;
 }
 
+// ---- Requisition attachments (backlog Section 5) ----
+
+export async function listRequisitionAttachments(
+  requisitionId: string
+): Promise<import("@/lib/types").ProcurementAttachment[]> {
+  const { data } = await api.get<import("@/lib/types").ProcurementAttachment[]>(
+    `/procurement/requisitions/${requisitionId}/attachments`
+  );
+  return data;
+}
+
+export async function addRequisitionAttachment(
+  requisitionId: string,
+  payload: import("@/lib/types").ProcurementAttachmentCreate
+): Promise<import("@/lib/types").ProcurementAttachment> {
+  const { data } = await api.post<import("@/lib/types").ProcurementAttachment>(
+    `/procurement/requisitions/${requisitionId}/attachments`,
+    payload
+  );
+  return data;
+}
+
 // ---- Supplier Requests ----
 
 export async function listSupplierRequests(params?: {

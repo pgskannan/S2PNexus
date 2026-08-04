@@ -1401,3 +1401,24 @@ export interface ExceptionRetryResponse {
   message: string;
 }
 
+// ---- Requisition attachments (backlog Section 5) ----
+// Shapes match backend/app/schemas/procurement.py.
+
+export interface ProcurementAttachment {
+  id: string;
+  requisition_id: string;
+  filename: string;
+  content_type?: string | null;
+  storage_key?: string | null;
+  is_internal_only: boolean;
+  created_by: string;
+  created_at: string;
+}
+
+export interface ProcurementAttachmentCreate {
+  filename: string;
+  content_type?: string | null;
+  storage_key?: string | null;
+  is_internal_only?: boolean;
+}
+

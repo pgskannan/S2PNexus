@@ -15,13 +15,15 @@ import {
   listWorkflowInstances,
   listRequisitionAuditEvents,
   listRequisitionComments,
+  listRequisitionAttachments,
+  addRequisitionAttachment,
   addRequisitionComment,
   listUserDirectory,
   retryWorkflowInstance,
   transitionRequisition,
   extractErrorMessage,
 } from "@/lib/api";
-import type { PurchaseOrder, Requisition, WorkflowInstance, WorkflowTask } from "@/lib/types";
+import type { ProcurementAttachment, PurchaseOrder, Requisition, WorkflowInstance, WorkflowTask } from "@/lib/types";
 import { ApprovalFlowDiagram, type ApprovalStep } from "@/components/ApprovalFlowDiagram";
 import { buildApprovalSteps, resolveApproverNames } from "@/lib/approvalFlow";
 import DocumentTabs from "@/components/DocumentTabs";
@@ -100,6 +102,12 @@ export default function RequisitionDetailPage() {
   const [comments, setComments] = useState<import("@/lib/types").ProcurementComment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [commentsError, setCommentsError] = useState<string | null>(null);
+  // Attachments (backlog Section 5): internal-only vs supplier-visible.
+  const [attachments, setAttachments] = useState<ProcurementAttachment[]>([]);
+  const [newAttachmentName, setNewAttachmentName] = useState("");
+  const [newAttachmentInternal, setNewAttachmentInternal] = useState(false);
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [docSignals, setDocSignals] = useState<DocumentTabSignals>({
     hasReceipts: false,
     hasInvoices: false,
@@ -134,6 +142,9 @@ export default function RequisitionDetailPage() {
       } finally {
         setCommentsLoading(false);
       }
+      listRequisitionAttachments(params.id)
+        .then(setAttachments)
+        .catch(() => setAttachments([]));
       const directory = await listUserDirectory({ limit: 1000 });
       setActorNames(Object.fromEntries(directory.items.map((user) => [user.id, user.full_name || user.email])));
       // Surface the approval flow inline (Ariba-style stepper) if a workflow
@@ -171,6 +182,29 @@ export default function RequisitionDetailPage() {
   async function handleAddComment(text: string) {
     const added = await addRequisitionComment(params.id, text);
     setComments((current) => [added, ...current]);
+  }
+
+  async function handleAddAttachment() {
+    const name = newAttachmentName.trim();
+    if (!name) {
+      setAttachmentError("Filename is required.");
+      return;
+    }
+    setAttachmentBusy(true);
+    setAttachmentError(null);
+    try {
+      const added = await addRequisitionAttachment(params.id, {
+        filename: name,
+        is_internal_only: newAttachmentInternal,
+      });
+      setAttachments((current) => [added, ...current]);
+      setNewAttachmentName("");
+      setNewAttachmentInternal(false);
+    } catch (err) {
+      setAttachmentError(extractErrorMessage(err));
+    } finally {
+      setAttachmentBusy(false);
+    }
   }
 
   async function handleTransition(newStatus: string, lifecycleStatus: string) {
@@ -718,6 +752,71 @@ export default function RequisitionDetailPage() {
             />
           )}
         </div>
+      </div>
+
+      <div className="card space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Attachments</h2>
+          <span className="text-xs text-slate-400">
+            Internal-only files are never shared with the supplier.
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-48 flex-1">
+            <label className="label" htmlFor="attachment-name">
+              Filename
+            </label>
+            <input
+              id="attachment-name"
+              className="input-field"
+              placeholder="e.g. vendor-quote.pdf"
+              value={newAttachmentName}
+              onChange={(e) => setNewAttachmentName(e.target.value)}
+            />
+          </div>
+          <label className="flex items-center gap-2 pb-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={newAttachmentInternal}
+              onChange={(e) => setNewAttachmentInternal(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+            />
+            Internal only
+          </label>
+          <button
+            onClick={handleAddAttachment}
+            disabled={attachmentBusy}
+            className="btn-primary"
+          >
+            {attachmentBusy ? "Adding…" : "Add attachment"}
+          </button>
+        </div>
+        {attachmentError && <p className="text-sm text-red-600">{attachmentError}</p>}
+
+        {attachments.length === 0 ? (
+          <p className="text-sm text-slate-400">No attachments yet.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {attachments.map((att) => (
+              <li key={att.id} className="flex items-center justify-between py-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-slate-700">{att.filename}</span>
+                  {att.is_internal_only ? (
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                      Internal only
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                      Supplier-visible
+                    </span>
+                  )}
+                </div>
+                <time className="text-xs text-slate-400">{new Date(att.created_at).toLocaleString()}</time>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );

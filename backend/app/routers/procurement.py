@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crud.procurement import (
     add_requisition_attachment,
+    list_requisition_attachments,
     add_requisition_comment,
     add_procurement_comment,
     list_procurement_comments,
@@ -642,6 +643,25 @@ async def add_attachment_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
     attachment = await add_requisition_attachment(db, requisition_id, current_user.id, attachment_data)
     return ProcurementAttachmentResponse.model_validate(attachment)
+
+
+@router.get(
+    "/requisitions/{requisition_id}/attachments",
+    response_model=list[ProcurementAttachmentResponse],
+    summary="List requisition attachments",
+    description="List a requisition's attachments (newest first), including "
+    "the internal-only vs supplier-visible flag (backlog Section 5).",
+)
+async def list_attachments_endpoint(
+    requisition_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> list[ProcurementAttachmentResponse]:
+    requisition = await get_requisition(db, requisition_id, tenant_id=current_user.tenant_id)
+    if not requisition:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    attachments = await list_requisition_attachments(db, requisition_id)
+    return [ProcurementAttachmentResponse.model_validate(a) for a in attachments]
 
 
 @router.post(

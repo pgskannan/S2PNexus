@@ -600,6 +600,20 @@ async def add_requisition_attachment(
     return attachment
 
 
+async def list_requisition_attachments(
+    db: AsyncSession,
+    requisition_id: UUID,
+) -> list[ProcurementAttachment]:
+    """List a requisition's attachments, newest first (backlog Section 5 —
+    surfaces the internal-only flag so the UI can badge them)."""
+    result = await db.execute(
+        select(ProcurementAttachment)
+        .where(ProcurementAttachment.requisition_id == requisition_id)
+        .order_by(desc(ProcurementAttachment.created_at))
+    )
+    return list(result.scalars().all())
+
+
 async def create_purchase_order(
     db: AsyncSession,
     requisition_id: UUID,
