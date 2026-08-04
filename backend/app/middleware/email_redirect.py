@@ -37,6 +37,11 @@ class EmailType(str, Enum):
     USER_WELCOME = "user.welcome"
     USER_PASSWORD_INITIAL = "user.password_initial"
     USER_PASSWORD_RESET = "user.password_reset"
+    # PO dispatched to the supplier for acknowledgement (spec: "PO auto-sent to
+    # supplier"). Redirectable in DEV/QA/Sandbox like order confirmations --
+    # supplier-facing mail should never leak a real supplier's inbox from a
+    # non-prod environment.
+    PO_DISPATCH = "po.dispatch"
 
 
 # Emails that MUST always reach the actual user (never redirected).

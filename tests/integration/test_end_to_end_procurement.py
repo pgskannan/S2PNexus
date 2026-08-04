@@ -22,6 +22,7 @@ import pytest
 import pytest_asyncio
 
 from app.models.commodity import CommodityMatchingPolicy
+from app.models.supplier import Supplier
 
 USER_ID = uuid.UUID(int=(2**128 - 1))  # matches conftest auth override
 NO_TENANT = uuid.UUID(int=(2**128 - 1))  # global-sentinel tenant
@@ -58,7 +59,16 @@ async def three_way_policy(db_session):
 
 @pytest.mark.asyncio
 async def test_end_to_end_procurement_lifecycle(client, db_session, three_way_policy):
-    supplier_id = str(uuid.uuid4())
+    # A real, active, emailed supplier -- auto_create_po_from_requisition's PO
+    # auto-validation (spec: "supplier email, supplier active") blocks PO
+    # creation on approval otherwise, which would stall this whole flow at
+    # step 3 with the PR parked in "exception" instead of "po_created".
+    supplier = Supplier(
+        name="E2E Test Supplier", contact_email="e2e-supplier@example.com", is_active=True, created_by=USER_ID
+    )
+    db_session.add(supplier)
+    await db_session.commit()
+    supplier_id = str(supplier.id)
 
     # 1. Create the requisition.
     r = await client.post(
@@ -71,7 +81,15 @@ async def test_end_to_end_procurement_lifecycle(client, db_session, three_way_po
     # 2. Add a line item on a 3-way-match commodity.
     r = await client.post(
         f"/api/v1/procurement/requisitions/{pr_id}/line-items",
-        json={"description": "Widget", "quantity": "10", "unit_price": "5.00", "category": "IT", "commodity": THREE_WAY_CODE},
+        json={
+            "description": "Widget",
+            "quantity": "10",
+            "unit_price": "5.00",
+            "line_total": "50.00",
+            "category": "IT",
+            "commodity": THREE_WAY_CODE,
+            "account_code": "5010-IT",
+        },
     )
     assert r.status_code == 201, r.text
 

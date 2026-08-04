@@ -1307,6 +1307,21 @@ async def create_goods_receipt(
 
     await db.commit()
     await db.refresh(goods_receipt)
+
+    # PO auto-close (spec, Receipt Module: "PO auto-closes when fully
+    # received"). Best-effort on the now-committed, fresh PO state --
+    # validate_po_close still applies (blocked by a pending invoice/payment/
+    # dispute), so this silently leaves the PO at fully_received rather than
+    # forcing a close when it isn't actually eligible yet; a human can still
+    # close it manually once whatever's blocking it clears.
+    if any_received and all_fully_received:
+        try:
+            await transition_purchase_order_lifecycle(
+                db, purchase_order.id, actor_id=created_by, new_lifecycle_status="closed", tenant_id=tenant_id
+            )
+        except ValueError:
+            pass
+
     return goods_receipt
 
 

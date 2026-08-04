@@ -20,6 +20,7 @@ from app.crud.procurement import (
 )
 from app.events.publisher import EventPublisher
 from app.models.procurement import GoodsReceipt, ProcurementAuditEvent, PurchaseOrder
+from app.models.workflow import Notification
 from app.schemas.procurement import PurchaseOrderCreate
 
 
@@ -102,6 +103,136 @@ def _filter_requisition_approvers(steps: list[dict[str, Any]] | None, requested_
     return filtered_steps
 
 
+async def _po_creation_blockers(db: Any, requisition: Any) -> list[str]:
+    """Auto-validation before PO creation (spec 2: "supplier email, supplier
+    active, price, GL, ship-to, tax, contract terms"). Returns human-readable
+    reasons; empty means the PR is ready. Only checks what's actually
+    representable today -- ProcurementRequisition has no ship-to or contract
+    linkage of its own (those live on the PO, resolved at creation time), so
+    this covers supplier + per-line price + per-line/header GL code, which
+    covers the concrete example the spec gives ("Supplier email missing —
+    PO not created.").
+    """
+    from app.crud.supplier import get_supplier
+
+    reasons: list[str] = []
+    supplier_id = getattr(requisition, "supplier_id", None)
+    if not supplier_id:
+        reasons.append("Supplier not selected — PO not created.")
+    else:
+        supplier = await get_supplier(db, supplier_id)
+        if supplier is None:
+            reasons.append("Supplier not found — PO not created.")
+        else:
+            if not getattr(supplier, "is_active", True):
+                reasons.append("Supplier is inactive — PO not created.")
+            if not getattr(supplier, "contact_email", None):
+                reasons.append("Supplier email missing — PO not created.")
+
+    line_items = getattr(requisition, "line_items", None) or []
+    header_account_code = getattr(requisition, "account_code", None)
+    for line in line_items:
+        description = getattr(line, "description", "") or "line item"
+        unit_price = getattr(line, "unit_price", None)
+        if unit_price is None or unit_price <= 0:
+            reasons.append(f'Missing price on "{description}" — PO not created.')
+        if not getattr(line, "account_code", None) and not header_account_code:
+            reasons.append(f'Missing GL/account code on "{description}" — PO not created.')
+
+    return reasons
+
+
+async def _dispatch_po_to_supplier(
+    db: Any, po: Any, requisition: Any, *, actor_id: UUID, tenant_id: UUID | str | None
+) -> None:
+    """Auto-send the newly created PO to the supplier and notify the
+    requester (spec: "PO auto-sent to supplier using redirect email flag or
+    supplier email" + "Show notification: PO created + sent + timestamp").
+    The redirect-vs-real-address decision itself is handled generically by
+    EmailRedirectMiddleware inside EmailService.send_email -- this function
+    just has to pick the real supplier address and call it.
+
+    Deliberately never lets a dispatch failure roll back or block the PO --
+    the PO already exists and is usable even if the email didn't go out; the
+    failure is still recorded (audit event + notification) so it isn't
+    silent, and the PO is left at "ordered" rather than being falsely marked
+    sent_to_supplier.
+    """
+    from app.crud.procurement import transition_purchase_order_lifecycle
+    from app.crud.supplier import get_supplier
+    from app.models.user import User
+    from app.services.email_service import EmailService
+
+    supplier = await get_supplier(db, po.supplier_id) if po.supplier_id else None
+    supplier_email = getattr(supplier, "contact_email", None) if supplier else None
+    if not supplier_email:
+        # Shouldn't happen -- _po_creation_blockers already gates this --
+        # but stay defensive for any future caller that skips validation.
+        db.add(
+            Notification(
+                recipient_id=requisition.requested_by,
+                title="Purchase order created — not sent",
+                message=f"PO {po.order_number} was created but has no supplier email on file, so it wasn't sent automatically.",
+                related_entity_type="purchase_order",
+                related_entity_id=po.id,
+            )
+        )
+        await db.commit()
+        return
+
+    requester = (await db.execute(select(User).where(User.id == requisition.requested_by))).scalar_one_or_none()
+    buyer_name = getattr(requester, "full_name", None) or getattr(requester, "email", "") or ""
+    now = datetime.now(timezone.utc)
+
+    try:
+        email_service = EmailService()
+        await email_service.send_purchase_order_email(
+            to=supplier_email,
+            poNumber=getattr(po, "order_number", ""),
+            buyerName=buyer_name,
+            companyName="S2PNexus",
+            currency=getattr(po, "currency", "") or "",
+            poTotal=str(getattr(po, "grand_total", None) or getattr(po, "total_amount", None) or ""),
+            shipToAddress=getattr(po, "ship_to_name", None) or "",
+            paymentTerms=getattr(po, "payment_terms", None) or "",
+            poDate=now.strftime("%Y-%m-%d"),
+        )
+    except Exception as exc:  # noqa: BLE001 - dispatch failure must not block PO creation
+        db.add(
+            ProcurementAuditEvent(
+                requisition_id=requisition.id,
+                actor_id=actor_id,
+                action="purchase_order:dispatch_failed",
+                details={"purchase_order_id": str(po.id), "order_number": po.order_number, "error": str(exc)},
+            )
+        )
+        db.add(
+            Notification(
+                recipient_id=requisition.requested_by,
+                title="Purchase order created, but email to supplier failed",
+                message=f"PO {po.order_number} was created but could not be emailed to the supplier: {exc}",
+                related_entity_type="purchase_order",
+                related_entity_id=po.id,
+            )
+        )
+        await db.commit()
+        return
+
+    await transition_purchase_order_lifecycle(
+        db, po.id, actor_id=actor_id, new_lifecycle_status="sent_to_supplier", tenant_id=tenant_id
+    )
+    db.add(
+        Notification(
+            recipient_id=requisition.requested_by,
+            title="Purchase order sent to supplier",
+            message=f"PO {po.order_number} was created and emailed to the supplier at {now.strftime('%Y-%m-%d %H:%M UTC')}.",
+            related_entity_type="purchase_order",
+            related_entity_id=po.id,
+        )
+    )
+    await db.commit()
+
+
 async def auto_create_po_from_requisition(db: Any, requisition_id: UUID | str, started_by: UUID, *, tenant_id: UUID | str | None = None) -> Any | None:
     requisition = await get_requisition(db, requisition_id, tenant_id=tenant_id)
     if requisition is None:
@@ -121,6 +252,35 @@ async def auto_create_po_from_requisition(db: Any, requisition_id: UUID | str, s
     if db is not None and hasattr(db, "execute"):
         existing_po_result = await db.execute(select(PurchaseOrder).where(PurchaseOrder.requisition_id == requisition.id))
         if existing_po_result.scalar_one_or_none() is not None:
+            return None
+
+        # Auto-validation before PO creation (spec 2/8: "Exception Handling" --
+        # if the PR isn't actually ready to become a PO, don't silently create
+        # a broken one; park the PR in "exception" with a specific reason and
+        # notify the requester instead.
+        blockers = await _po_creation_blockers(db, requisition)
+        if blockers:
+            if hasattr(db, "add"):
+                requisition.status = "exception"
+                requisition.lifecycle_status = "exception"
+                db.add(
+                    ProcurementAuditEvent(
+                        requisition_id=requisition.id,
+                        actor_id=started_by,
+                        action="purchase_order:creation_blocked",
+                        details={"reasons": blockers},
+                    )
+                )
+                db.add(
+                    Notification(
+                        recipient_id=requisition.requested_by,
+                        title="Purchase order could not be created",
+                        message=blockers[0] if len(blockers) == 1 else "; ".join(blockers),
+                        related_entity_type="requisition",
+                        related_entity_id=requisition.id,
+                    )
+                )
+                await db.commit()
             return None
 
     requisition_line_items = getattr(requisition, "line_items", None) or []
@@ -189,6 +349,9 @@ async def auto_create_po_from_requisition(db: Any, requisition_id: UUID | str, s
         await auto_create_draft_receipt_for_po(
             db, created_po.id, actor_id=started_by, tenant_id=tenant_id
         )
+        # PO auto-send (spec 2: "PO auto-sent to supplier ... Show
+        # notification: PO created + sent + timestamp").
+        await _dispatch_po_to_supplier(db, created_po, requisition, actor_id=started_by, tenant_id=tenant_id)
     return created_po
 
 

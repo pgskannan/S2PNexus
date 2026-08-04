@@ -353,6 +353,48 @@ class EmailService:
             },
         )
 
+    async def send_purchase_order_email(
+        self,
+        *,
+        to: str,
+        poNumber: str,
+        buyerName: str = "",
+        companyName: str = "",
+        currency: str = "",
+        poTotal: str = "",
+        shipToAddress: str = "",
+        paymentTerms: str = "",
+        deliveryDate: str = "",
+        poDate: str = "",
+        ackDeadline: str = "",
+        acknowledgeUrl: str = "",
+    ) -> SendResult:
+        """PO dispatched to the supplier for acknowledgement -- redirectable in
+        DEV/QA/Sandbox like order confirmations (spec: "PO auto-sent to
+        supplier"). Template ported from templates_catalog.json's
+        `po_dispatch_v1` entry, which was cataloged but never wired to an
+        actual .html file / send path."""
+        return await self.send_email(
+            email_type=EmailType.PO_DISPATCH.value,
+            to=to,
+            subject=f"{companyName or 'S2PNexus'} — Purchase Order {poNumber} Dispatch",
+            template="po_dispatch_email",
+            context={
+                "poNumber": poNumber,
+                "buyerName": buyerName,
+                "companyName": companyName,
+                "currency": currency,
+                "poTotal": poTotal,
+                "shipToAddress": shipToAddress,
+                "paymentTerms": paymentTerms,
+                "deliveryDate": deliveryDate,
+                "poDate": poDate,
+                "ackDeadline": ackDeadline,
+                "acknowledgeUrl": acknowledgeUrl,
+                "year": "2026",
+            },
+        )
+
     # -- audit -------------------------------------------------------------
     def _log_audit(
         self, decision: RedirectDecision, *, subject: str, status: str, error: str | None = None
