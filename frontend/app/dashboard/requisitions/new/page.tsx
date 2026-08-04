@@ -69,6 +69,10 @@ export default function NewRequisitionPage() {
     header_tax: "",
     shipping_cost: "",
     notes: "",
+    ship_to_name: "",
+    ship_to_address_line1: "",
+    ship_to_city: "",
+    ship_to_address_id: "",
   });
   const [lineItems, setLineItems] = useState<LineItemDraft[]>([emptyLineItem()]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -102,6 +106,32 @@ export default function NewRequisitionPage() {
     }
   }, [canCreateOnBehalf]);
 
+  // Auto-fill (backlog Section 5): default ship-to per requester from their
+  // default address.
+  useEffect(() => {
+    let cancelled = false;
+    import("@/lib/api")
+      .then(({ listMyAddresses }) => listMyAddresses())
+      .then((addresses) => {
+        if (cancelled) return;
+        const preferred = addresses.find((a) => a.is_default) ?? addresses[0];
+        if (preferred && (preferred.address_line1 || preferred.city)) {
+          setForm((f) => ({
+            ...f,
+            ship_to_name: f.ship_to_name || user?.full_name || "",
+            ship_to_address_line1: f.ship_to_address_line1 || preferred.address_line1 || "",
+            ship_to_city: f.ship_to_city || preferred.city || "",
+            ship_to_address_id: f.ship_to_address_id || preferred.id || "",
+          }));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // PR copy: pre-fill from a source requisition passed in the query string.
   useEffect(() => {
     const copyId = new URLSearchParams(window.location.search).get("copy");
@@ -126,6 +156,10 @@ export default function NewRequisitionPage() {
           header_tax: src.header_tax || "",
           shipping_cost: src.shipping_cost || "",
           notes: src.notes || "",
+          ship_to_name: src.ship_to_name || "",
+          ship_to_address_line1: src.ship_to_address_line1 || "",
+          ship_to_city: src.ship_to_city || "",
+          ship_to_address_id: src.ship_to_address_id || "",
         });
         const copiedLines: LineItemDraft[] = (src.line_items ?? []).map((li) => ({
           description: li.description,
@@ -258,6 +292,10 @@ export default function NewRequisitionPage() {
         shipping_cost: form.shipping_cost || undefined,
         notes: form.notes || undefined,
         requested_by: requestedBy || user.id,
+        ship_to_address_id: form.ship_to_address_id || undefined,
+        ship_to_name: form.ship_to_name || undefined,
+        ship_to_address_line1: form.ship_to_address_line1 || undefined,
+        ship_to_city: form.ship_to_city || undefined,
       });
 
       // Line items are added one at a time against the already-created
@@ -523,6 +561,51 @@ export default function NewRequisitionPage() {
                   value={form.need_by_date}
                   onChange={(e) => setForm({ ...form, need_by_date: e.target.value })}
                 />
+              </div>
+
+              <div className="rounded-md border border-slate-200 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-slate-700">Ship to</p>
+                  <p className="text-xs text-slate-400">Auto-filled from your default address.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="label" htmlFor="ship_to_name">
+                      Recipient
+                    </label>
+                    <input
+                      id="ship_to_name"
+                      className="input-field"
+                      placeholder="Delivery recipient name"
+                      value={form.ship_to_name}
+                      onChange={(e) => setForm({ ...form, ship_to_name: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor="ship_to_city">
+                      City
+                    </label>
+                    <input
+                      id="ship_to_city"
+                      className="input-field"
+                      placeholder="e.g. Springfield"
+                      value={form.ship_to_city}
+                      onChange={(e) => setForm({ ...form, ship_to_city: e.target.value })}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="label" htmlFor="ship_to_address_line1">
+                      Address
+                    </label>
+                    <input
+                      id="ship_to_address_line1"
+                      className="input-field"
+                      placeholder="Street address"
+                      value={form.ship_to_address_line1}
+                      onChange={(e) => setForm({ ...form, ship_to_address_line1: e.target.value })}
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="rounded-md border border-slate-200 p-4">

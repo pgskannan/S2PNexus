@@ -564,6 +564,20 @@ export default function RequisitionDetailPage() {
             <dt className="text-slate-500">Created</dt>
             <dd>{new Date(requisition.created_at).toLocaleString()}</dd>
           </div>
+          <div className="col-span-2">
+            <dt className="text-slate-500">Ship to</dt>
+            <dd>
+              {requisition.ship_to_name || requisition.ship_to_address_line1 || requisition.ship_to_city ? (
+                <span>
+                  {[requisition.ship_to_name, requisition.ship_to_address_line1, requisition.ship_to_city]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              ) : (
+                "—"
+              )}
+            </dd>
+          </div>
         </dl>
 
         {error && <p className="text-sm text-red-600">{error}</p>}

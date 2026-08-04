@@ -33,6 +33,10 @@ class ProcurementRequisitionBase(BaseModel):
     header_tax: Optional[Decimal] = Field(None, ge=0, description="Total estimated tax at the document level")
     shipping_cost: Optional[Decimal] = Field(None, ge=0, description="Total estimated freight/shipping for the requisition")
     notes: Optional[str] = None
+    ship_to_address_id: Optional[UUID] = Field(None, description="Selected delivery Address reference")
+    ship_to_name: Optional[str] = Field(None, max_length=255, description="Delivery recipient name")
+    ship_to_address_line1: Optional[str] = Field(None, max_length=255, description="Delivery address line 1")
+    ship_to_city: Optional[str] = Field(None, max_length=100, description="Delivery city")
 
 
 class ProcurementRequisitionCreate(ProcurementRequisitionBase):
@@ -61,6 +65,10 @@ class ProcurementRequisitionUpdate(BaseModel):
     header_tax: Optional[Decimal] = Field(None, ge=0)
     shipping_cost: Optional[Decimal] = Field(None, ge=0)
     notes: Optional[str] = None
+    ship_to_address_id: Optional[UUID] = None
+    ship_to_name: Optional[str] = Field(None, max_length=255)
+    ship_to_address_line1: Optional[str] = Field(None, max_length=255)
+    ship_to_city: Optional[str] = Field(None, max_length=100)
 
 
 class ProcurementRequisitionResponse(ProcurementRequisitionBase):

@@ -54,6 +54,18 @@ class ProcurementRequisition(Base):
     delay_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, comment="Pause processing until this date")
     header_tax: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True, comment="Total estimated tax at the document level")
     shipping_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True, comment="Total estimated freight/shipping for the requisition")
+    # Backlog Section 5: ship-to snapshot captured at request time so the
+    # requester's default delivery location flows through to PO creation
+    # (mirrors the denormalized ship-to columns PurchaseOrder already carries).
+    ship_to_address_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+        index=True,
+        comment="Optional reference to the selected delivery Address",
+    )
+    ship_to_name: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="Delivery recipient name")
+    ship_to_address_line1: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="Delivery address line 1")
+    ship_to_city: Mapped[str | None] = mapped_column(String(100), nullable=True, comment="Delivery city")
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     search_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

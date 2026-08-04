@@ -121,6 +121,10 @@ export interface Requisition {
   header_tax?: string | null;
   shipping_cost?: string | null;
   notes?: string | null;
+  ship_to_address_id?: string | null;
+  ship_to_name?: string | null;
+  ship_to_address_line1?: string | null;
+  ship_to_city?: string | null;
   line_items: RequisitionLineItem[];
   created_at: string;
   updated_at: string;
