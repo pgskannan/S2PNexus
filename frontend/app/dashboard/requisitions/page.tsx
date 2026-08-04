@@ -304,9 +304,14 @@ export default function RequisitionsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Requisitions</h1>
-        <Link href="/dashboard/requisitions/new" className="btn-primary">
-          + New Requisition
-        </Link>
+        <div className="flex gap-2">
+          <Link href="/dashboard/requisitions/quick-create" className="btn-secondary">
+            ⚡ Quick Create
+          </Link>
+          <Link href="/dashboard/requisitions/new" className="btn-primary">
+            + New Requisition
+          </Link>
+        </div>
       </div>
 
       <ActionRecommendationStrip
