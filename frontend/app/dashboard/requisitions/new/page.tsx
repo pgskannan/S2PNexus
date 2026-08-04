@@ -180,6 +180,7 @@ export default function NewRequisitionPage() {
   }, []);
 
   const titleValid = form.title.trim().length > 0;
+  const estimatedValueValid = Boolean(form.estimated_value) && Number(form.estimated_value) > 0;
   const rowsToSubmit = lineItems.filter((li) => li.description.trim());
   const linesSubtotal = rowsToSubmit.reduce((sum, li) => sum + lineTotal(li), 0);
   const headerTax = Number(form.header_tax) || 0;
@@ -222,13 +223,29 @@ export default function NewRequisitionPage() {
     setLineItems((items) => items.filter((_, i) => i !== index));
   }
 
+  function isBlankLineItem(li: LineItemDraft): boolean {
+    return (
+      !li.description.trim() &&
+      !li.unit_price.trim() &&
+      !li.category.trim() &&
+      !li.commodity.trim() &&
+      !li.account_code.trim() &&
+      li.quantity === "1"
+    );
+  }
+
   function quickAddFromCatalog(item: CatalogItem) {
     // Pre-fill a draft line item from the catalog entry so it flows through
     // the same submit path (addRequisitionLineItem at submit time). The
     // catalog's account_code is carried so the line clears the PO
     // auto-creation GL validation gate at approval time.
+    //
+    // Untouched blank rows (the initial placeholder, or an "+ Add line" row
+    // nobody has typed into yet) are dropped rather than left sitting next
+    // to the new catalog row -- otherwise every quick-add left a confusing
+    // empty row the user had to notice and delete by hand.
     setLineItems((items) => [
-      ...items,
+      ...items.filter((li) => !isBlankLineItem(li)),
       {
         description: item.description || item.name,
         quantity: "1",
@@ -243,10 +260,19 @@ export default function NewRequisitionPage() {
 
   function goToStep(target: 1 | 2 | 3) {
     // Free navigation between steps -- nothing already entered is lost by
-    // moving around, so the only gate is not letting Next/step-2/step-3 be
-    // reached without a title (the one truly required field).
+    // moving around, so the gates only stop Next/step-2/step-3 from being
+    // reached before their required fields are filled in: title and
+    // estimated value both live on step 1, and the approval flow routes on
+    // estimated value, so it has to be caught here rather than deferred to
+    // the final submit (which used to send the user all the way back from
+    // step 3 to fix it).
     if (target > 1 && !titleValid) {
       setError("Title is required before continuing.");
+      setStep(1);
+      return;
+    }
+    if (target > 1 && !estimatedValueValid) {
+      setError("Estimated value is required before continuing -- the approval flow routes on it.");
       setStep(1);
       return;
     }
@@ -681,7 +707,12 @@ export default function NewRequisitionPage() {
               </p>
 
               <div className="flex justify-end">
-                <button type="button" className="btn-primary" onClick={() => goToStep(2)} disabled={!titleValid}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => goToStep(2)}
+                  disabled={!titleValid || !estimatedValueValid}
+                >
                   Next: Line items
                 </button>
               </div>

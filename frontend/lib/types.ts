@@ -145,6 +145,37 @@ export interface CategoryResult {
   is_active: boolean;
 }
 
+// ---- Draft-stage approval preview (backlog follow-up 2026-08-04) ----
+// Shapes match backend GET /procurement/requisitions/{id}/approval-preview.
+
+export interface RequisitionApprovalPreviewApprover {
+  user_id: string;
+  display_name?: string | null;
+  email?: string | null;
+  role_code?: string | null;
+  is_primary_approver?: boolean;
+  reason?: string | null;
+}
+
+export interface RequisitionApprovalPreviewStep {
+  step_index: number;
+  name: string;
+  role_code?: string | null;
+  required_approvals: number;
+  approvers: RequisitionApprovalPreviewApprover[];
+  unresolved: boolean;
+}
+
+export interface RequisitionApprovalPreview {
+  available: boolean;
+  reason?: string | null;
+  definition_id?: string | null;
+  definition_name?: string | null;
+  steps: RequisitionApprovalPreviewStep[];
+  missing_fields: string[];
+  complete: boolean;
+}
+
 export interface RequisitionListResponse {
   items: Requisition[];
   total: number;

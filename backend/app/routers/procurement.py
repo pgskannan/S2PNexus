@@ -103,6 +103,7 @@ from app.services.procurement_workflow import (
     auto_create_draft_receipt_for_po,
     auto_create_po_from_requisition,
     auto_create_receipts_for_ordered_po,
+    preview_requisition_approval_workflow,
     process_deferred_po_creation,
     start_purchase_order_approval_workflow,
     start_requisition_approval_workflow,
@@ -278,6 +279,26 @@ async def list_requisition_audit_events_endpoint(
     return [ProcurementAuditEventResponse.model_validate(event) for event in events]
 
 
+@router.get(
+    "/requisitions/{requisition_id}/approval-preview",
+    summary="Preview the approval flow this requisition would follow if submitted now",
+    description="Read-only -- does not create a WorkflowInstance. Meant for the "
+    "draft stage, before 'Submit for approval': shows which approval step(s) and "
+    "approver(s) the active WorkflowDefinition would resolve to given the "
+    "requisition's current data, and which fields (if any) are still missing to "
+    "fully determine the routing.",
+)
+async def preview_requisition_approval_endpoint(
+    requisition_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    requisition = await get_requisition(db, requisition_id, tenant_id=current_user.tenant_id)
+    if not requisition:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+    return await preview_requisition_approval_workflow(db, requisition)
+
+
 @router.post(
     "/requisitions/{requisition_id}/transition",
     response_model=ProcurementRequisitionResponse,
@@ -360,6 +381,19 @@ async def transition_requisition_endpoint(
         if workflow_instance is not None:
             requisition.status = "pending_approval"
             requisition.lifecycle_status = "pending_approval"
+            # apply_procurement_transition_workflow (just above) already set
+            # approval_status from evaluate_approval_requirement's naive
+            # $1000/high-priority threshold -- but that function never knows
+            # whether a real WorkflowDefinition-based instance is about to
+            # exist. Since start_requisition_approval_workflow never touches
+            # approval_status itself, whichever ran last silently won: a PR
+            # under the naive threshold showed approval_status="approved"
+            # immediately on submit even though a real instance (with real
+            # pending approval tasks) had just been created alongside it, so
+            # the approval flow looked like it was never generated at all.
+            # A real instance existing is the source of truth here -- force
+            # it back to pending. Reported 2026-08-04.
+            requisition.approval_status = "pending"
             await db.commit()
     # Auto-create the PO here too, not just on workflow-instance completion --
     # the requisition detail page's "Approve" button calls this endpoint

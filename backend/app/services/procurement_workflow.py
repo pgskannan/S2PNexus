@@ -554,6 +554,35 @@ async def process_deferred_po_creation(db: Any, *, tenant_id: UUID | str | None 
     return created
 
 
+async def preview_requisition_approval_workflow(db: Any, requisition: Any) -> dict[str, Any]:
+    """Read-only "what would the approval flow look like right now" preview
+    for a not-yet-submitted requisition (spec: draft-stage dynamic approval
+    preview, requested 2026-08-04). Deliberately leaves `estimated_value`
+    (and any other field) as None/missing when unset on the requisition,
+    rather than defaulting it the way `start_requisition_approval_workflow`'s
+    real context does -- `preview_workflow_steps` needs to be able to tell
+    the difference between "this condition evaluated false" and "there isn't
+    enough information yet to know", which is the whole point of the
+    feature (see crud/workflow.py:preview_workflow_steps).
+    """
+    from app.crud.workflow import preview_workflow_steps
+
+    estimated_value = getattr(requisition, "estimated_value", None)
+    supplier_id = getattr(requisition, "supplier_id", None)
+    context = {
+        "estimated_value": str(estimated_value) if estimated_value is not None else None,
+        "priority": getattr(requisition, "priority", None),
+        "category": getattr(requisition, "category", None),
+        "account_code": getattr(requisition, "account_code", None),
+        "commodity": getattr(requisition, "commodity", None),
+        "supplier_id": str(supplier_id) if supplier_id is not None else None,
+        "currency": getattr(requisition, "currency", None),
+        "is_emergency": bool(getattr(requisition, "is_emergency", False)),
+        "tenant_id": str(getattr(requisition, "tenant_id", None)) if getattr(requisition, "tenant_id", None) else None,
+    }
+    return await preview_workflow_steps(db, entity_type="requisition", context=context)
+
+
 async def start_requisition_approval_workflow(
     requisition: Any,
     db: Any,

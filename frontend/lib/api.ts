@@ -205,6 +205,15 @@ export async function deleteRequisition(id: string): Promise<void> {
   await api.delete(`/procurement/requisitions/${id}`);
 }
 
+export async function getRequisitionApprovalPreview(
+  id: string
+): Promise<import("@/lib/types").RequisitionApprovalPreview> {
+  const { data } = await api.get<import("@/lib/types").RequisitionApprovalPreview>(
+    `/procurement/requisitions/${id}/approval-preview`
+  );
+  return data;
+}
+
 export async function addRequisitionLineItem(
   requisitionId: string,
   payload: {

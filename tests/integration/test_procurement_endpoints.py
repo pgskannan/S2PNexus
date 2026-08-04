@@ -310,3 +310,53 @@ class TestProcurementEndpoints:
                     app.state.event_bus = original_event_bus
 
         asyncio.run(run_test())
+
+    def test_transition_requisition_submit_keeps_approval_status_pending_when_real_workflow_starts(self, mock_user):
+        """Regression for a 2026-08-04 user report: a requisition under the naive
+        evaluate_approval_requirement $1000 threshold (see _build_requisition's
+        estimated_value=125.0) got approval_status forced to "approved" by that
+        heuristic, and start_requisition_approval_workflow -- which actually
+        started a real WorkflowInstance with real pending approval tasks --
+        never corrected it back, since it doesn't touch approval_status at all.
+        The result looked like "no approval flow was ever generated" even
+        though one had. approval_status must reflect the real instance, not
+        the heuristic, whenever a real instance exists.
+        """
+
+        async def run_test():
+            async def override_get_current_active_user():
+                return mock_user
+
+            app.dependency_overrides[procurement.get_current_active_user] = override_get_current_active_user
+            requisition_id = uuid4()
+            try:
+                with patch("app.routers.procurement.transition_requisition", new_callable=AsyncMock) as mock_transition:
+                    requisition = self._build_requisition(requisition_id)
+                    assert requisition.estimated_value < 1000  # under the naive auto-approve threshold
+                    mock_transition.return_value = requisition
+                    with patch("app.routers.procurement.get_requisition", new_callable=AsyncMock) as mock_get_requisition, patch(
+                        "app.routers.procurement.start_requisition_approval_workflow", new_callable=AsyncMock
+                    ) as mock_start_workflow, patch(
+                        "app.routers.procurement.auto_create_po_from_requisition", new_callable=AsyncMock
+                    ):
+                        mock_get_requisition.return_value = requisition
+                        # A real WorkflowDefinition matched and a real instance
+                        # (with real pending tasks) was created.
+                        mock_start_workflow.return_value = SimpleNamespace(id=uuid4())
+                        async with AsyncClient(app=app, base_url="http://test") as client:
+                            response = await client.post(
+                                f"/api/v1/procurement/requisitions/{requisition_id}/transition",
+                                json={"new_status": "submitted", "lifecycle_status": "submitted"},
+                                headers={"Authorization": "Bearer valid_token"},
+                            )
+
+                    assert response.status_code == 200
+                    # apply_procurement_transition_workflow's naive heuristic
+                    # would have set this to "approved" (125.0 < 1000) -- the
+                    # real workflow instance must win.
+                    assert requisition.approval_status == "pending"
+                    assert requisition.lifecycle_status == "pending_approval"
+            finally:
+                app.dependency_overrides.pop(procurement.get_current_active_user, None)
+
+        asyncio.run(run_test())

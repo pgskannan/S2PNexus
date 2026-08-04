@@ -22,6 +22,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.crud.approval import resolve_approvers_for_context
 from app.models.workflow import Notification, WorkflowDefinition, WorkflowInstance, WorkflowTask
 from app.schemas.workflow import WorkflowDefinitionCreate, WorkflowInstanceStart
 from app.services.approval_audit import compute_sla_due_at, record_approval_event, record_task_sla_metric
@@ -220,6 +221,135 @@ async def delete_workflow_definition(db: AsyncSession, definition_id: UUID | str
         await db.rollback()
         raise ValueError("Workflow definitions with execution history cannot be deleted; deactivate them instead")
     return True
+
+
+async def preview_workflow_steps(
+    db: AsyncSession, *, entity_type: str, context: dict[str, Any]
+) -> dict[str, Any]:
+    """Read-only preview of which approval step(s)/approver(s) the active
+    WorkflowDefinition for `entity_type` would resolve to for `context`,
+    without creating a WorkflowInstance/WorkflowTask (contrast `_run_from_step`,
+    which is always paired with a real, already-persisted instance and writes
+    tasks as it walks).
+
+    Meant for showing "here's the approval flow this would follow" on a
+    not-yet-submitted document (spec: draft-stage dynamic approval preview,
+    requested 2026-08-04 alongside the approval_status-vs-real-workflow bug
+    fix in routers/procurement.py). A condition step whose deciding field is
+    missing from `context` can't be resolved either way, so the walk stops
+    there rather than silently guessing the false branch the way a real,
+    already-submitted instance's `_evaluate_condition` does -- the caller
+    needs to know what's still missing, not a wrong-but-confident answer.
+    """
+    candidates = await get_workflow_definitions(db, entity_type=entity_type, is_active=True, limit=1)
+    if not candidates:
+        return {
+            "available": False,
+            "reason": f"No active approval workflow is configured for {entity_type.replace('_', ' ')}s.",
+            "steps": [],
+            "missing_fields": [],
+            "complete": False,
+        }
+
+    definition = candidates[0]
+    steps = definition.steps or []
+    preview_steps: list[dict[str, Any]] = []
+    missing_fields: set[str] = set()
+    visited: set[int] = set()
+    step_index = 0
+    uncertain = False
+
+    async def resolve_for_step(step: dict[str, Any]) -> list[dict[str, Any]]:
+        explicit_approvers = step.get("approvers")
+        if explicit_approvers:
+            return [{"user_id": str(a), "display_name": None, "reason": "explicitly listed on this step"} for a in explicit_approvers]
+        role_code = step.get("role_code")
+        if not role_code:
+            return []
+        raw_amount = context.get("estimated_value")
+        amount = _coerce_numeric(raw_amount)
+        if not isinstance(amount, Decimal):
+            amount = Decimal("0.00")
+        supplier_id = context.get("supplier_id")
+        tenant_id = context.get("tenant_id")
+        return await resolve_approvers_for_context(
+            db,
+            role_code=role_code,
+            amount=amount,
+            category=context.get("category"),
+            supplier_id=supplier_id,
+            tenant_id=_normalize_uuid(tenant_id) if tenant_id else None,
+        )
+
+    while 0 <= step_index < len(steps) and step_index not in visited and not uncertain:
+        visited.add(step_index)
+        step = steps[step_index]
+        step_type = step.get("step_type")
+
+        if step.get("parallel_group"):
+            group_key = step["parallel_group"]
+            member_indices = sorted(i for i, s in enumerate(steps) if s.get("parallel_group") == group_key)
+            for member_index in member_indices:
+                visited.add(member_index)
+                member_step = steps[member_index]
+                if member_step.get("step_type") != "approval":
+                    continue
+                resolved = await resolve_for_step(member_step)
+                if member_step.get("role_code") and context.get("estimated_value") is None:
+                    missing_fields.add("estimated_value")
+                preview_steps.append(
+                    {
+                        "step_index": member_index,
+                        "name": member_step.get("name") or "Approval",
+                        "role_code": member_step.get("role_code"),
+                        "required_approvals": member_step.get("required_approvals", 1),
+                        "approvers": resolved,
+                        "unresolved": not resolved,
+                    }
+                )
+            next_step = step.get("parallel_next_step")
+            step_index = next_step if next_step is not None else max(member_indices) + 1
+            continue
+
+        if step_type == "condition":
+            field = step.get("field")
+            if field and context.get(field) in (None, ""):
+                missing_fields.add(field)
+                uncertain = True
+                break
+            result = _evaluate_condition(step, context)
+            next_step = step.get("on_true_next_step") if result else step.get("on_false_next_step")
+            step_index = next_step if next_step is not None else step_index + 1
+            continue
+
+        if step_type == "approval":
+            resolved = await resolve_for_step(step)
+            if step.get("role_code") and context.get("estimated_value") is None:
+                missing_fields.add("estimated_value")
+            preview_steps.append(
+                {
+                    "step_index": step_index,
+                    "name": step.get("name") or "Approval",
+                    "role_code": step.get("role_code"),
+                    "required_approvals": step.get("required_approvals", 1),
+                    "approvers": resolved,
+                    "unresolved": not resolved,
+                }
+            )
+            step_index = _continue_after_step(steps, step_index)
+            continue
+
+        # notification/auto/ai steps aren't approval gates -- just continue.
+        step_index = _continue_after_step(steps, step_index)
+
+    return {
+        "available": True,
+        "definition_id": str(definition.id),
+        "definition_name": definition.name,
+        "steps": preview_steps,
+        "missing_fields": sorted(missing_fields),
+        "complete": not uncertain,
+    }
 
 
 # --- Instances / step execution -----------------------------------------------------

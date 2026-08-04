@@ -8,6 +8,7 @@ import {
   completeWorkflowTask,
   deleteRequisition,
   getRequisition,
+  getRequisitionApprovalPreview,
   getWorkflowDefinition,
   getWorkflowInstance,
   listMyWorkflowTasks,
@@ -23,7 +24,14 @@ import {
   transitionRequisition,
   extractErrorMessage,
 } from "@/lib/api";
-import type { ProcurementAttachment, PurchaseOrder, Requisition, WorkflowInstance, WorkflowTask } from "@/lib/types";
+import type {
+  ProcurementAttachment,
+  PurchaseOrder,
+  Requisition,
+  RequisitionApprovalPreview,
+  WorkflowInstance,
+  WorkflowTask,
+} from "@/lib/types";
 import { ApprovalFlowDiagram, type ApprovalStep } from "@/components/ApprovalFlowDiagram";
 import { buildApprovalSteps, resolveApproverNames } from "@/lib/approvalFlow";
 import DocumentTabs from "@/components/DocumentTabs";
@@ -42,6 +50,19 @@ function sameId(a?: string | null, b?: string | null) {
 function canActAsApprover(user: { id: string; role: string; is_superuser: boolean } | null) {
   if (!user) return false;
   return user.is_superuser || user.role === "administrator";
+}
+
+const APPROVAL_PREVIEW_FIELD_LABELS: Record<string, string> = {
+  estimated_value: "Estimated value",
+  category: "Category",
+  supplier_id: "Supplier",
+  priority: "Priority",
+  account_code: "GL/account code",
+  commodity: "Commodity",
+};
+
+function approvalPreviewFieldLabel(field: string): string {
+  return APPROVAL_PREVIEW_FIELD_LABELS[field] || field;
 }
 
 /** Pick the workflow task the current user should Approve/Reject on this PR. */
@@ -97,6 +118,11 @@ export default function RequisitionDetailPage() {
   const [workflowCheckDone, setWorkflowCheckDone] = useState(false);
   const [myTaskIds, setMyTaskIds] = useState<Set<string>>(new Set());
   const [approvalSteps, setApprovalSteps] = useState<ApprovalStep[]>([]);
+  // Draft-stage dynamic approval preview (backlog follow-up 2026-08-04): only
+  // fetched/shown while there's no real workflow instance yet, so the
+  // requester can see how the PR would route -- and what's still missing --
+  // before submitting.
+  const [approvalPreview, setApprovalPreview] = useState<RequisitionApprovalPreview | null>(null);
   const [auditEvents, setAuditEvents] = useState<import("@/lib/types").ProcurementAuditEvent[]>([]);
   const [actorNames, setActorNames] = useState<Record<string, string>>({});
   const [comments, setComments] = useState<import("@/lib/types").ProcurementComment[]>([]);
@@ -164,8 +190,16 @@ export default function RequisitionDetailPage() {
           resolveApproverNames(instance),
         ]);
         setApprovalSteps(buildApprovalSteps(instance, definition.steps, approverNames));
+        setApprovalPreview(null);
       } else {
         setApprovalSteps([]);
+        if (data.lifecycle_status === "draft") {
+          getRequisitionApprovalPreview(params.id)
+            .then(setApprovalPreview)
+            .catch(() => setApprovalPreview(null));
+        } else {
+          setApprovalPreview(null);
+        }
       }
     } catch (err) {
       setError(extractErrorMessage(err));
@@ -732,6 +766,57 @@ export default function RequisitionDetailPage() {
                 >
                   View raw workflow instance &rarr;
                 </Link>
+              </div>
+            ) : requisition.lifecycle_status === "draft" && approvalPreview ? (
+              <div className="space-y-3">
+                <p className="text-xs font-medium uppercase text-slate-400">
+                  Preview -- based on current draft data, not yet submitted
+                </p>
+                {!approvalPreview.available ? (
+                  <p className="text-sm text-slate-500">{approvalPreview.reason}</p>
+                ) : (
+                  <>
+                    {approvalPreview.steps.length > 0 && (
+                      <ol className="space-y-2">
+                        {approvalPreview.steps.map((step, i) => (
+                          <li
+                            key={step.step_index}
+                            className="flex items-start gap-3 rounded-md border border-slate-200 px-3 py-2"
+                          >
+                            <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-500">
+                              {i + 1}
+                            </span>
+                            <div>
+                              <p className="text-sm font-medium text-slate-800">{step.name}</p>
+                              {step.unresolved ? (
+                                <p className="text-xs text-amber-600">
+                                  No approver currently matches this step -- would need admin attention.
+                                </p>
+                              ) : (
+                                <p className="text-xs text-slate-500">
+                                  {step.approvers
+                                    .map((a) => a.display_name || a.email || a.user_id)
+                                    .join(", ")}
+                                </p>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                    {!approvalPreview.complete && (
+                      <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                        Not enough information yet to determine the full approval flow. Still needed:{" "}
+                        {approvalPreview.missing_fields.map(approvalPreviewFieldLabel).join(", ")}.
+                      </p>
+                    )}
+                    {approvalPreview.complete && approvalPreview.steps.length === 0 && (
+                      <p className="text-sm text-slate-500">
+                        Based on current data, this requisition would be auto-approved with no approval steps.
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
             ) : (
               <p className="text-sm text-slate-400">No approval workflow instance for this document.</p>
