@@ -1497,6 +1497,17 @@ export async function addRequisitionAttachment(
   return data;
 }
 
+// ---- Invoice reconciliation / price-mismatch alerts (backlog Section 5) ----
+
+export async function getInvoiceExceptions(
+  invoiceId: string
+): Promise<import("@/lib/types").ProcurementInvoiceException[]> {
+  const { data } = await api.get<import("@/lib/types").ProcurementInvoiceException[]>(
+    `/procurement/invoices/${invoiceId}/exceptions`
+  );
+  return data;
+}
+
 // ---- Supplier Requests ----
 
 export async function listSupplierRequests(params?: {

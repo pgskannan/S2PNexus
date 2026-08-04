@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { extractErrorMessage, getPurchaseOrder, listInvoices } from "@/lib/api";
+import { extractErrorMessage, getPurchaseOrder, getInvoiceExceptions, listInvoices } from "@/lib/api";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
 import DocumentTabs from "@/components/DocumentTabs";
 import Pagination, { usePagination } from "@/components/Pagination";
-import type { ProcurementInvoice } from "@/lib/types";
+import type { ProcurementInvoice, ProcurementInvoiceException } from "@/lib/types";
 
 const statusColors: Record<string, string> = {
   pending: "bg-amber-100 text-amber-700",
@@ -31,6 +31,37 @@ export default function InvoicesPage() {
   const [poFilter, setPoFilter] = useState<string | null>(null);
   const [poFilterNumber, setPoFilterNumber] = useState<string | null>(null);
   const [prId, setPrId] = useState<string | null>(null);
+
+  // Invoice reconciliation / price-mismatch alerts (backlog Section 5):
+  // expandable per-invoice review that surfaces existing match exceptions.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [exceptionMap, setExceptionMap] = useState<Record<string, ProcurementInvoiceException[]>>({});
+  const [exceptionsError, setExceptionsError] = useState<string | null>(null);
+  const [exceptionsLoading, setExceptionsLoading] = useState<string | null>(null);
+
+  async function toggleReview(invoice: ProcurementInvoice) {
+    if (expandedId === invoice.id) {
+      setExpandedId(null);
+      return;
+    }
+    if (!exceptionMap[invoice.id]) {
+      setExceptionsLoading(invoice.id);
+      setExceptionsError(null);
+      try {
+        const exceptions = await getInvoiceExceptions(invoice.id);
+        setExceptionMap((m) => ({ ...m, [invoice.id]: exceptions }));
+      } catch (err) {
+        setExceptionsError(extractErrorMessage(err));
+      } finally {
+        setExceptionsLoading(null);
+      }
+    }
+    setExpandedId(invoice.id);
+  }
+
+  function exceptionLabel(type: string): string {
+    return type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
 
   useEffect(() => {
     listInvoices()
@@ -230,21 +261,87 @@ export default function InvoicesPage() {
                 </td>
               </tr>
             )}
-            {pageItems.map((item) => (
-              <tr key={item.id} className="hover:bg-slate-50">
-                <td className="px-4 py-3 font-medium text-brand-700">{item.invoice_number}</td>
-                <td className="px-4 py-3">
-                  <span className={`badge ${statusColors[item.status] ?? "bg-slate-100 text-slate-700"}`}>
-                    {item.status}
-                  </span>
-                </td>
-                <td className="px-4 py-3 capitalize">{item.match_status.replace(/_/g, " ")}</td>
-                <td className="px-4 py-3">
-                  {item.currency} {item.total_amount ?? item.amount}
-                </td>
-                <td className="px-4 py-3 text-slate-500">{new Date(item.created_at).toLocaleDateString()}</td>
-              </tr>
-            ))}
+            {pageItems.map((item) => {
+              const isException = item.match_status !== "matched";
+              const exceptions = exceptionMap[item.id] ?? [];
+              const expanded = expandedId === item.id;
+              return (
+                <Fragment key={item.id}>
+                  <tr className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-medium text-brand-700">{item.invoice_number}</td>
+                    <td className="px-4 py-3">
+                      <span className={`badge ${statusColors[item.status] ?? "bg-slate-100 text-slate-700"}`}>
+                        {item.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="capitalize">{item.match_status.replace(/_/g, " ")}</span>
+                        {isException && (
+                          <button
+                            type="button"
+                            onClick={() => toggleReview(item)}
+                            className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 hover:bg-amber-200"
+                          >
+                            {exceptionsLoading === item.id
+                              ? "Loading…"
+                              : expanded
+                              ? "Hide"
+                              : `Review (${exceptions.length > 0 ? exceptions.length : "…"})`}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {item.currency} {item.total_amount ?? item.amount}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">{new Date(item.created_at).toLocaleDateString()}</td>
+                  </tr>
+                  {expanded && isException && (
+                    <tr className="bg-amber-50/40">
+                      <td colSpan={5} className="px-4 py-3">
+                        {exceptionsLoading === item.id ? (
+                          <p className="text-sm text-slate-500">Loading exceptions…</p>
+                        ) : exceptions.length === 0 ? (
+                          <p className="text-sm text-slate-500">
+                            No match-exception rows on record — this invoice still needs review before it can be
+                            paid. <Link href={`/dashboard/invoices/new?invoice=${item.id}`} className="text-brand-600 hover:underline">Edit invoice</Link>
+                          </p>
+                        ) : (
+                          <ul className="space-y-2">
+                            {exceptions.map((ex) => (
+                              <li key={ex.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded bg-white px-3 py-2 text-sm">
+                                <span className="font-semibold text-red-700">{exceptionLabel(ex.exception_type)}</span>
+                                {ex.expected_value != null && (
+                                  <span className="text-slate-600">
+                                    Expected <span className="font-mono">{ex.expected_value}</span>
+                                  </span>
+                                )}
+                                {ex.actual_value != null && (
+                                  <span className="text-slate-600">
+                                    Actual <span className="font-mono">{ex.actual_value}</span>
+                                  </span>
+                                )}
+                                {ex.variance_amount != null && (
+                                  <span className="font-semibold text-amber-700">
+                                    Δ {ex.variance_amount}
+                                    {ex.variance_percent != null ? ` (${ex.variance_percent}%)` : ""}
+                                  </span>
+                                )}
+                                <span className="text-xs uppercase tracking-wide text-slate-400">
+                                  {ex.resolution_status.replace(/_/g, " ")}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {exceptionsError && <p className="mt-2 text-sm text-red-600">{exceptionsError}</p>}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
         <Pagination

@@ -369,6 +369,24 @@ export interface ProcurementInvoice {
   created_at: string;
 }
 
+// Backlog Section 5: invoice reconciliation / price-mismatch alerts. Shapes
+// match backend/app/schemas/procurement.py InvoiceMatchExceptionResponse.
+export interface ProcurementInvoiceException {
+  id: string;
+  invoice_id: string;
+  invoice_line_item_id?: string | null;
+  exception_type: string;
+  expected_value?: string | null;
+  actual_value?: string | null;
+  variance_amount?: string | null;
+  variance_percent?: string | null;
+  resolution_status: string;
+  resolved_by?: string | null;
+  resolved_at?: string | null;
+  resolution_notes?: string | null;
+  created_at: string;
+}
+
 export type SupplierLifecycleStatus =
   | "active"
   | "pending_registration"
