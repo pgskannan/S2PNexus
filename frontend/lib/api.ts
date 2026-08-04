@@ -1392,6 +1392,37 @@ export async function deleteTemplateAdmin(templateId: string): Promise<void> {
   await api.delete(`/templates/admin/${templateId}`);
 }
 
+// ---- Admin Email Templates (backlog Section 1) ----
+
+export async function listEmailTemplatesAdmin(): Promise<
+  import("@/lib/types").EmailTemplateCatalogListResponse
+> {
+  const { data } = await api.get<import("@/lib/types").EmailTemplateCatalogListResponse>(
+    "/admin/email-templates"
+  );
+  return data;
+}
+
+export async function getEmailTemplateAdmin(
+  emailType: string
+): Promise<import("@/lib/types").EmailTemplateDetailResponse> {
+  const { data } = await api.get<import("@/lib/types").EmailTemplateDetailResponse>(
+    `/admin/email-templates/${encodeURIComponent(emailType)}`
+  );
+  return data;
+}
+
+export async function upsertEmailTemplateAdmin(
+  emailType: string,
+  payload: import("@/lib/types").EmailTemplateOverrideUpsert
+): Promise<import("@/lib/types").EmailTemplateOverrideOut> {
+  const { data } = await api.put<import("@/lib/types").EmailTemplateOverrideOut>(
+    `/admin/email-templates/${encodeURIComponent(emailType)}`,
+    payload
+  );
+  return data;
+}
+
 // ---- Supplier Requests ----
 
 export async function listSupplierRequests(params?: {

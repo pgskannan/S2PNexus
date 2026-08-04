@@ -58,6 +58,12 @@ const cards = [
     href: "/dashboard/admin/budgets",
   },
   {
+    title: "Email templates",
+    description: "Configure lifecycle email content (subject, body, footer, branding) for PR, PO, receipts, invoices, and more.",
+    status: "Live" as const,
+    href: "/dashboard/admin/email-templates",
+  },
+  {
     title: "P-Card controls",
     description: "Manage procurement card usage rules and spend limits across the enterprise.",
     status: "Coming soon" as const,

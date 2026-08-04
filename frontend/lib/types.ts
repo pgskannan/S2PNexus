@@ -1225,3 +1225,59 @@ export interface SupplierQualification {
   updated_by?: string | null;
   updated_at: string;
 }
+
+// ---- Admin-configurable email templates (backlog Section 1) ----
+// Shapes match backend/app/schemas/email_template.py and the catalog in
+// backend/app/templates/email/templates_catalog.json.
+
+export interface EmailTemplateCatalogEntry {
+  id: string;
+  module: string;
+  version: string;
+  email_type: string;
+  description: string;
+  tenant_overridable: boolean;
+  redirectable: boolean;
+  subject: string;
+  variables: string[];
+  has_override: boolean;
+  subject_override?: string | null;
+  html_override?: string | null;
+  footer_override?: string | null;
+  branding_logo_url?: string | null;
+  override_active?: boolean;
+  updated_at?: string | null;
+}
+
+export interface EmailTemplateCatalogListResponse {
+  items: EmailTemplateCatalogEntry[];
+  total: number;
+}
+
+export interface EmailTemplateOverrideOut {
+  id: string;
+  tenant_id?: string | null;
+  email_type: string;
+  subject_override?: string | null;
+  html_override?: string | null;
+  footer_override?: string | null;
+  branding_logo_url?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EmailTemplateDetailResponse {
+  entry: EmailTemplateCatalogEntry;
+  override?: EmailTemplateOverrideOut | null;
+}
+
+export interface EmailTemplateOverrideUpsert {
+  subject_override?: string | null;
+  html_override?: string | null;
+  footer_override?: string | null;
+  branding_logo_url?: string | null;
+  is_active?: boolean;
+  tenant_id?: string | null;
+}
+

@@ -251,17 +251,46 @@ class EmailService:
         reply_to: Optional[str] = None,
         cc: Sequence[str] = (),
         bcc: Sequence[str] = (),
+        tenant_id: Optional[Any] = None,
     ) -> SendResult:
         """Render, redirect, and send one email.
 
         The redirect decision is applied here, inside the service, so no caller
         can accidentally bypass it. Returns a SendResult with audit info.
+
+        Admin template overrides (backlog Section 1): an active
+        ``EmailTemplateOverride`` for ``email_type`` (+ tenant) overrides the
+        subject/body/footer/logo *content* before sending. Overrides never
+        touch the redirect pipeline — delivery behavior is unchanged.
         """
         # Step 1-4 of the pipeline: decide the effective recipient.
         # Use this service's settings so tests/embedded configs control behavior.
         decision: RedirectDecision = apply_redirect(email_type, to, settings=self._settings)
 
-        html_body = render_template(load_template(template), context)
+        # Admin-configurable content overrides. Only fields the admin actually
+        # set are applied; everything else falls back to the catalog/default.
+        merged_context = dict(context)
+        override = await self._resolve_override(email_type, tenant_id=tenant_id)
+        if override is not None:
+            # The template engine resolves {{tenant.footer}}/{{tenant.logo}}
+            # via nested dict lookup, so inject them into the nested "tenant"
+            # scope (preserving any caller-supplied tenant fields).
+            tenant = dict(merged_context.get("tenant") or {})
+            if override.footer_override:
+                tenant["footer"] = override.footer_override
+            if override.branding_logo_url:
+                tenant["logo"] = override.branding_logo_url
+            if tenant:
+                merged_context["tenant"] = tenant
+            if override.subject_override:
+                subject = render_template(override.subject_override, merged_context)
+
+        if override is not None and override.html_override:
+            body_source = override.html_override
+        else:
+            body_source = load_template(template)
+
+        html_body = render_template(body_source, merged_context)
         text_body = strip_html(html_body)
 
         msg = EmailMessage()
@@ -300,6 +329,41 @@ class EmailService:
         )
 
     # -- convenience senders (used by routers/services) --------------------
+    async def _resolve_override(self, email_type: str, tenant_id: Any = None):
+        """Resolve the active admin override for ``email_type`` (+ tenant).
+
+        Returns the most specific active ``EmailTemplateOverride``:
+        tenant-specific first, then the global (``tenant_id`` IS NULL) row.
+        Any DB failure returns None so an admin override can never break
+        delivery — the catalog/default template is used instead.
+        """
+        try:
+            from sqlalchemy import select
+
+            from app.database.database import db_manager
+            from app.models.email_template import EmailTemplateOverride
+
+            async with db_manager.session() as session:
+                rows = (
+                    await session.execute(
+                        select(EmailTemplateOverride).where(
+                            EmailTemplateOverride.email_type == email_type,
+                            EmailTemplateOverride.is_active.is_(True),
+                        )
+                    )
+                ).scalars().all()
+        except Exception:  # noqa: BLE001 - override must never break delivery
+            return None
+
+        if tenant_id is not None:
+            for row in rows:
+                if row.tenant_id is not None and row.tenant_id == tenant_id:
+                    return row
+        for row in rows:
+            if row.tenant_id is None:
+                return row
+        return None
+
     async def send_welcome_email(self, *, to: str, userName: str, activationLink: str) -> SendResult:
         """New user onboarding — NEVER redirected (spec Section 1)."""
         return await self.send_email(
@@ -368,6 +432,7 @@ class EmailService:
         poDate: str = "",
         ackDeadline: str = "",
         acknowledgeUrl: str = "",
+        tenant_id: Optional[Any] = None,
     ) -> SendResult:
         """PO dispatched to the supplier for acknowledgement -- redirectable in
         DEV/QA/Sandbox like order confirmations (spec: "PO auto-sent to
@@ -393,6 +458,7 @@ class EmailService:
                 "acknowledgeUrl": acknowledgeUrl,
                 "year": "2026",
             },
+            tenant_id=tenant_id,
         )
 
     # -- audit -------------------------------------------------------------
