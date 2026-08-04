@@ -352,6 +352,13 @@ export default function RequisitionDetailPage() {
           Withdraw
         </button>
       )}
+      <Link
+        href={`/dashboard/requisitions/new?copy=${params.id}`}
+        className="btn-secondary"
+        title="Create a new requisition pre-filled from this one"
+      >
+        Copy PR
+      </Link>
     </>
   );
 

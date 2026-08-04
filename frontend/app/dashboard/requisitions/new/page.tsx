@@ -2,12 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createRequisition, addRequisitionLineItem, extractErrorMessage, listSuppliers } from "@/lib/api";
+import {
+  createRequisition,
+  addRequisitionLineItem,
+  extractErrorMessage,
+  getRequisition,
+  listSuppliers,
+} from "@/lib/api";
 import { useAuthStore } from "@/lib/auth-store";
 import CommodityCodeInput from "@/components/CommodityCodeInput";
 import CategoryInput from "@/components/CategoryInput";
 import CatalogQuickAdd from "@/components/CatalogQuickAdd";
-import type { CatalogItem, Supplier } from "@/lib/types";
+import type { CatalogItem, Requisition, Supplier } from "@/lib/types";
 
 interface LineItemDraft {
   description: string;
@@ -68,11 +74,57 @@ export default function NewRequisitionPage() {
   const [error, setError] = useState<string | null>(null);
   const [lineItemWarning, setLineItemWarning] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // PR copy (backlog Section 5): when arriving via ?copy=<requisition_id>,
+  // pre-fill the whole wizard from the source requisition.
+  const [copyBanner, setCopyBanner] = useState<string | null>(null);
 
   useEffect(() => {
     listSuppliers()
       .then((res) => setSuppliers(res.items))
       .catch(() => setSuppliers([]));
+  }, []);
+
+  // PR copy: pre-fill from a source requisition passed in the query string.
+  useEffect(() => {
+    const copyId = new URLSearchParams(window.location.search).get("copy");
+    if (!copyId) return;
+    let cancelled = false;
+    getRequisition(copyId)
+      .then((src: Requisition) => {
+        if (cancelled) return;
+        setForm({
+          title: src.title ? `${src.title} (copy)` : "",
+          description: src.description || "",
+          supplier_id: src.supplier_id || "",
+          request_type: src.request_type,
+          currency: src.currency || "USD",
+          estimated_value: src.estimated_value || "",
+          priority: src.priority || "medium",
+          commodity: src.commodity || "",
+          category: src.category || "",
+          need_by_date: src.need_by_date ? src.need_by_date.slice(0, 10) : "",
+          is_emergency: Boolean(src.is_emergency),
+          delay_until: src.delay_until ? src.delay_until.slice(0, 10) : "",
+          header_tax: src.header_tax || "",
+          shipping_cost: src.shipping_cost || "",
+          notes: src.notes || "",
+        });
+        const copiedLines: LineItemDraft[] = (src.line_items ?? []).map((li) => ({
+          description: li.description,
+          quantity: li.quantity || "1",
+          unit_price: li.unit_price || "",
+          commodity: li.commodity || "",
+          category: li.category || "",
+          account_code: li.account_code || "",
+        }));
+        setLineItems(copiedLines.length > 0 ? copiedLines : [emptyLineItem()]);
+        setCopyBanner(`Copied from ${src.requisition_number || src.title} — review and submit.`);
+      })
+      .catch((e) => setCopyBanner(`Couldn't load the source requisition to copy: ${extractErrorMessage(e)}`))
+      .finally(() => setLoading(false));
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const titleValid = form.title.trim().length > 0;
@@ -275,6 +327,9 @@ export default function NewRequisitionPage() {
 
         {/* Step content */}
         <div className="max-w-3xl flex-1 space-y-6">
+          {copyBanner && (
+            <p className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700">{copyBanner}</p>
+          )}
           {error && <p className="text-sm text-red-600">{error}</p>}
           {lineItemWarning && <p className="text-sm text-amber-600">{lineItemWarning}</p>}
 
