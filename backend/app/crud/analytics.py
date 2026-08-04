@@ -19,16 +19,35 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.approval import ApprovalEvent, SlaMetric
 from app.models.contract import Contract
-from app.models.procurement import GoodsReceipt, ProcurementInvoice, ProcurementRequisition, PurchaseOrder
+from app.models.procurement import (
+    GoodsReceipt,
+    GoodsReceiptLineItem,
+    ProcurementAuditEvent,
+    ProcurementInvoice,
+    ProcurementRequisition,
+    PurchaseOrder,
+)
 from app.models.supplier import Supplier
+from app.models.workflow import WorkflowInstance, WorkflowTask
 from app.schemas.analytics import (
+    ApprovalBottleneckResponse,
+    ApprovalBottleneckTask,
     ContractAnalyticsResponse,
     DashboardMetricsResponse,
+    ExceptionDashboardResponse,
+    ExceptionRequisition,
+    ExceptionRetryResponse,
+    PoAgingBucket,
+    PoAgingResponse,
     SpendAnalyticsResponse,
     SpendByCategory,
     SpendByMonth,
     SupplierAnalyticsResponse,
+    SupplierPerformanceScorecard,
+    SupplierScorecardEntry,
+    SupplierScorecardResponse,
     TopSupplier,
 )
 
@@ -181,6 +200,8 @@ async def get_supplier_analytics(
     invoices = await _fetch_invoices(db, supplier_id=supplier_id)
     total_spend, _, spend_trend, _ = await _spend_breakdowns(db, invoices)
 
+    scorecard = await get_supplier_performance_scorecard(db, supplier_id=supplier_id)
+
     return SupplierAnalyticsResponse(
         supplier_id=supplier_id,
         supplier_name=supplier_name,
@@ -190,6 +211,317 @@ async def get_supplier_analytics(
         avg_contract_value=avg_contract_value,
         contract_types=dict(contract_types),
         spend_trend=spend_trend,
+        performance_scorecard=scorecard,
+    )
+
+
+# ---------------------------------------------------------------------------
+# P2P UX backlog Section 4: Reports & Analytics
+# ---------------------------------------------------------------------------
+
+_CLOSED_STATUSES = ("closed", "cancelled")
+
+
+async def get_supplier_performance_scorecard(
+    db: AsyncSession,
+    supplier_id: UUID | None = None,
+) -> SupplierPerformanceScorecard:
+    """PO/receipt-based supplier performance metrics.
+
+    When ``supplier_id`` is None the figures span all suppliers (used for the
+    org-wide scorecard report and the supplier-analytics default view).
+    """
+    po_query = select(PurchaseOrder)
+    if supplier_id:
+        po_query = po_query.where(PurchaseOrder.supplier_id == supplier_id)
+    pos = list((await db.execute(po_query)).scalars().all())
+
+    total_pos = len(pos)
+    open_pos = sum(1 for po in pos if po.lifecycle_status not in _CLOSED_STATUSES)
+    po_value = sum((po.grand_total or po.total_amount or Decimal("0") for po in pos), Decimal("0"))
+
+    receipt_count = 0
+    exception_receipts = 0
+    total_received = Decimal("0")
+    rejected = Decimal("0")
+    if pos:
+        po_ids = [po.id for po in pos]
+        receipts = list(
+            (await db.execute(select(GoodsReceipt).where(GoodsReceipt.purchase_order_id.in_(po_ids)))).scalars().all()
+        )
+        receipt_count = len(receipts)
+        exception_receipts = sum(1 for gr in receipts if gr.has_exceptions)
+        total_received = sum((gr.received_quantity or Decimal("0") for gr in receipts), Decimal("0"))
+        if receipts:
+            gr_ids = [gr.id for gr in receipts]
+            rejected = sum(
+                (
+                    li.quantity_rejected or Decimal("0")
+                    for li in (await db.execute(select(GoodsReceiptLineItem).where(GoodsReceiptLineItem.goods_receipt_id.in_(gr_ids)))).scalars().all()
+                ),
+                Decimal("0"),
+            )
+
+    exception_rate = round(float(exception_receipts / receipt_count * 100), 2) if receipt_count else 0.0
+
+    risk_level: Optional[str] = None
+    lifecycle_status: Optional[str] = None
+    if supplier_id:
+        supplier = (await db.execute(select(Supplier).where(Supplier.id == supplier_id))).scalar_one_or_none()
+        if supplier is not None:
+            risk_level = supplier.current_risk_level
+            lifecycle_status = supplier.lifecycle_status
+
+    return SupplierPerformanceScorecard(
+        total_purchase_orders=total_pos,
+        open_purchase_orders=open_pos,
+        po_value=po_value,
+        receipt_count=receipt_count,
+        exception_receipt_count=exception_receipts,
+        exception_rate=exception_rate,
+        total_received_quantity=total_received,
+        rejected_quantity=rejected,
+        risk_level=risk_level,
+        lifecycle_status=lifecycle_status,
+    )
+
+
+async def get_supplier_scorecard_report(db: AsyncSession) -> SupplierScorecardResponse:
+    """Org-wide supplier performance scorecard — one row per supplier."""
+    suppliers = list((await db.execute(select(Supplier).where(Supplier.is_active.is_(True)).order_by(Supplier.name))).scalars().all())
+    items: list[SupplierScorecardEntry] = []
+    for supplier in suppliers:
+        scorecard = await get_supplier_performance_scorecard(db, supplier_id=supplier.id)
+        spend = await _supplier_invoice_total(db, supplier.id)
+        contract_count = len(
+            (await db.execute(select(Contract.id).where(Contract.supplier_id == supplier.id))).scalars().all()
+        )
+        items.append(
+            SupplierScorecardEntry(
+                supplier_id=supplier.id,
+                supplier_name=supplier.name,
+                total_spend=spend,
+                total_contracts=contract_count,
+                **scorecard.model_dump(),
+            )
+        )
+    return SupplierScorecardResponse(items=items, total=len(items))
+
+
+async def _supplier_invoice_total(db: AsyncSession, supplier_id: UUID) -> Decimal:
+    invoices = await _fetch_invoices(db, supplier_id=supplier_id)
+    return sum((inv.total_amount or inv.amount or Decimal("0") for inv in invoices), Decimal("0"))
+
+
+def _age_bucket(days: int) -> str:
+    if days <= 7:
+        return "0-7"
+    if days <= 14:
+        return "8-14"
+    if days <= 30:
+        return "15-30"
+    return "30+"
+
+
+async def get_po_aging(db: AsyncSession) -> PoAgingResponse:
+    """Open POs (not closed/cancelled) bucketed by age (now - created_at)."""
+    now = datetime.now(timezone.utc)
+    pos = list(
+        (
+            await db.execute(
+                select(PurchaseOrder).where(PurchaseOrder.lifecycle_status.notin_(_CLOSED_STATUSES))
+            )
+        ).scalars().all()
+    )
+
+    agg: dict[tuple[str, str], dict] = {}  # (bucket, lifecycle_status) -> {count, value}
+    by_status: dict[str, int] = defaultdict(int)
+    total_value = Decimal("0")
+    for po in pos:
+        created = po.created_at
+        if created is None:
+            days = 0
+        else:
+            created = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+            days = max(0, (now - created).days)
+        bucket = _age_bucket(days)
+        status = po.lifecycle_status or "unknown"
+        key = (bucket, status)
+        entry = agg.setdefault(key, {"count": 0, "value": Decimal("0")})
+        entry["count"] += 1
+        entry["value"] += po.grand_total or po.total_amount or Decimal("0")
+        by_status[status] += 1
+        total_value += po.grand_total or po.total_amount or Decimal("0")
+
+    buckets = [
+        PoAgingBucket(
+            bucket=b,
+            lifecycle_status=s,
+            count=entry["count"],
+            total_value=entry["value"],
+        )
+        for (b, s), entry in sorted(agg.items())
+    ]
+    return PoAgingResponse(
+        as_of=now.date(),
+        buckets=buckets,
+        by_lifecycle_status=dict(by_status),
+        total_count=len(pos),
+        total_value=total_value,
+    )
+
+
+async def get_approval_bottlenecks(db: AsyncSession) -> ApprovalBottleneckResponse:
+    """Where approvals are getting stuck: open-task pressure (pending/blocked/
+    overdue) plus the historical avg-time and SLA-breach data from
+    services/approval_audit.get_approval_analytics."""
+    from app.services.approval_audit import get_approval_analytics
+
+    now = datetime.now(timezone.utc)
+    tasks = list(
+        (
+            await db.execute(
+                select(WorkflowTask).where(WorkflowTask.status.in_(("pending", "blocked")))
+            )
+        ).scalars().all()
+    )
+    pending = [t for t in tasks if t.status == "pending"]
+    blocked = [t for t in tasks if t.status == "blocked"]
+    overdue = [t for t in pending if t.due_at is not None and (t.due_at if t.due_at.tzinfo else t.due_at.replace(tzinfo=timezone.utc)) < now]
+
+    # Resolve instance entity context for the oldest pending tasks.
+    instance_ids = {t.instance_id for t in tasks}
+    entity_by_instance: dict = {}
+    if instance_ids:
+        rows = (await db.execute(select(WorkflowInstance.id, WorkflowInstance.entity_type, WorkflowInstance.entity_id).where(WorkflowInstance.id.in_(instance_ids)))).all()
+        entity_by_instance = {str(iid): (etype, eid) for iid, etype, eid in rows}
+
+    def _age_days(t) -> float:
+        created = t.created_at
+        if created is None:
+            return 0.0
+        created = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+        return round((now - created).total_seconds() / 86400, 2)
+
+    pending_ages = [_age_days(t) for t in pending]
+    avg_pending_age = round(sum(pending_ages) / len(pending_ages), 2) if pending_ages else 0.0
+
+    oldest = sorted(pending, key=lambda t: t.created_at or now)[:10]
+    oldest_pending = [
+        ApprovalBottleneckTask(
+            task_id=t.id,
+            instance_id=t.instance_id,
+            step_name=t.step_name,
+            status=t.status,
+            assignee_id=t.assignee_id,
+            age_days=_age_days(t),
+            due_at=t.due_at,
+            entity_type=entity_by_instance.get(str(t.instance_id), (None, None))[0],
+            entity_id=entity_by_instance.get(str(t.instance_id), (None, None))[1],
+        )
+        for t in oldest
+    ]
+
+    analytics = await get_approval_analytics(db)
+    return ApprovalBottleneckResponse(
+        pending_tasks=len(pending),
+        blocked_tasks=len(blocked),
+        overdue_pending=len(overdue),
+        avg_pending_age_days=avg_pending_age,
+        oldest_pending=oldest_pending,
+        slowest_nodes=analytics.get("avg_approval_time_by_type", []),
+        breach_by_node=analytics.get("sla_breach_rate_by_node", []),
+        total_sla_metrics=analytics.get("total_sla_metrics", 0),
+        total_sla_breaches=analytics.get("total_sla_breaches", 0),
+    )
+
+
+async def get_exception_dashboard(db: AsyncSession) -> ExceptionDashboardResponse:
+    """Requisitions in ``lifecycle_status == "exception"`` with the blocker
+    reasons recorded by PO auto-creation's validation gate."""
+    requisitions = list(
+        (
+            await db.execute(
+                select(ProcurementRequisition).where(ProcurementRequisition.lifecycle_status == "exception").order_by(ProcurementRequisition.updated_at.desc())
+            )
+        ).scalars().all()
+    )
+
+    supplier_ids = {r.supplier_id for r in requisitions if r.supplier_id}
+    names: dict = {}
+    if supplier_ids:
+        rows = (await db.execute(select(Supplier.id, Supplier.name).where(Supplier.id.in_(supplier_ids)))).all()
+        names = {str(sid): sname for sid, sname in rows}
+
+    items: list[ExceptionRequisition] = []
+    for req in requisitions:
+        reasons: list[str] = []
+        last_blocked_at: datetime | None = None
+        for event in req.audit_events:
+            if event.action == "purchase_order:creation_blocked":
+                detail_reasons = (event.details or {}).get("reasons", []) if isinstance(event.details, dict) else []
+                if isinstance(detail_reasons, list):
+                    reasons = detail_reasons
+                last_blocked_at = event.created_at
+        items.append(
+            ExceptionRequisition(
+                requisition_id=req.id,
+                requisition_number=req.requisition_number,
+                title=req.title,
+                supplier_id=req.supplier_id,
+                supplier_name=names.get(str(req.supplier_id)) if req.supplier_id else None,
+                estimated_value=req.estimated_value,
+                currency=req.currency or "USD",
+                reasons=reasons,
+                last_blocked_at=last_blocked_at,
+                created_at=req.created_at,
+                updated_at=req.updated_at,
+            )
+        )
+    return ExceptionDashboardResponse(items=items, total=len(items))
+
+
+async def retry_exception_requisition(
+    db: AsyncSession, requisition_id: UUID, actor_id: UUID
+) -> ExceptionRetryResponse:
+    """Re-run PO auto-creation for an exception requisition once the
+    underlying blocker (e.g. missing supplier email) has been fixed."""
+    from app.services.procurement_workflow import auto_create_po_from_requisition
+
+    requisition = (
+        await db.execute(select(ProcurementRequisition).where(ProcurementRequisition.id == requisition_id))
+    ).scalar_one_or_none()
+    if requisition is None:
+        return ExceptionRetryResponse(
+            ok=False,
+            requisition_id=requisition_id,
+            lifecycle_status="not_found",
+            message="Requisition not found",
+        )
+
+    po = await auto_create_po_from_requisition(db, requisition_id, started_by=actor_id)
+    await db.refresh(requisition)
+    if po is not None:
+        return ExceptionRetryResponse(
+            ok=True,
+            requisition_id=requisition.id,
+            lifecycle_status=requisition.lifecycle_status,
+            purchase_order_id=po.id,
+            message=f"Purchase order {getattr(po, 'order_number', '')} created.",
+        )
+    # Still blocked — refresh reasons from the audit trail.
+    reasons: list[str] = []
+    for event in requisition.audit_events:
+        if event.action == "purchase_order:creation_blocked" and isinstance(event.details, dict):
+            detail_reasons = event.details.get("reasons", [])
+            if isinstance(detail_reasons, list):
+                reasons = detail_reasons
+    return ExceptionRetryResponse(
+        ok=False,
+        requisition_id=requisition.id,
+        lifecycle_status=requisition.lifecycle_status,
+        reasons=reasons,
+        message="PO creation still blocked" + (f": {'; '.join(reasons)}" if reasons else ""),
     )
 
 

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import cast, desc, func, select, Integer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.approval import ApprovalEvent, SlaDefinition, SlaMetric
@@ -225,7 +225,7 @@ async def get_approval_analytics(db: AsyncSession) -> dict[str, Any]:
         await db.execute(
             select(
                 SlaMetric.node_id,
-                func.sum(func.cast(SlaMetric.breach_flag, func.int_())).label("breaches"),
+                func.sum(cast(SlaMetric.breach_flag, Integer)).label("breaches"),
                 func.count(SlaMetric.id).label("total"),
             ).group_by(SlaMetric.node_id)
         )
@@ -236,7 +236,7 @@ async def get_approval_analytics(db: AsyncSession) -> dict[str, Any]:
     ]
 
     total = (
-        await db.execute(select(func.count(SlaMetric.id), func.sum(func.cast(SlaMetric.breach_flag, func.int_()))))
+        await db.execute(select(func.count(SlaMetric.id), func.sum(cast(SlaMetric.breach_flag, Integer))))
     ).one()
     return {
         "avg_approval_time_by_type": avg_by_type,

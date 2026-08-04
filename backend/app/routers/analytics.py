@@ -12,7 +12,17 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.crud.analytics import get_contract_analytics, get_dashboard_metrics, get_spend_analytics, get_supplier_analytics
+from app.crud.analytics import (
+    get_approval_bottlenecks,
+    get_contract_analytics,
+    get_dashboard_metrics,
+    get_exception_dashboard,
+    get_po_aging,
+    get_spend_analytics,
+    get_supplier_analytics,
+    get_supplier_scorecard_report,
+    retry_exception_requisition,
+)
 from app.crud.spend import (
     create_savings_record,
     get_savings_records,
@@ -24,10 +34,15 @@ from app.crud.spend import (
 from app.database.session import get_db
 from app.models.user import User
 from app.schemas.analytics import (
-    SpendAnalyticsResponse,
-    SupplierAnalyticsResponse,
+    ApprovalBottleneckResponse,
     ContractAnalyticsResponse,
     DashboardMetricsResponse,
+    ExceptionDashboardResponse,
+    ExceptionRetryResponse,
+    PoAgingResponse,
+    SpendAnalyticsResponse,
+    SupplierAnalyticsResponse,
+    SupplierScorecardResponse,
 )
 from app.schemas.spend import (
     SavingsListResponse,
@@ -221,3 +236,81 @@ async def create_savings_endpoint(
 ) -> SavingsRecordResponse:
     record = await create_savings_record(db, savings_data, recorded_by=current_user.id)
     return SavingsRecordResponse.model_validate(record)
+
+
+# ---------------------------------------------------------------------------
+# P2P UX backlog Section 4: Reports & Analytics
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/supplier-scorecard",
+    response_model=SupplierScorecardResponse,
+    summary="Supplier performance scorecard",
+    description="Per-supplier performance scorecard: POs, open POs, PO value, "
+    "receipts, exception/rejection rates, and risk/lifecycle status.",
+)
+async def get_supplier_scorecard_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SupplierScorecardResponse:
+    return await get_supplier_scorecard_report(db)
+
+
+@router.get(
+    "/po-aging",
+    response_model=PoAgingResponse,
+    summary="PO aging report",
+    description="Open purchase orders (not closed/cancelled) bucketed by age "
+    "(now - created_at: 0-7 / 8-14 / 15-30 / 30+ days) and grouped by current "
+    "lifecycle status.",
+)
+async def get_po_aging_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> PoAgingResponse:
+    return await get_po_aging(db)
+
+
+@router.get(
+    "/approval-bottlenecks",
+    response_model=ApprovalBottleneckResponse,
+    summary="Approval bottleneck report",
+    description="Where approvals are getting stuck: current pending/blocked/"
+    "overdue approval tasks plus historical avg approval time and SLA breach "
+    "rate by node.",
+)
+async def get_approval_bottlenecks_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> ApprovalBottleneckResponse:
+    return await get_approval_bottlenecks(db)
+
+
+@router.get(
+    "/exceptions",
+    response_model=ExceptionDashboardResponse,
+    summary="Exception dashboard",
+    description="Requisitions parked in exception status with the blocker "
+    "reasons recorded by PO auto-creation's validation gate.",
+)
+async def get_exception_dashboard_endpoint(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> ExceptionDashboardResponse:
+    return await get_exception_dashboard(db)
+
+
+@router.post(
+    "/exceptions/{requisition_id}/retry",
+    response_model=ExceptionRetryResponse,
+    summary="Retry PO auto-creation for an exception requisition",
+    description="Re-run auto_create_po_from_requisition once the underlying "
+    "blocker (e.g. missing supplier email) has been fixed.",
+)
+async def retry_exception_endpoint(
+    requisition_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> ExceptionRetryResponse:
+    return await retry_exception_requisition(db, requisition_id, actor_id=current_user.id)

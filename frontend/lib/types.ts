@@ -1306,3 +1306,98 @@ export interface CatalogItemListResponse {
   total: number;
 }
 
+// ---- Reports & Analytics (backlog Section 4) ----
+// Shapes match backend/app/schemas/analytics.py.
+
+export interface SupplierPerformanceScorecard {
+  total_purchase_orders: number;
+  open_purchase_orders: number;
+  po_value: string;
+  receipt_count: number;
+  exception_receipt_count: number;
+  exception_rate: number;
+  total_received_quantity: string;
+  rejected_quantity: string;
+  risk_level?: string | null;
+  lifecycle_status?: string | null;
+}
+
+export interface SupplierScorecardEntry extends SupplierPerformanceScorecard {
+  supplier_id: string;
+  supplier_name: string;
+  total_spend: string;
+  total_contracts: number;
+}
+
+export interface SupplierScorecardResponse {
+  items: SupplierScorecardEntry[];
+  total: number;
+}
+
+export interface PoAgingBucket {
+  bucket: string;
+  lifecycle_status: string;
+  count: number;
+  total_value: string;
+}
+
+export interface PoAgingResponse {
+  as_of: string;
+  buckets: PoAgingBucket[];
+  by_lifecycle_status: Record<string, number>;
+  total_count: number;
+  total_value: string;
+}
+
+export interface ApprovalBottleneckTask {
+  task_id: string;
+  instance_id: string;
+  step_name: string;
+  status: string;
+  assignee_id?: string | null;
+  age_days: number;
+  due_at?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
+}
+
+export interface ApprovalBottleneckResponse {
+  pending_tasks: number;
+  blocked_tasks: number;
+  overdue_pending: number;
+  avg_pending_age_days: number;
+  oldest_pending: ApprovalBottleneckTask[];
+  slowest_nodes: Array<{ node: string; avg_approval_hours: number; count: number }>;
+  breach_by_node: Array<{ node: string; breach_rate: number; total: number }>;
+  total_sla_metrics: number;
+  total_sla_breaches: number;
+}
+
+export interface ExceptionRequisition {
+  requisition_id: string;
+  requisition_number?: string | null;
+  title: string;
+  supplier_id?: string | null;
+  supplier_name?: string | null;
+  estimated_value?: string | null;
+  currency: string;
+  reasons: string[];
+  last_blocked_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ExceptionDashboardResponse {
+  items: ExceptionRequisition[];
+  total: number;
+}
+
+export interface ExceptionRetryResponse {
+  ok: boolean;
+  requisition_id: string;
+  lifecycle_status: string;
+  purchase_order_id?: string | null;
+  reasons: string[];
+  message: string;
+}
+

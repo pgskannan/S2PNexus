@@ -1432,6 +1432,49 @@ export async function listCatalogItems(params?: {
   return data;
 }
 
+// ---- Reports & Analytics (backlog Section 4) ----
+
+export async function getSupplierScorecard(): Promise<
+  import("@/lib/types").SupplierScorecardResponse
+> {
+  const { data } = await api.get<import("@/lib/types").SupplierScorecardResponse>(
+    "/analytics/supplier-scorecard"
+  );
+  return data;
+}
+
+export async function getPoAging(): Promise<import("@/lib/types").PoAgingResponse> {
+  const { data } = await api.get<import("@/lib/types").PoAgingResponse>("/analytics/po-aging");
+  return data;
+}
+
+export async function getApprovalBottlenecks(): Promise<
+  import("@/lib/types").ApprovalBottleneckResponse
+> {
+  const { data } = await api.get<import("@/lib/types").ApprovalBottleneckResponse>(
+    "/analytics/approval-bottlenecks"
+  );
+  return data;
+}
+
+export async function getExceptionDashboard(): Promise<
+  import("@/lib/types").ExceptionDashboardResponse
+> {
+  const { data } = await api.get<import("@/lib/types").ExceptionDashboardResponse>(
+    "/analytics/exceptions"
+  );
+  return data;
+}
+
+export async function retryExceptionRequisition(
+  requisitionId: string
+): Promise<import("@/lib/types").ExceptionRetryResponse> {
+  const { data } = await api.post<import("@/lib/types").ExceptionRetryResponse>(
+    `/analytics/exceptions/${requisitionId}/retry`
+  );
+  return data;
+}
+
 // ---- Supplier Requests ----
 
 export async function listSupplierRequests(params?: {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { getSpendAnalytics, getSavingsSummary, extractErrorMessage } from "@/lib/api";
 import type { SavingsSummaryResponse, SpendAnalyticsResponse } from "@/lib/types";
 
@@ -40,6 +41,12 @@ export default function SpendPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Spend & Savings</h1>
+        <Link
+          href="/dashboard/spend/reports"
+          className="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+        >
+          Reports & Analytics
+        </Link>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
