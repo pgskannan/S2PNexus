@@ -797,6 +797,10 @@ export default function NewRequisitionPage() {
                   <SummaryRow label="Delay until" value={form.delay_until || "—"} />
                   <SummaryRow label="Header tax" value={form.header_tax || "0.00"} />
                   <SummaryRow label="Shipping cost" value={form.shipping_cost || "0.00"} />
+                  <SummaryRow
+                    label="Ship to"
+                    value={[form.ship_to_name, form.ship_to_address_line1, form.ship_to_city].filter(Boolean).join(", ") || "—"}
+                  />
                 </dl>
                 {form.description && (
                   <div>
