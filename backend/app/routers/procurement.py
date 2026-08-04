@@ -55,7 +55,7 @@ from app.crud.procurement import (
 )
 from app.crud.accounting_split import get_line_item_splits, set_line_item_splits
 from app.database.session import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.workflow import WorkflowInstance, WorkflowTask
 from app.schemas.procurement import (
     GoodsReceiptCreate,
@@ -190,6 +190,20 @@ async def create_requisition_endpoint(
     current_user: Annotated[User, Depends(get_current_active_user)],
     db: AsyncSession = Depends(get_db),
 ) -> ProcurementRequisitionResponse:
+    # Create-on-behalf (backlog Section 5): requesting for someone other than
+    # yourself is reserved for admins / procurement agents (buyers + managers).
+    # The column already accepts any user id; this gate just stops a regular
+    # requester from impersonating another employee.
+    if requisition_data.requested_by != current_user.id:
+        allowed = (
+            current_user.is_superuser
+            or current_user.role in (UserRole.ADMINISTRATOR, UserRole.PROCUREMENT_MANAGER, UserRole.BUYER)
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only administrators and procurement agents can create requisitions on behalf of someone else",
+            )
     handler = CreateRequisitionCommandHandler(create_requisition_service=create_requisition)
     command = CreateRequisitionCommand(requisition_data=requisition_data.model_dump(), tenant_id=current_user.tenant_id)
     requisition = await handler.handle(command, db=db)

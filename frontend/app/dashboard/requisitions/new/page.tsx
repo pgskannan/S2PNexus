@@ -8,6 +8,7 @@ import {
   extractErrorMessage,
   getRequisition,
   listSuppliers,
+  listUserDirectory,
 } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth-store";
 import CommodityCodeInput from "@/components/CommodityCodeInput";
@@ -77,12 +78,29 @@ export default function NewRequisitionPage() {
   // PR copy (backlog Section 5): when arriving via ?copy=<requisition_id>,
   // pre-fill the whole wizard from the source requisition.
   const [copyBanner, setCopyBanner] = useState<string | null>(null);
+  // Create-on-behalf (backlog Section 5): admins / procurement agents can set
+  // a different requested_by than themselves.
+  const canCreateOnBehalf =
+    user?.role === "administrator" ||
+    user?.role === "procurement_manager" ||
+    user?.role === "buyer" ||
+    user?.is_superuser === true;
+  const [requestedBy, setRequestedBy] = useState<string>(user?.id ?? "");
+  const [directory, setDirectory] = useState<import("@/lib/api").UserDirectoryEntry[]>([]);
 
   useEffect(() => {
     listSuppliers()
       .then((res) => setSuppliers(res.items))
       .catch(() => setSuppliers([]));
   }, []);
+
+  useEffect(() => {
+    if (canCreateOnBehalf) {
+      listUserDirectory({ limit: 1000 })
+        .then((res) => setDirectory(res.items))
+        .catch(() => setDirectory([]));
+    }
+  }, [canCreateOnBehalf]);
 
   // PR copy: pre-fill from a source requisition passed in the query string.
   useEffect(() => {
@@ -239,7 +257,7 @@ export default function NewRequisitionPage() {
         header_tax: form.header_tax || undefined,
         shipping_cost: form.shipping_cost || undefined,
         notes: form.notes || undefined,
-        requested_by: user.id,
+        requested_by: requestedBy || user.id,
       });
 
       // Line items are added one at a time against the already-created
@@ -348,6 +366,33 @@ export default function NewRequisitionPage() {
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
                 />
               </div>
+              {canCreateOnBehalf && (
+                <div>
+                  <label className="label" htmlFor="requested_by">
+                    Requesting for
+                  </label>
+                  <select
+                    id="requested_by"
+                    className="input-field"
+                    value={requestedBy}
+                    onChange={(e) => setRequestedBy(e.target.value)}
+                  >
+                    <option value={user?.id ?? ""}>
+                      Myself{user?.full_name ? ` (${user.full_name})` : ""}
+                    </option>
+                    {directory
+                      .filter((entry) => entry.id !== user?.id)
+                      .map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.full_name} — {entry.email}
+                        </option>
+                      ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Create this requisition on behalf of another employee (admins and procurement agents only).
+                  </p>
+                </div>
+              )}
               <div>
                 <label className="label" htmlFor="description">
                   Business Purpose / Justification
