@@ -630,8 +630,28 @@ async def _run_from_step(db: AsyncSession, instance: WorkflowInstance, steps: li
                     # -- auto-escalate to the next tier instead of handing
                     # them a task they can never complete, same as an org
                     # chart routing self-approval up to your manager.
-                    step_index = _continue_after_step(steps, step_index)
-                    continue
+                    next_index = _continue_after_step(steps, step_index)
+                    if next_index < len(steps):
+                        step_index = next_index
+                        continue
+                    # There's no next tier to escalate to (this was the last
+                    # step, e.g. the single-step default definition
+                    # main.py seeds with only the first admin as approver) --
+                    # completing here means the instance finishes with
+                    # literally zero human sign-off whenever the requester
+                    # happens to be that same admin, which is exactly the
+                    # "no approval flow was ever generated" failure mode
+                    # (confirmed 2026-08-04: PR submitted by the sole admin
+                    # showed "0 of 0 approvals complete" / "No approval
+                    # steps" and went straight to a PO). Block for admin
+                    # intervention instead, same as the no-approvers-at-all
+                    # case below -- an admin can add a second approver via
+                    # the designer and retry via
+                    # POST /workflow/instances/{id}/retry.
+                    instance.status = "blocked"
+                    instance.current_step_index = step_index
+                    await db.flush()
+                    return
                 # No approvers resolvable at all. Never silently skip this
                 # node -- skipping would let the instance "complete" with no
                 # human sign-off and e.g. auto-create a PO. Block the

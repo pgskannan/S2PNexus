@@ -106,11 +106,26 @@ async def test_self_approval_escalates_to_next_tier(db_session, self_approval_se
 
 
 @pytest.mark.asyncio
-async def test_self_approval_at_final_tier_completes_instance(db_session, self_approval_seeds):
-    """If the requester is also the ONLY approver at every remaining tier,
-    the instance completes with zero human sign-off rather than deadlocking
-    -- same "skip, don't hang" contract as a genuinely-empty approver list,
-    just reached via self-filtering instead."""
+async def test_self_approval_at_final_tier_blocks_instead_of_auto_completing(db_session, self_approval_seeds):
+    """Superseded 2026-08-04: this used to assert the instance silently
+    *completed* with zero human sign-off when the requester was also the
+    only approver at the final tier -- reasoned as "skip, don't hang", same
+    contract as a genuinely-empty approver list. In practice that meant any
+    solo-admin/single-approver setup (the seeded main.py fallback
+    requisition workflow is exactly this shape) auto-approved every PR its
+    one admin submitted, with nothing to show for it -- confirmed live via a
+    user report: "0 of 0 approvals complete" / "No approval steps", PR went
+    straight through to a PO with no approval flow ever visible.
+
+    "Blocked" was already the established, non-deadlocking way this same
+    function handles "zero approvers resolvable at all" a few lines below --
+    self-approval-with-nothing-left-to-escalate-to is the same risk (an
+    instance finishing with no human sign-off) and now gets the same
+    treatment instead of silently completing. Blocked instances are still
+    fully recoverable: an admin adds a second approver and hits
+    POST /workflow/instances/{id}/retry (or the requisition detail page's
+    "Resume workflow" button), same as the no-approvers-at-all case.
+    """
     definition = await create_workflow_definition(
         db_session,
         WorkflowDefinitionCreate(
@@ -130,7 +145,7 @@ async def test_self_approval_at_final_tier_completes_instance(db_session, self_a
         ),
         started_by=REQUESTER_USER_ID,
     )
-    assert instance.status == "completed"
+    assert instance.status == "blocked"
     assert instance.tasks == []
 
 
