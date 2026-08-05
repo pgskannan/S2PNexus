@@ -127,6 +127,18 @@ class Settings(BaseSettings):
 
     # File Storage
     UPLOAD_DIR: str = Field(default="./data/uploads")
+    GCS_BUCKET_NAME: Optional[str] = Field(
+        default=None,
+        description=(
+            "GCS bucket for artifacts that must survive across Cloud Run instances/restarts "
+            "(e.g. supplier registration workbooks, see app/services/file_storage.py). Local "
+            "UPLOAD_DIR is per-instance ephemeral disk -- fine for local dev/tests, but a file "
+            "saved on one Cloud Run instance is invisible to a request served by another, so "
+            "this must be set in any real deployment. Uses Application Default Credentials "
+            "(the Cloud Run service account) -- no separate key needed when GOOGLE_CLOUD_PROJECT "
+            "is already configured."
+        ),
+    )
     MAX_FILE_SIZE: int = Field(default=52428800, ge=1048576, le=524288000)  # 50MB default, max 500MB
     ALLOWED_EXTENSIONS: List[str] = Field(
         default_factory=lambda: [".pdf", ".docx", ".doc", ".txt", ".md", ".markdown", ".csv", ".xlsx", ".xls", ".png", ".jpg", ".jpeg"]
