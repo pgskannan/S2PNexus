@@ -1620,6 +1620,18 @@ async def create_invoice(
     await db.commit()
     await db.refresh(invoice)
 
+    # No-touch matching: a PO-linked invoice runs the 3-way match engine
+    # immediately on creation instead of waiting for someone to click a
+    # "Match" action. A clean invoice (zero variance, receipt already
+    # accepted) clears itself with no human involvement; only invoices with
+    # real exceptions ever surface on the AP worklist. Non-PO (memo)
+    # invoices have no PO/receipt to match against, so this is skipped for
+    # them -- they instead go through invoice_approval workflow below.
+    if invoice.purchase_order_id is not None:
+        matched_invoice = await match_invoice(db, invoice.id, tenant_id=tenant_id)
+        if matched_invoice is not None:
+            invoice = matched_invoice
+
     # Invoice approval workflow (bundle spec sec 5): a non-PO invoice is blocked
     # for approval, so spin up an approval instance (if an active
     # invoice_approval WorkflowDefinition is configured).

@@ -404,12 +404,19 @@ def test_committed_drops_and_actual_rises_over_po_lifecycle():
             tenant_id=tenant_id,
         )
 
-        # Invoiced but not yet matched: still committed, not yet actual.
-        committed_pre_match = await compute_committed(db, tenant_id, "gl_account", "6000", now.year, None)
-        actual_pre_match = await compute_actual(db, tenant_id, "gl_account", "6000", now.year, None)
-        assert committed_pre_match == Decimal("100.00")
-        assert actual_pre_match == Decimal("0.00")
+        # No-touch matching (see create_invoice): a PO-linked invoice with a
+        # clean quantity/price match against the PO auto-matches synchronously
+        # during creation -- there is no separate "invoiced but not yet
+        # matched" state to observe for the zero-variance happy path.
+        assert invoice.match_status == "matched"
 
+        committed_after_invoice = await compute_committed(db, tenant_id, "gl_account", "6000", now.year, None)
+        actual_after_invoice = await compute_actual(db, tenant_id, "gl_account", "6000", now.year, None)
+        assert committed_after_invoice == Decimal("0.00")
+        assert actual_after_invoice == Decimal("100.00")
+
+        # Re-running match explicitly (e.g. after a manual re-match) stays
+        # idempotent and doesn't double-count committed/actual.
         matched = await match_invoice(
             db, invoice.id, matching_tolerance_amount=Decimal("0.00"), matching_tolerance_percent=Decimal("0.00"), tenant_id=tenant_id
         )
