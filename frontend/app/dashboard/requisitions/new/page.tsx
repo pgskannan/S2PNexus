@@ -14,6 +14,7 @@ import {
 import { useAuthStore } from "@/lib/auth-store";
 import CommodityCodeInput from "@/components/CommodityCodeInput";
 import CategoryInput from "@/components/CategoryInput";
+import AccountCodeInput from "@/components/AccountCodeInput";
 import CatalogQuickAdd from "@/components/CatalogQuickAdd";
 import { ApprovalFlowDiagram } from "@/components/ApprovalFlowDiagram";
 import { buildPreviewApprovalSteps } from "@/lib/approvalFlow";
@@ -242,6 +243,21 @@ export default function NewRequisitionPage() {
 
   const titleValid = form.title.trim().length > 0;
   const estimatedValueValid = Boolean(form.estimated_value) && Number(form.estimated_value) > 0;
+  const supplierValid = Boolean(form.supplier_id);
+  // Mirrors the two supplier-side reasons _po_creation_blockers rejects a PO
+  // for (inactive / no contact email) so the requester finds out before
+  // submitting instead of after approval. `selectedSupplier === null` covers
+  // both "not chosen yet" and "supplier list hasn't loaded" -- don't block
+  // on a false negative in either case, the required-supplier check above
+  // already covers the former.
+  const selectedSupplier = suppliers.find((s) => s.id === form.supplier_id) || null;
+  const supplierIssue = !selectedSupplier
+    ? null
+    : !selectedSupplier.is_active
+    ? "This supplier is inactive — PO auto-creation will be blocked after approval. Choose an active supplier."
+    : !selectedSupplier.contact_email
+    ? "This supplier has no contact email on file — PO auto-creation will be blocked after approval. Ask an admin to add one, or choose a different supplier."
+    : null;
   const rowsToSubmit = lineItems.filter((li) => li.description.trim());
   const linesSubtotal = rowsToSubmit.reduce((sum, li) => sum + lineTotal(li), 0);
   const headerTax = Number(form.header_tax) || 0;
@@ -256,7 +272,7 @@ export default function NewRequisitionPage() {
       li.account_code.trim() ||
       li.quantity !== "1";
 
-    const errors: { description?: string; unit_price?: string; category?: string } = {};
+    const errors: { description?: string; unit_price?: string; category?: string; account_code?: string } = {};
     if (hasContent) {
       if (!li.description.trim()) {
         errors.description = "Description is required.";
@@ -266,6 +282,14 @@ export default function NewRequisitionPage() {
       }
       if (!li.unit_price || Number(li.unit_price) <= 0) {
         errors.unit_price = "Unit price must be greater than zero.";
+      }
+      // Mandatory (2026-08-05): the PO auto-creation gate blocks on a
+      // missing GL/account code, but until now there was no field here to
+      // fill it in -- approved PRs landed in an unrecoverable "Exception"
+      // status. Required on every real row so that gate can never trigger
+      // from this wizard again.
+      if (!li.account_code.trim()) {
+        errors.account_code = "Account code is required.";
       }
     }
     return errors;
@@ -337,6 +361,16 @@ export default function NewRequisitionPage() {
       setStep(1);
       return;
     }
+    if (target > 1 && !supplierValid) {
+      setError("Supplier is required before continuing -- without one, an approved PR can't auto-create its PO.");
+      setStep(1);
+      return;
+    }
+    if (target > 1 && supplierIssue) {
+      setError(supplierIssue);
+      setStep(1);
+      return;
+    }
     if (target === 3 && hasLineItemValidationErrors) {
       setError("Please complete the highlighted line-item fields before continuing.");
       setStep(2);
@@ -356,6 +390,21 @@ export default function NewRequisitionPage() {
     if (!form.estimated_value || Number(form.estimated_value) <= 0) {
       setError("Estimated value is required — the approval flow routes on it (estimated cost, not line-item totals).");
       setStep(1);
+      return;
+    }
+    if (!supplierValid) {
+      setError("Supplier is required -- without one, an approved PR can't auto-create its PO.");
+      setStep(1);
+      return;
+    }
+    if (supplierIssue) {
+      setError(supplierIssue);
+      setStep(1);
+      return;
+    }
+    if (hasLineItemValidationErrors) {
+      setError("Please complete the highlighted line-item fields (description, category, unit price, account code) before submitting.");
+      setStep(2);
       return;
     }
     setError(null);
@@ -532,22 +581,28 @@ export default function NewRequisitionPage() {
                 />
               </div>
               <div>
-                <label className="label" htmlFor="supplier_id" title="Who this requisition will be ordered from — required before it can convert to a PO">
-                  Supplier
+                <label className="label" htmlFor="supplier_id" title="Who this requisition will be ordered from — required for the PO to auto-create after approval">
+                  Supplier <span className="text-red-500">*</span>
                 </label>
                 <select
                   id="supplier_id"
+                  required
                   className="input-field"
                   value={form.supplier_id}
                   onChange={(e) => setForm({ ...form, supplier_id: e.target.value })}
                 >
-                  <option value="">Select a supplier (optional at this stage)...</option>
+                  <option value="">Select a supplier...</option>
                   {suppliers.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                     </option>
                   ))}
                 </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  Required — an approved PR with no supplier, or a supplier missing a contact email, can&apos;t
+                  auto-create its PO and will get parked in &quot;Exception&quot; status instead.
+                </p>
+                {supplierIssue && <p className="mt-1 text-xs text-red-600">{supplierIssue}</p>}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -772,7 +827,7 @@ export default function NewRequisitionPage() {
                   type="button"
                   className="btn-primary"
                   onClick={() => goToStep(2)}
-                  disabled={!titleValid || !estimatedValueValid}
+                  disabled={!titleValid || !estimatedValueValid || !supplierValid || Boolean(supplierIssue)}
                 >
                   Next: Line items
                 </button>
@@ -788,7 +843,10 @@ export default function NewRequisitionPage() {
                   + Add line
                 </button>
               </div>
-              <p className="text-sm text-slate-500">Optional. Leave a row&apos;s description blank to skip it.</p>
+              <p className="text-sm text-slate-500">
+                Optional — leave a row&apos;s description blank to skip it. Once a row has any content, description,
+                category, unit price and account code are all required.
+              </p>
 
               {/* Catalog quick-add (backlog Section 3) — alternative to the
                   manual form below. */}
@@ -802,7 +860,7 @@ export default function NewRequisitionPage() {
               <div className="space-y-4">
                 {lineItems.map((li, index) => (
                   <div key={index} className="grid grid-cols-12 gap-3 border-b border-slate-100 pb-4 last:border-0 last:pb-0">
-                    <div className="col-span-12 sm:col-span-4">
+                    <div className="col-span-12 sm:col-span-3">
                       <label className="label">Description</label>
                       <input
                         className={`input-field ${lineItemValidation[index]?.description ? "border-red-300" : ""}`}
@@ -834,7 +892,7 @@ export default function NewRequisitionPage() {
                       />
                       {lineItemValidation[index]?.unit_price && <p className="mt-1 text-xs text-red-600">{lineItemValidation[index].unit_price}</p>}
                     </div>
-                    <div className="col-span-12 sm:col-span-3">
+                    <div className="col-span-12 sm:col-span-2">
                       <label className="label">Commodity code</label>
                       <CommodityCodeInput value={li.commodity} onChange={(value) => updateLineItem(index, { commodity: value })} />
                     </div>
@@ -847,6 +905,17 @@ export default function NewRequisitionPage() {
                         onChange={(value) => updateLineItem(index, { category: value })}
                       />
                       {lineItemValidation[index]?.category && <p className="mt-1 text-xs text-red-600">{lineItemValidation[index].category}</p>}
+                    </div>
+                    <div className="col-span-12 sm:col-span-2">
+                      <label className="label" title="Required — the PO auto-creation gate blocks approved PRs with no account code">
+                        Account code <span className="text-red-500">*</span>
+                      </label>
+                      <AccountCodeInput
+                        id={`line-account-code-${index}`}
+                        value={li.account_code}
+                        onChange={(value) => updateLineItem(index, { account_code: value })}
+                      />
+                      {lineItemValidation[index]?.account_code && <p className="mt-1 text-xs text-red-600">{lineItemValidation[index].account_code}</p>}
                     </div>
                     <div className="col-span-4 flex items-end sm:col-span-12 sm:justify-end">
                       <button
@@ -920,6 +989,7 @@ export default function NewRequisitionPage() {
                         <th className="py-1 pr-2">Qty</th>
                         <th className="py-1 pr-2">Unit price</th>
                         <th className="py-1 pr-2">Commodity</th>
+                        <th className="py-1 pr-2">Account code</th>
                         <th className="py-1 text-right">Line total</th>
                       </tr>
                     </thead>
@@ -930,6 +1000,7 @@ export default function NewRequisitionPage() {
                           <td className="py-1 pr-2">{li.quantity}</td>
                           <td className="py-1 pr-2">{li.unit_price || "—"}</td>
                           <td className="py-1 pr-2">{li.commodity || "—"}</td>
+                          <td className="py-1 pr-2 font-mono text-xs">{li.account_code || "—"}</td>
                           <td className="py-1 text-right">{lineTotal(li).toFixed(2)}</td>
                         </tr>
                       ))}

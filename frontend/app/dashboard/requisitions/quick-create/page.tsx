@@ -57,6 +57,29 @@ export default function QuickCreateRequisitionPage() {
       setStep(2);
       return;
     }
+    const supplier = selectedSupplier();
+    if (supplier && (!supplier.is_active || !supplier.contact_email)) {
+      setError(
+        !supplier.is_active
+          ? "This supplier is inactive — PO auto-creation will be blocked after approval. Choose an active supplier."
+          : "This supplier has no contact email on file — PO auto-creation will be blocked after approval. Ask an admin to add one, or choose a different supplier."
+      );
+      setStep(2);
+      return;
+    }
+    // 2026-08-05: quick-create has no field to type a GL/account code in --
+    // it only ever comes from the catalog item. If that item has none on
+    // file, the PR would submit fine but silently land in an unrecoverable
+    // "Exception" status once approved (PO auto-creation gate blocks on a
+    // missing account code). Better to block it here with a clear reason
+    // than let the requester discover it days later.
+    if (!selected.account_code) {
+      setError(
+        `"${selected.name}" has no GL/account code on file, so its PO can't be created automatically after approval. Use the full wizard to add one, or ask an admin to set it on this catalog item.`
+      );
+      setStep(3);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -254,11 +277,22 @@ export default function QuickCreateRequisitionPage() {
               <dd className="font-mono">{selected.account_code ?? "—"}</dd>
             </div>
           </dl>
+          {!selected.account_code && (
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              This item has no GL/account code on file. Submitting is blocked -- use the full wizard instead, or ask
+              an admin to set one on this catalog item.
+            </p>
+          )}
           <div className="flex justify-between">
             <button type="button" className="btn-secondary" onClick={() => setStep(2)}>
               Back
             </button>
-            <button type="button" className="btn-primary" disabled={busy} onClick={handleSubmit}>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={busy || !selected.account_code}
+              onClick={handleSubmit}
+            >
               {busy ? "Creating…" : "Submit PR"}
             </button>
           </div>

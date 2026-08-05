@@ -1235,6 +1235,21 @@ export async function deleteAllCommodityCodes(): Promise<{ deleted: number }> {
   return data;
 }
 
+export interface GlAccount {
+  code: string;
+  description?: string | null;
+  account_type?: string | null;
+  is_active: boolean;
+}
+
+// Full chart of accounts is small master data (admin-uploaded CSV) -- no
+// server-side search param exists, so callers fetch once and filter
+// client-side (see AccountCodeInput).
+export async function listGlAccounts(): Promise<GlAccount[]> {
+  const { data } = await api.get<GlAccount[]>("/gl-accounts");
+  return data;
+}
+
 export async function getGlAccountCount(): Promise<{ count: number }> {
   const { data } = await api.get<{ count: number }>("/gl-accounts/count");
   return data;
