@@ -223,6 +223,12 @@ export async function previewRequisitionApproval(payload: {
   supplier_id?: string | null;
   currency?: string | null;
   is_emergency?: boolean;
+  // Real line-item total drives auto-approve/threshold conditions -- send
+  // these so the preview reflects the actual computed cost, not just the
+  // free-typed estimated_value field (see compute_line_items_total_cost).
+  line_items?: { quantity: string; unit_price?: string | null }[];
+  header_tax?: string | null;
+  shipping_cost?: string | null;
 }): Promise<import("@/lib/types").RequisitionApprovalPreview> {
   const { data } = await api.post<import("@/lib/types").RequisitionApprovalPreview>(
     `/procurement/requisitions/approval-preview`,

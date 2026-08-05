@@ -49,11 +49,21 @@ type Props = {
 function norm(status: ApprovalStepStatus): string {
   const s = String(status || "").toUpperCase();
   if (s === "APPROVED") return "APPROVED";
+  if (s === "AUTO_APPROVED") return "AUTO_APPROVED";
   if (s === "REJECTED") return "REJECTED";
   if (s === "WAITING") return "WAITING";
   if (s === "BLOCKED") return "BLOCKED";
   if (s === "NOT_IN_PATH") return "NOT_IN_PATH";
   return "PENDING";
+}
+
+// Auto-approved nodes (e.g. a low-value PR that skipped human approval by
+// rule) count as "done" for progress purposes the same way a real approval
+// does, but are visually distinguished (cyan, not teal) so it's obvious at a
+// glance that no human actually signed off.
+function isDoneStatus(status: ApprovalStepStatus): boolean {
+  const s = norm(status);
+  return s === "APPROVED" || s === "AUTO_APPROVED";
 }
 
 function initials(name?: string) {
@@ -104,6 +114,7 @@ function StatusPill({ status }: { status: ApprovalStepStatus }) {
   const s = norm(status);
   const cfg: Record<string, { dot: string; label: string; cls: string }> = {
     APPROVED: { dot: "bg-teal-500", label: "Approved", cls: "text-teal-700" },
+    AUTO_APPROVED: { dot: "bg-cyan-500", label: "Auto-approved", cls: "text-cyan-700" },
     PENDING: { dot: "bg-amber-500", label: "Active", cls: "text-amber-700" },
     WAITING: { dot: "bg-slate-300", label: "Waiting", cls: "text-slate-500" },
     REJECTED: { dot: "bg-red-500", label: "Rejected", cls: "text-red-700" },
@@ -122,7 +133,7 @@ function StatusPill({ status }: { status: ApprovalStepStatus }) {
 // ─── Connector arrow between nodes ────────────────────────────────────────────
 function Connector({ status }: { status: ApprovalStepStatus }) {
   const s = norm(status);
-  const color = s === "APPROVED" ? "#0d9488" : s === "PENDING" ? "#d97706" : "#cbd5e1";
+  const color = s === "APPROVED" ? "#0d9488" : s === "AUTO_APPROVED" ? "#06b6d4" : s === "PENDING" ? "#d97706" : "#cbd5e1";
   const dash = s === "PENDING" ? "5,3" : undefined;
 
   return (
@@ -150,6 +161,8 @@ function StepCard({
   const stripeColor =
     s === "APPROVED"
       ? "bg-teal-500"
+      : s === "AUTO_APPROVED"
+      ? "bg-cyan-500"
       : s === "PENDING"
       ? "bg-amber-400"
       : s === "REJECTED"
@@ -163,6 +176,8 @@ function StepCard({
   const borderColor =
     s === "APPROVED"
       ? "border-teal-200"
+      : s === "AUTO_APPROVED"
+      ? "border-cyan-200"
       : s === "PENDING"
       ? "border-amber-200"
       : s === "REJECTED"
@@ -176,6 +191,8 @@ function StepCard({
   const avatarCls =
     s === "APPROVED"
       ? "bg-teal-100 text-teal-800"
+      : s === "AUTO_APPROVED"
+      ? "bg-cyan-100 text-cyan-800"
       : s === "PENDING"
       ? "bg-amber-100 text-amber-800"
       : s === "BLOCKED"
@@ -281,7 +298,7 @@ function DetailsPanel({
 
 // ─── Progress bar ─────────────────────────────────────────────────────────────
 function ProgressBar({ steps }: { steps: ApprovalStep[] }) {
-  const done = steps.filter((s) => norm(s.status) === "APPROVED").length;
+  const done = steps.filter((s) => isDoneStatus(s.status)).length;
   const total = steps.length || 1;
   const pct = Math.round((done / total) * 100);
   return (
@@ -300,6 +317,7 @@ function Legend() {
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 border-b border-slate-100 text-[10px] text-slate-500">
       {[
         { color: "bg-teal-500", label: "Approved" },
+        { color: "bg-cyan-500", label: "Auto-approved" },
         { color: "bg-amber-500", label: "Active" },
         { color: "bg-slate-300", label: "Waiting" },
       ].map((l) => (
@@ -323,7 +341,7 @@ export function ApprovalFlowDiagram({ docNumber, title, steps, onAdminRemove }: 
   const [selectedStep, setSelectedStep] = useState<ApprovalStep | null>(null);
 
   const ordered = [...(steps || [])].sort((a, b) => (a.step_order ?? 0) - (b.step_order ?? 0));
-  const approvedCount = ordered.filter((s) => norm(s.status) === "APPROVED").length;
+  const approvedCount = ordered.filter((s) => isDoneStatus(s.status)).length;
 
   return (
     <div className="w-full rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">

@@ -72,7 +72,23 @@ DEMO_PASSWORD = "Demo!Approve2026"  # for local testing only -- rotate/discard b
 # (role_code, display name, login role, approval ceiling, currency)
 # Ceilings are placeholders -- tune per tenant once real thresholds are known.
 ROLE_LADDER = [
-    ("MANAGER", "Demo Manager", UserRole.PROCUREMENT_MANAGER, Decimal("5000.00"), "USD"),
+    # Raised 2026-08-05 from $5,000: MANAGER is used as the mandatory
+    # first-tier approver across multiple entity types with a wider actual
+    # range than its old ceiling covered -- PO's MANAGER tier runs up to
+    # $50,000 before PROC_HEAD takes over, and requisition requires MANAGER
+    # unconditionally for every PR regardless of size. Below the old $5,000
+    # ceiling, any amount above it made `seed_covers_context` exclude MANAGER
+    # entirely, so `_create_approval_tasks` resolved zero approvers and the
+    # whole instance blocked (found via a requisition/PO test at $12,000-
+    # $15,000, but pre-existing for any real document in that range).
+    # $50,000 matches DEPT_HEAD/PO's own top-of-band so MANAGER now actually
+    # covers the range it's assigned across every entity type; still a
+    # placeholder to tune per tenant, and requisitions/POs above $50,000
+    # still need a real escalation tier of their own above this (already
+    # exists for PO -> PROC_HEAD; requisition's definition tops out at
+    # DEPT_HEAD with no higher tier yet, a separate follow-up if amounts that
+    # large are expected).
+    ("MANAGER", "Demo Manager", UserRole.PROCUREMENT_MANAGER, Decimal("50000.00"), "USD"),
     ("MANAGER_MANAGER", "Demo Manager's Manager", UserRole.PROCUREMENT_MANAGER, Decimal("15000.00"), "USD"),
     ("DEPT_HEAD", "Demo Department Head", UserRole.CATEGORY_MANAGER, Decimal("50000.00"), "USD"),
     ("PROC_HEAD", "Demo Procurement Head", UserRole.PROCUREMENT_MANAGER, Decimal("100000.00"), "USD"),
@@ -268,15 +284,50 @@ async def seed_requisition_workflow(users_by_role: dict[str, dict[str, str]]) ->
         # approval (crud/workflow.py: "no approvers resolvable -- skip node").
         await _archive_active_definitions(session, "requisition")
 
+        # Low-value auto-approve (business decision 2026-08-05): PRs under
+        # $1,000 -- by REAL computed line-item total (context["total_cost"],
+        # see services/procurement_workflow.py::compute_requisition_total_cost),
+        # not the free-typed estimated_value field, since a requester could
+        # otherwise type a low estimated_value while the real line items total
+        # well over the threshold -- skip human approval entirely: an "auto"
+        # step records a real AUTO_APPROVED audit event (visible in the
+        # approval-flow diagram as "Manager (auto-approved)"), then a
+        # "notification" step informs the MANAGER role so they're aware even
+        # though no action is required. A PO is still generated normally for
+        # these PRs once approved (auto-approve only skips the human sign-off
+        # step, not PO creation/_po_creation_blockers).
+        #
+        # $1,000+ PRs still always require a real Manager approval -- the
+        # previous design jumped under-$1,000 straight to End (on_false_next_
+        # step: 4) which completed the instance with zero WorkflowTasks and
+        # looked like "no approval flow was generated" / already approved
+        # (confirmed 2026-08-04 on PR2026-08-021 at $42.50, and again on
+        # PR2026-08-023 at $42.50 on 2026-08-05). That confusion is exactly why
+        # the auto-approve path below is explicit (a real audit event + a
+        # visible diagram node + a manager notification) instead of silently
+        # completing with nothing to show for it. High-value PRs ($10,000+)
+        # still add DEPT_HEAD after Manager.
         steps = [
             {
-                "name": "Amount check ($1,000)",
+                "name": "Low-value check (<$1,000)",
                 "step_type": "condition",
-                "field": "estimated_value",
-                "operator": "gte",
+                "field": "total_cost",
+                "operator": "lt",
                 "value": 1000,
                 "on_true_next_step": 1,
-                "on_false_next_step": 4,
+                "on_false_next_step": 3,
+            },
+            {
+                "name": "Manager approval (auto-approved — under $1,000)",
+                "step_type": "auto",
+                "role_code": "MANAGER",
+            },
+            {
+                "name": "Manager notified — PR auto-approved",
+                "step_type": "notification",
+                "role_code": "MANAGER",
+                "message_template": "PR auto-approved (under $1,000, no action needed): total ${total_cost}.",
+                "next_step": 6,
             },
             {
                 "name": "Manager approval",
@@ -289,11 +340,11 @@ async def seed_requisition_workflow(users_by_role: dict[str, dict[str, str]]) ->
             {
                 "name": "Amount check ($10,000)",
                 "step_type": "condition",
-                "field": "estimated_value",
+                "field": "total_cost",
                 "operator": "gte",
                 "value": 10000,
-                "on_true_next_step": 3,
-                "on_false_next_step": 4,
+                "on_true_next_step": 5,
+                "on_false_next_step": 6,
             },
             {
                 "name": "Department head approval",
@@ -309,12 +360,16 @@ async def seed_requisition_workflow(users_by_role: dict[str, dict[str, str]]) ->
             name="Requisition approval (role-based)",
             entity_type="requisition",
             description=(
-                "Amount-tiered PR approval: under $1,000 auto-approved; $1,000-$9,999.99 "
-                "routes to MANAGER; $10,000+ routes to MANAGER then DEPT_HEAD. Approvers "
-                "resolve dynamically from the ApproverSeed matrix, not hardcoded users. "
-                "Requires the numeric-condition-coercion fix in crud/workflow.py "
-                "(_coerce_numeric) -- without it, both amount checks always take the "
-                "false branch because context stores estimated_value as a string."
+                "Amount-tiered PR approval keyed on the real computed line-item "
+                "total (context['total_cost'], not the free-typed estimated_value "
+                "field): under $1,000 auto-approves with a Manager notification "
+                "(no human sign-off, PO still generated normally); $1,000+ requires "
+                "MANAGER approval; $10,000+ also requires DEPT_HEAD. Approvers "
+                "resolve dynamically from the ApproverSeed matrix, not hardcoded "
+                "users. Requires the numeric-condition-coercion fix in "
+                "crud/workflow.py (_coerce_numeric) -- without it, amount checks "
+                "always take the false branch because context stores numeric "
+                "fields as strings."
             ),
             steps=steps,
             is_active=True,

@@ -24,12 +24,79 @@ from app.models.workflow import Notification
 from app.schemas.procurement import PurchaseOrderCreate
 
 
+def compute_requisition_total_cost(requisition: Any) -> Decimal:
+    """Real computed cost of a requisition: sum(quantity * unit_price) across
+    line items, plus header tax/shipping -- mirrors the frontend wizard's
+    `computedGrandTotal` (frontend/app/dashboard/requisitions/new/page.tsx).
+
+    This is deliberately NOT `estimated_value`: that field is a free-typed
+    header number the requester can set independently of the actual line
+    items (the wizard even warns "Drives the approval flow ... not line-item
+    totals"), which means a requester could type a low estimated_value while
+    the real line items total well over any approval threshold. Approval
+    routing and auto-approve/PO-generation decisions must key off this
+    computed total instead, since it can't be gamed by a header field.
+    """
+    total = Decimal("0.00")
+    for line_item in getattr(requisition, "line_items", None) or []:
+        quantity = getattr(line_item, "quantity", None)
+        unit_price = getattr(line_item, "unit_price", None)
+        if quantity is None or unit_price is None:
+            continue
+        total += Decimal(str(quantity)) * Decimal(str(unit_price))
+
+    header_tax = getattr(requisition, "header_tax", None)
+    if header_tax is not None:
+        total += Decimal(str(header_tax))
+    shipping_cost = getattr(requisition, "shipping_cost", None)
+    if shipping_cost is not None:
+        total += Decimal(str(shipping_cost))
+    return total
+
+
+def compute_line_items_total_cost(
+    line_items: list[dict[str, Any]] | None,
+    *,
+    header_tax: Any = None,
+    shipping_cost: Any = None,
+) -> Decimal:
+    """Same computation as `compute_requisition_total_cost`, but from plain
+    dicts (e.g. a draft payload's `line_items` before a ProcurementRequisition
+    row exists) rather than ORM line-item objects. Used by the draft-stage
+    approval preview (`preview_requisition_approval_from_context`), which has
+    no persisted requisition to read line items off of.
+    """
+    total = Decimal("0.00")
+    for line_item in line_items or []:
+        quantity = line_item.get("quantity") if isinstance(line_item, dict) else getattr(line_item, "quantity", None)
+        unit_price = line_item.get("unit_price") if isinstance(line_item, dict) else getattr(line_item, "unit_price", None)
+        if quantity is None or unit_price is None:
+            continue
+        total += Decimal(str(quantity)) * Decimal(str(unit_price))
+    if header_tax is not None:
+        total += Decimal(str(header_tax))
+    if shipping_cost is not None:
+        total += Decimal(str(shipping_cost))
+    return total
+
+
 def evaluate_approval_requirement(requisition: Any) -> dict[str, Any]:
-    """Return a simple approval decision for a procurement requisition."""
-    estimated_value = getattr(requisition, "estimated_value", 0) or 0
+    """Return a simple approval decision for a procurement requisition.
+
+    Naive fallback only -- the real, authoritative decision comes from the
+    WorkflowDefinition-driven engine (see start_requisition_approval_workflow),
+    which this function's caller (apply_procurement_transition_workflow) never
+    knows is about to run. This exists purely as a safety-net default for the
+    (unusual) case where no active "requisition" WorkflowDefinition exists at
+    all. Uses the real computed line-item total (see
+    compute_requisition_total_cost), not the free-typed estimated_value field,
+    so this fallback can't be gamed the same way the old estimated_value-based
+    check could.
+    """
+    total_cost = compute_requisition_total_cost(requisition)
     priority = getattr(requisition, "priority", "medium") or "medium"
 
-    if estimated_value >= 1000 or priority == "high":
+    if total_cost >= 1000 or priority == "high":
         return {
             "requires_approval": True,
             "approval_status": "pending",
@@ -557,6 +624,7 @@ async def process_deferred_po_creation(db: Any, *, tenant_id: UUID | str | None 
 def build_requisition_approval_preview_context(
     *,
     estimated_value: Any = None,
+    total_cost: Any = None,
     priority: Any = None,
     category: Any = None,
     account_code: Any = None,
@@ -575,6 +643,11 @@ def build_requisition_approval_preview_context(
     """
     return {
         "estimated_value": str(estimated_value) if estimated_value is not None else None,
+        # Real computed line-item total (see compute_requisition_total_cost) --
+        # this, not estimated_value, is what auto-approve/threshold conditions
+        # should key on, since estimated_value is a free-typed header field a
+        # requester could set independently of the real line items.
+        "total_cost": str(total_cost) if total_cost is not None else None,
         # Mirror key used by ApproverSeed amount ceilings (see
         # crud/workflow.py::_create_approval_tasks).
         "amount": str(estimated_value) if estimated_value is not None else None,
@@ -596,8 +669,14 @@ async def preview_requisition_approval_workflow(db: Any, requisition: Any) -> di
     """
     from app.crud.workflow import preview_workflow_steps
 
+    total_cost = compute_requisition_total_cost(requisition)
     context = build_requisition_approval_preview_context(
         estimated_value=getattr(requisition, "estimated_value", None),
+        # Only surface a real total once the requisition actually has priced
+        # line items -- an empty/zero total on a draft with no lines yet is
+        # "not enough information", not a genuine $0 request (mirrors how
+        # estimated_value=None is left unset above).
+        total_cost=total_cost if getattr(requisition, "line_items", None) else None,
         priority=getattr(requisition, "priority", None),
         category=getattr(requisition, "category", None),
         account_code=getattr(requisition, "account_code", None),
@@ -617,8 +696,19 @@ async def preview_requisition_approval_from_context(db: Any, context: dict[str, 
     """
     from app.crud.workflow import preview_workflow_steps
 
+    line_items = context.get("line_items")
+    total_cost = (
+        compute_line_items_total_cost(
+            line_items,
+            header_tax=context.get("header_tax"),
+            shipping_cost=context.get("shipping_cost"),
+        )
+        if line_items
+        else None
+    )
     normalized = build_requisition_approval_preview_context(
         estimated_value=context.get("estimated_value"),
+        total_cost=total_cost,
         priority=context.get("priority"),
         category=context.get("category"),
         account_code=context.get("account_code"),
@@ -669,8 +759,14 @@ async def start_requisition_approval_workflow(
     # closed via the engine's blocked / empty-path handling rather than
     # pretending the PR is $0.
     estimated_value_str = str(estimated_value) if estimated_value is not None else None
+    # Real computed line-item total (see compute_requisition_total_cost) --
+    # auto-approve/threshold conditions must key on this, not estimated_value,
+    # since estimated_value is a free-typed header field the requester could
+    # set independently of (and lower than) the real line items.
+    total_cost_str = str(compute_requisition_total_cost(requisition))
     context = {
         "estimated_value": estimated_value_str if estimated_value_str is not None else "0",
+        "total_cost": total_cost_str,
         # ApproverSeed ceilings historically read context["amount"]; keep both
         # keys in sync so role-based steps resolve against the real value.
         "amount": estimated_value_str if estimated_value_str is not None else "0",

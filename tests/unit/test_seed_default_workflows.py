@@ -32,8 +32,11 @@ import uuid
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 
 from app.crud.workflow import get_workflow_definitions, start_workflow_instance
+from app.models.approval import ApprovalEvent
+from app.models.workflow import Notification
 from app.schemas.workflow import WorkflowInstanceStart
 
 from scripts.seed_approver_matrix import (
@@ -255,6 +258,72 @@ async def test_goods_receipt_single_tier_routes_to_manager(db_session, seeded):
     users_by_role = seeded
     (definition,) = await get_workflow_definitions(db_session, entity_type="goods_receipt", is_active=True, limit=1)
     instance = await _start(db_session, definition, entity_type="goods_receipt", context={"has_exceptions": True})
+    assert instance.status == "in_progress"
+    assert len(instance.tasks) == 1
+    assert str(instance.tasks[0].assignee_id) == users_by_role["MANAGER"]["id"]
+
+
+@pytest.mark.asyncio
+async def test_requisition_below_1000_by_real_total_auto_approves_and_notifies_manager(db_session, seeded):
+    """Business decision 2026-08-05: a PR whose real computed line-item total
+    (context["total_cost"]) is under $1,000 skips human approval entirely --
+    an "auto" step records a real AUTO_APPROVED audit event (so the approval
+    flow diagram shows a "Manager (auto-approved)" node instead of silently
+    completing with nothing to show), then a "notification" step informs the
+    MANAGER role. No WorkflowTask is created, and PO creation is untouched by
+    this (still governed separately by _po_creation_blockers)."""
+    users_by_role = seeded
+    (definition,) = await get_workflow_definitions(db_session, entity_type="requisition", is_active=True, limit=1)
+    instance = await _start(
+        db_session,
+        definition,
+        entity_type="requisition",
+        context={"total_cost": "42.50", "estimated_value": "42.50"},
+    )
+    assert instance.status == "completed"
+    assert instance.tasks == []
+
+    events = (
+        await db_session.execute(select(ApprovalEvent).where(ApprovalEvent.document_id == instance.entity_id))
+    ).scalars().all()
+    assert any(e.action == "AUTO_APPROVED" and e.node_type == "AUTO" for e in events)
+
+    notifications = (
+        await db_session.execute(select(Notification).where(Notification.related_entity_id == instance.entity_id))
+    ).scalars().all()
+    assert any(str(n.recipient_id) == users_by_role["MANAGER"]["id"] for n in notifications)
+
+
+@pytest.mark.asyncio
+async def test_requisition_low_estimated_value_but_high_real_total_still_requires_manager_approval(db_session, seeded):
+    """Regression guard for the exact gaming scenario reported 2026-08-05: a
+    low, free-typed estimated_value must not mask a real line-item total over
+    the threshold -- routing must key off total_cost, not estimated_value."""
+    users_by_role = seeded
+    (definition,) = await get_workflow_definitions(db_session, entity_type="requisition", is_active=True, limit=1)
+    instance = await _start(
+        db_session,
+        definition,
+        entity_type="requisition",
+        context={"total_cost": "1500.00", "estimated_value": "50.00"},
+    )
+    assert instance.status == "in_progress"
+    assert len(instance.tasks) == 1
+    assert str(instance.tasks[0].assignee_id) == users_by_role["MANAGER"]["id"]
+
+
+@pytest.mark.asyncio
+async def test_requisition_mid_range_real_total_still_requires_manager_approval(db_session, seeded):
+    # Deliberately kept within MANAGER's own ApproverSeed ceiling ($5,000,
+    # see ROLE_LADDER) -- amounts above that hit a separate, pre-existing gap
+    # (MANAGER is the unconditional first approval stop for every requisition
+    # regardless of size, but its demo ceiling is only $5,000; confirmed
+    # against unmodified HEAD that PO/contract/invoice/sourcing_event tests
+    # hit the exact same gap for their own tiers) that's out of scope for
+    # this feature -- not something to fix incidentally here.
+    users_by_role = seeded
+    (definition,) = await get_workflow_definitions(db_session, entity_type="requisition", is_active=True, limit=1)
+    instance = await _start(db_session, definition, entity_type="requisition", context={"total_cost": "3000.00"})
     assert instance.status == "in_progress"
     assert len(instance.tasks) == 1
     assert str(instance.tasks[0].assignee_id) == users_by_role["MANAGER"]["id"]

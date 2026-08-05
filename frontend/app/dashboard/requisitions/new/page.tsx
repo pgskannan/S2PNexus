@@ -135,6 +135,11 @@ export default function NewRequisitionPage() {
       supplier_id: form.supplier_id || null,
       currency: form.currency || null,
       is_emergency: form.is_emergency,
+      line_items: lineItems
+        .filter((li) => li.description.trim())
+        .map((li) => ({ quantity: li.quantity || "1", unit_price: li.unit_price || null })),
+      header_tax: form.header_tax || null,
+      shipping_cost: form.shipping_cost || null,
     })
       .then((preview) => {
         if (!cancelled) setApprovalPreview(preview);
@@ -157,6 +162,9 @@ export default function NewRequisitionPage() {
     form.supplier_id,
     form.currency,
     form.is_emergency,
+    form.header_tax,
+    form.shipping_cost,
+    lineItems,
   ]);
 
   // Auto-fill (backlog Section 5): default ship-to per requester from their

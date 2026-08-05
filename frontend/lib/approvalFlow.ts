@@ -160,7 +160,7 @@ export function buildApprovalSteps(
 
   definitionSteps.forEach((step, index) => {
     const stepType = typeof step.step_type === "string" ? step.step_type : "approval";
-    if (stepType !== "approval") {
+    if (stepType !== "approval" && stepType !== "auto") {
       // Condition/notification steps have no "approver" to show as a card;
       // the Ariba-style diagram is approval-focused.
       return;
@@ -172,6 +172,24 @@ export function buildApprovalSteps(
       return;
     }
     const stepName = typeof step.name === "string" ? step.name : "Approval";
+
+    if (stepType === "auto") {
+      // Deterministic auto-approval node (e.g. low-value PR auto-approve --
+      // see backend seed_approver_matrix.py's requisition definition). The
+      // engine never leaves an instance waiting on an "auto" step -- once
+      // execution reaches it, it's immediately recorded as approved (see
+      // crud/workflow.py's "auto" step handling) -- so a reachable auto step
+      // is always shown as done, never Waiting/Pending.
+      const roleCode = typeof step.role_code === "string" && step.role_code ? step.role_code : "";
+      cards.push({
+        step_order: index,
+        approver_name: roleCode ? `${roleCode} (auto-approved)` : "Auto-approved",
+        approver_role: stepName,
+        status: "AUTO_APPROVED",
+        reason: "Auto-approved by workflow rule — no human approval required.",
+      });
+      return;
+    }
 
     const tasks = tasksByStepIndex.get(index) ?? [];
 

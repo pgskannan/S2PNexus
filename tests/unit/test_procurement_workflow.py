@@ -15,6 +15,8 @@ from app.services.invoice_workflow import start_invoice_exception_workflow
 from app.services.procurement_workflow import (
     apply_procurement_transition_workflow,
     auto_create_po_from_requisition,
+    compute_line_items_total_cost,
+    compute_requisition_total_cost,
     evaluate_approval_requirement,
     preview_requisition_approval_from_context,
     preview_requisition_approval_workflow,
@@ -25,8 +27,56 @@ from app.services.procurement_workflow import (
 )
 
 
+def test_compute_requisition_total_cost_sums_line_items_plus_tax_and_shipping():
+    requisition = SimpleNamespace(
+        line_items=[
+            SimpleNamespace(quantity=Decimal("2"), unit_price=Decimal("10.00")),
+            SimpleNamespace(quantity=Decimal("3"), unit_price=Decimal("5.00")),
+        ],
+        header_tax=Decimal("2.50"),
+        shipping_cost=Decimal("7.50"),
+    )
+    # 2*10 + 3*5 + 2.50 + 7.50 = 20 + 15 + 10 = 45
+    assert compute_requisition_total_cost(requisition) == Decimal("45.00")
+
+
+def test_compute_requisition_total_cost_ignores_estimated_value_field():
+    # The exact gaming scenario this was built to close: a low estimated_value
+    # header field must not affect the real computed total.
+    requisition = SimpleNamespace(
+        estimated_value=Decimal("1.00"),
+        line_items=[SimpleNamespace(quantity=Decimal("10"), unit_price=Decimal("150.00"))],
+        header_tax=None,
+        shipping_cost=None,
+    )
+    assert compute_requisition_total_cost(requisition) == Decimal("1500.00")
+
+
+def test_compute_requisition_total_cost_handles_no_line_items():
+    requisition = SimpleNamespace(line_items=[], header_tax=None, shipping_cost=None)
+    assert compute_requisition_total_cost(requisition) == Decimal("0.00")
+
+
+def test_compute_line_items_total_cost_from_draft_dicts():
+    line_items = [
+        {"quantity": "2", "unit_price": "10.00"},
+        {"quantity": "1", "unit_price": None},  # incomplete draft row -- skipped
+    ]
+    total = compute_line_items_total_cost(line_items, header_tax="5.00", shipping_cost="3.00")
+    # 2*10 + 5 + 3 = 28 (the incomplete row contributes nothing)
+    assert total == Decimal("28.00")
+
+
 def test_evaluate_approval_requirement_marks_high_value_requisition_for_approval():
-    requisition = SimpleNamespace(estimated_value=2500, priority="high")
+    # evaluate_approval_requirement now keys off the real computed line-item
+    # total (see compute_requisition_total_cost), not the free-typed
+    # estimated_value field -- a low/absent estimated_value must not mask a
+    # high real total.
+    requisition = SimpleNamespace(
+        estimated_value=None,
+        priority="high",
+        line_items=[SimpleNamespace(quantity=Decimal("1"), unit_price=Decimal("2500.00"))],
+    )
 
     decision = evaluate_approval_requirement(requisition)
 
@@ -36,13 +86,32 @@ def test_evaluate_approval_requirement_marks_high_value_requisition_for_approval
 
 
 def test_evaluate_approval_requirement_allows_low_value_requisition():
-    requisition = SimpleNamespace(estimated_value=500, priority="medium")
+    requisition = SimpleNamespace(
+        estimated_value=None,
+        priority="medium",
+        line_items=[SimpleNamespace(quantity=Decimal("1"), unit_price=Decimal("500.00"))],
+    )
 
     decision = evaluate_approval_requirement(requisition)
 
     assert decision["requires_approval"] is False
     assert decision["approval_status"] == "approved"
     assert decision["rule"] == "auto_approved"
+
+
+def test_evaluate_approval_requirement_uses_real_total_not_estimated_value():
+    # The exact gaming scenario this was built to close: a low estimated_value
+    # header field with real line items totalling well over the threshold.
+    requisition = SimpleNamespace(
+        estimated_value=Decimal("50.00"),
+        priority="medium",
+        line_items=[SimpleNamespace(quantity=Decimal("10"), unit_price=Decimal("150.00"))],
+    )
+
+    decision = evaluate_approval_requirement(requisition)
+
+    assert decision["requires_approval"] is True
+    assert decision["approval_status"] == "pending"
 
 
 def test_publish_procurement_event_records_event_payload():
@@ -56,7 +125,13 @@ def test_publish_procurement_event_records_event_payload():
 
 def test_apply_procurement_transition_workflow_updates_approval_and_records_event():
     async def run_test() -> None:
-        requisition = SimpleNamespace(id="req-123", estimated_value=1500, priority="medium", approval_status="pending")
+        requisition = SimpleNamespace(
+            id="req-123",
+            estimated_value=1500,
+            priority="medium",
+            approval_status="pending",
+            line_items=[SimpleNamespace(quantity=Decimal("1"), unit_price=Decimal("1500.00"))],
+        )
         state = SimpleNamespace(procurement_events=[])
 
         decision = await apply_procurement_transition_workflow(
@@ -91,12 +166,19 @@ def test_start_requisition_approval_workflow_starts_instance_when_definition_exi
             category="IT Hardware",
             requested_by=uuid4(),
             tenant_id=uuid4(),
+            line_items=[SimpleNamespace(quantity=Decimal("1"), unit_price=Decimal("2500.00"))],
+            header_tax=None,
+            shipping_cost=None,
         )
         result = await start_requisition_approval_workflow(requisition, db=None, started_by="user-1")
         assert result["started"] is True
         context = result["start_in"].context
         assert context["estimated_value"] == "2500.00"
         assert context["amount"] == "2500.00"
+        # Real computed line-item total -- what auto-approve/threshold
+        # conditions actually key on, not estimated_value (see
+        # compute_requisition_total_cost).
+        assert context["total_cost"] == "2500.00"
         assert context["requested_by"] == str(requisition.requested_by)
         assert context["category"] == "IT Hardware"
         assert result["started_by"] == "user-1"
@@ -236,6 +318,60 @@ def test_preview_requisition_approval_from_context_flags_missing_estimated_value
         assert preview["available"] is True
         assert preview["complete"] is False
         assert preview["missing_fields"] == ["estimated_value"]
+
+    asyncio.run(run_test())
+
+
+def test_preview_requisition_approval_from_context_uses_real_line_item_total(monkeypatch):
+    """Draft-stage preview (create wizard, before a requisition row exists)
+    must route on the real computed line-item total, not a low free-typed
+    estimated_value -- same gaming scenario as the saved-requisition case,
+    but here nothing is persisted yet so the total has to come from the
+    draft's own line_items payload (see compute_line_items_total_cost)."""
+
+    async def fake_get_workflow_definitions(*args, **kwargs):
+        return [
+            SimpleNamespace(
+                id="definition-1",
+                name="Requisition approval (role-based)",
+                steps=[
+                    {
+                        "name": "Low-value check",
+                        "step_type": "condition",
+                        "field": "total_cost",
+                        "operator": "lt",
+                        "value": 1000,
+                        "on_true_next_step": 1,
+                        "on_false_next_step": 2,
+                    },
+                    {"name": "Auto-approved", "step_type": "auto"},
+                    {"name": "Manager approval", "step_type": "approval", "role_code": "MANAGER"},
+                ],
+            )
+        ]
+
+    async def fake_resolve_approvers_for_context(*args, **kwargs):
+        return [{"user_id": "user-1", "display_name": "Alex Manager", "email": "alex@example.com", "role_code": "MANAGER"}]
+
+    monkeypatch.setattr(workflow_crud, "get_workflow_definitions", fake_get_workflow_definitions)
+    monkeypatch.setattr(workflow_crud, "resolve_approvers_for_context", fake_resolve_approvers_for_context)
+
+    async def run_test() -> None:
+        # A gaming attempt: low estimated_value, but real line items total
+        # $1,500 -- the false ("$1,000+") branch must be taken, landing on
+        # the Manager approval step, not the auto-approve step.
+        preview = await preview_requisition_approval_from_context(
+            db=None,
+            context={
+                "estimated_value": "50.00",
+                "priority": "medium",
+                "line_items": [{"quantity": "10", "unit_price": "150.00"}],
+            },
+        )
+        assert preview["available"] is True
+        assert preview["complete"] is True
+        assert len(preview["steps"]) == 1
+        assert preview["steps"][0]["approvers"][0]["display_name"] == "Alex Manager"
 
     asyncio.run(run_test())
 

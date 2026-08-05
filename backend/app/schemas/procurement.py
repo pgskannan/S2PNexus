@@ -134,6 +134,17 @@ class ProcurementRequisitionTransitionRequest(BaseModel):
     details: Optional[dict | str] = None
 
 
+class RequisitionApprovalPreviewLineItem(BaseModel):
+    """Minimal per-line shape needed to compute a real draft total for the
+    approval preview -- deliberately looser than
+    ProcurementRequisitionLineItemCreate (no category/description required):
+    the preview only needs quantity * unit_price, and the wizard may call this
+    before every line field is filled in."""
+
+    quantity: Decimal = Field(default=1, ge=0)
+    unit_price: Optional[Decimal] = Field(None, ge=0)
+
+
 class RequisitionApprovalPreviewRequest(BaseModel):
     """Draft / unsaved field snapshot for POST /requisitions/approval-preview."""
 
@@ -145,6 +156,13 @@ class RequisitionApprovalPreviewRequest(BaseModel):
     supplier_id: Optional[UUID] = None
     currency: Optional[str] = Field(None, max_length=10)
     is_emergency: bool = False
+    # Real line-item total drives auto-approve/threshold conditions (see
+    # compute_line_items_total_cost) -- estimated_value alone can't be
+    # trusted for this since it's a free-typed field independent of the
+    # actual line items.
+    line_items: Optional[list[RequisitionApprovalPreviewLineItem]] = None
+    header_tax: Optional[Decimal] = Field(None, ge=0)
+    shipping_cost: Optional[Decimal] = Field(None, ge=0)
 
 
 class ProcurementRequisitionLineItemCreate(BaseModel):
