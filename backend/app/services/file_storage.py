@@ -23,6 +23,21 @@ separate key needed since GOOGLE_CLOUD_PROJECT is already configured for
 Vertex AI). Local disk remains the fallback when GCS_BUCKET_NAME is unset,
 which keeps local dev and the existing test suite working unchanged.
 
+Async note (2026-08-05, same-day follow-up -- production incident): the
+first version of this GCS support called the synchronous google-cloud-
+storage client directly from `save_bytes`/`load_bytes`, which were plain
+`def` functions invoked unawaited from `async def` FastAPI route handlers.
+`google-cloud-storage` does blocking network I/O; calling it inline inside
+an async handler blocks that worker's *entire* event loop for the duration
+of the call, which froze every other in-flight request on the same
+instance (confirmed live: the whole app became unresponsive after a single
+import call). `save_bytes`/`load_bytes` are now `async def` and run the
+blocking GCS calls via `asyncio.to_thread`, so they yield the event loop
+instead of blocking it. Callers must `await` them now (local-disk-mode
+callers didn't change behavior, just syntax, since local disk I/O was never
+the thing blocking anything -- but the signature had to become async
+uniformly so callers don't need to know which backend is active).
+
 Layout / GCS object naming: {settings.UPLOAD_DIR}/supplier_registrations/{registration_id}/<file>
 (local) or the same relative path as a GCS blob name (bucket mode).
 
@@ -35,6 +50,7 @@ migration.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from uuid import UUID
 
@@ -62,6 +78,10 @@ def _use_gcs() -> bool:
 def _gcs_bucket():
     """Lazily construct (and cache) the GCS client/bucket handle.
 
+    Blocking (client construction can resolve Application Default
+    Credentials over the network) -- always call this from inside a
+    to_thread'd function, never directly from an async def.
+
     Imported lazily so `google-cloud-storage` is only required at runtime
     when GCS mode is actually enabled -- local dev/tests never need it.
     """
@@ -71,6 +91,17 @@ def _gcs_bucket():
 
         _gcs_client = storage.Client(project=settings.GOOGLE_CLOUD_PROJECT or None)
     return _gcs_client.bucket(settings.GCS_BUCKET_NAME)
+
+
+def _save_bytes_gcs_sync(relative_key: str, data: bytes) -> None:
+    _gcs_bucket().blob(relative_key).upload_from_string(data)
+
+
+def _load_bytes_gcs_sync(relative_key: str) -> bytes:
+    blob = _gcs_bucket().blob(relative_key)
+    if not blob.exists():
+        raise FileNotFoundError(f"No stored file at key {relative_key!r}")
+    return blob.download_as_bytes()
 
 
 def _upload_root() -> Path:
@@ -91,7 +122,7 @@ def build_key(registration_id: UUID | str, kind: str) -> str:
 
     `kind` is one of "sent", "returned", "error_report", "import_summary".
     Used as either a local path (relative to UPLOAD_DIR) or a GCS blob name,
-    depending on the active backend.
+    depending on the active backend. Pure/sync -- no I/O.
     """
     if kind not in _KIND_FILENAMES:
         raise ValueError(f"Unknown storage kind {kind!r}; expected one of {sorted(_KIND_FILENAMES)}")
@@ -113,29 +144,41 @@ def _resolve_relative_key(relative_key: str) -> Path:
     return candidate
 
 
-def save_bytes(relative_key: str, data: bytes) -> str:
-    """Write bytes under the active backend (GCS bucket or local UPLOAD_DIR).
-
-    Returns the same relative_key back, so callers can chain
-    `path = save_bytes(build_key(reg.id, "sent"), xlsx_bytes)`.
-    """
-    if _use_gcs():
-        _gcs_bucket().blob(relative_key).upload_from_string(data)
-        return relative_key
+def _save_bytes_local_sync(relative_key: str, data: bytes) -> None:
     path = _resolve_relative_key(relative_key)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
-    return relative_key
 
 
-def load_bytes(relative_key: str) -> bytes:
-    """Read bytes previously written by save_bytes() from the active backend."""
-    if _use_gcs():
-        blob = _gcs_bucket().blob(relative_key)
-        if not blob.exists():
-            raise FileNotFoundError(f"No stored file at key {relative_key!r}")
-        return blob.download_as_bytes()
+def _load_bytes_local_sync(relative_key: str) -> bytes:
     path = _resolve_relative_key(relative_key)
     if not path.is_file():
         raise FileNotFoundError(f"No stored file at key {relative_key!r}")
     return path.read_bytes()
+
+
+async def save_bytes(relative_key: str, data: bytes) -> str:
+    """Write bytes under the active backend (GCS bucket or local UPLOAD_DIR).
+
+    Returns the same relative_key back, so callers can chain
+    `path = await save_bytes(build_key(reg.id, "sent"), xlsx_bytes)`.
+
+    Runs the actual (blocking) I/O in a worker thread via asyncio.to_thread
+    so this never blocks the event loop -- important for GCS mode, where the
+    call is a real network round trip, not just local disk.
+    """
+    if _use_gcs():
+        await asyncio.to_thread(_save_bytes_gcs_sync, relative_key, data)
+    else:
+        await asyncio.to_thread(_save_bytes_local_sync, relative_key, data)
+    return relative_key
+
+
+async def load_bytes(relative_key: str) -> bytes:
+    """Read bytes previously written by save_bytes() from the active backend.
+
+    See save_bytes() for why this runs via asyncio.to_thread.
+    """
+    if _use_gcs():
+        return await asyncio.to_thread(_load_bytes_gcs_sync, relative_key)
+    return await asyncio.to_thread(_load_bytes_local_sync, relative_key)

@@ -262,7 +262,7 @@ async def send_registration_workbook(
         questionnaire_version=QUESTIONNAIRE_VERSION,
     )
     key = file_storage.build_key(registration.id, "sent")
-    file_storage.save_bytes(key, xlsx_bytes)
+    await file_storage.save_bytes(key, xlsx_bytes)
 
     sla_days = 14
     if supplier_type and supplier_type.notification_rule:

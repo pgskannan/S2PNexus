@@ -1,4 +1,5 @@
-"""Unit tests for app.services.file_storage (2026-08-05 GCS-backend fix).
+"""Unit tests for app.services.file_storage (2026-08-05 GCS-backend fix,
+plus the same-day async-blocking-call fix).
 
 Covers both storage backends:
 - Local disk (settings.GCS_BUCKET_NAME unset) -- the original, still-default
@@ -8,6 +9,13 @@ Covers both storage backends:
   a later request served by a different instance (confirmed live on
   2026-08-05: a sent registration workbook 404'd on download/import with
   "Workbook file missing on disk").
+
+save_bytes()/load_bytes() are `async def` (production incident fix, same
+day): the first version called the synchronous google-cloud-storage client
+directly from these functions while they were plain `def`s invoked
+unawaited from async route handlers, which blocked the whole event loop per
+call and froze the live app after a single import request. They now run the
+blocking I/O via asyncio.to_thread, so these tests are async too.
 
 The google-cloud-storage package isn't required to run these tests: GCS mode
 is exercised against a fake google.cloud.storage module injected into
@@ -27,6 +35,8 @@ import pytest
 
 from app.core.config import settings
 
+pytestmark = pytest.mark.asyncio
+
 
 @pytest.fixture(autouse=True)
 def _reset_file_storage_module(monkeypatch, tmp_path):
@@ -44,26 +54,26 @@ def _reset_file_storage_module(monkeypatch, tmp_path):
     sys.modules.pop("app.services.file_storage", None)
 
 
-def test_local_mode_round_trip_when_bucket_unset(_reset_file_storage_module):
+async def test_local_mode_round_trip_when_bucket_unset(_reset_file_storage_module):
     fs = _reset_file_storage_module
     reg_id = uuid4()
     key = fs.build_key(reg_id, "sent")
 
-    saved_key = fs.save_bytes(key, b"hello workbook")
+    saved_key = await fs.save_bytes(key, b"hello workbook")
     assert saved_key == key
-    assert fs.load_bytes(key) == b"hello workbook"
+    assert await fs.load_bytes(key) == b"hello workbook"
 
 
-def test_local_mode_load_missing_key_raises(_reset_file_storage_module):
+async def test_local_mode_load_missing_key_raises(_reset_file_storage_module):
     fs = _reset_file_storage_module
     with pytest.raises(FileNotFoundError):
-        fs.load_bytes(fs.build_key(uuid4(), "sent"))
+        await fs.load_bytes(fs.build_key(uuid4(), "sent"))
 
 
-def test_local_mode_rejects_path_traversal(_reset_file_storage_module):
+async def test_local_mode_rejects_path_traversal(_reset_file_storage_module):
     fs = _reset_file_storage_module
     with pytest.raises(ValueError):
-        fs.save_bytes("../../etc/passwd", b"nope")
+        await fs.save_bytes("../../etc/passwd", b"nope")
 
 
 class _FakeBlob:
@@ -119,15 +129,15 @@ def fake_gcs_module(monkeypatch):
     yield _FakeGcsClient
 
 
-def test_gcs_mode_round_trip_when_bucket_set(_reset_file_storage_module, fake_gcs_module, monkeypatch):
+async def test_gcs_mode_round_trip_when_bucket_set(_reset_file_storage_module, fake_gcs_module, monkeypatch):
     monkeypatch.setattr(settings, "GCS_BUCKET_NAME", "s2pnexus-registrations")
     monkeypatch.setattr(settings, "GOOGLE_CLOUD_PROJECT", "s2pnexus")
     fs = _reset_file_storage_module
     reg_id = uuid4()
     key = fs.build_key(reg_id, "sent")
 
-    fs.save_bytes(key, b"gcs workbook bytes")
-    assert fs.load_bytes(key) == b"gcs workbook bytes"
+    await fs.save_bytes(key, b"gcs workbook bytes")
+    assert await fs.load_bytes(key) == b"gcs workbook bytes"
 
     # ADC usage: client constructed with just the project, no key file.
     assert len(fake_gcs_module.instances) == 1
@@ -136,32 +146,64 @@ def test_gcs_mode_round_trip_when_bucket_set(_reset_file_storage_module, fake_gc
     assert client.bucket_name == "s2pnexus-registrations"
 
 
-def test_gcs_mode_load_missing_key_raises(_reset_file_storage_module, fake_gcs_module, monkeypatch):
+async def test_gcs_mode_load_missing_key_raises(_reset_file_storage_module, fake_gcs_module, monkeypatch):
     monkeypatch.setattr(settings, "GCS_BUCKET_NAME", "s2pnexus-registrations")
     fs = _reset_file_storage_module
     with pytest.raises(FileNotFoundError):
-        fs.load_bytes(fs.build_key(uuid4(), "sent"))
+        await fs.load_bytes(fs.build_key(uuid4(), "sent"))
 
 
-def test_gcs_mode_reuses_single_client_across_calls(_reset_file_storage_module, fake_gcs_module, monkeypatch):
+async def test_gcs_mode_reuses_single_client_across_calls(_reset_file_storage_module, fake_gcs_module, monkeypatch):
     """The client is a lazy singleton -- shouldn't reconstruct on every call."""
     monkeypatch.setattr(settings, "GCS_BUCKET_NAME", "s2pnexus-registrations")
     fs = _reset_file_storage_module
     reg_id = uuid4()
-    fs.save_bytes(fs.build_key(reg_id, "sent"), b"a")
-    fs.save_bytes(fs.build_key(reg_id, "returned"), b"b")
-    fs.load_bytes(fs.build_key(reg_id, "sent"))
+    await fs.save_bytes(fs.build_key(reg_id, "sent"), b"a")
+    await fs.save_bytes(fs.build_key(reg_id, "returned"), b"b")
+    await fs.load_bytes(fs.build_key(reg_id, "sent"))
 
     assert len(fake_gcs_module.instances) == 1
 
 
-def test_local_disk_untouched_in_gcs_mode(_reset_file_storage_module, fake_gcs_module, monkeypatch, tmp_path):
+async def test_local_disk_untouched_in_gcs_mode(_reset_file_storage_module, fake_gcs_module, monkeypatch, tmp_path):
     """When GCS mode is active, bytes must not also land on local disk --
     otherwise this would silently work in single-instance local testing but
     still be broken in the real multi-instance Cloud Run environment."""
     monkeypatch.setattr(settings, "GCS_BUCKET_NAME", "s2pnexus-registrations")
     fs = _reset_file_storage_module
     reg_id = uuid4()
-    fs.save_bytes(fs.build_key(reg_id, "sent"), b"gcs only")
+    await fs.save_bytes(fs.build_key(reg_id, "sent"), b"gcs only")
 
     assert not (tmp_path / "supplier_registrations" / str(reg_id)).exists()
+
+
+async def test_gcs_mode_does_not_block_event_loop(_reset_file_storage_module, fake_gcs_module, monkeypatch):
+    """Regression test for the production incident: a slow GCS call must not
+    stall other coroutines running concurrently on the same event loop."""
+    import asyncio
+    import time
+
+    monkeypatch.setattr(settings, "GCS_BUCKET_NAME", "s2pnexus-registrations")
+    fs = _reset_file_storage_module
+
+    def slow_upload(self, data: bytes) -> None:  # patched onto _FakeBlob
+        time.sleep(0.3)
+
+    monkeypatch.setattr(_FakeBlob, "upload_from_string", slow_upload)
+
+    ticks: list[float] = []
+
+    async def ticker():
+        for _ in range(6):
+            await asyncio.sleep(0.05)
+            ticks.append(time.monotonic())
+
+    start = time.monotonic()
+    await asyncio.gather(
+        fs.save_bytes(fs.build_key(uuid4(), "sent"), b"slow"),
+        ticker(),
+    )
+    # If the GCS call blocked the loop, the ticker's 6 ticks (0.05s apart)
+    # would all land only after the 0.3s upload finished, i.e. bunched up at
+    # the end instead of spread out from early in the 0.3s window.
+    assert ticks[0] - start < 0.2

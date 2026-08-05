@@ -660,7 +660,7 @@ async def download_registration_workbook_endpoint(
     if not registration or not registration.sent_workbook_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workbook not found")
     try:
-        data = file_storage.load_bytes(registration.sent_workbook_path)
+        data = await file_storage.load_bytes(registration.sent_workbook_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workbook file missing on disk") from exc
     return Response(
@@ -731,14 +731,14 @@ async def import_registration_workbook_endpoint(
     )
 
     returned_key = file_storage.build_key(registration.id, "returned")
-    file_storage.save_bytes(returned_key, raw)
+    await file_storage.save_bytes(returned_key, raw)
 
     if not result.ok:
         if result.error_report_bytes:
             err_key = file_storage.build_key(registration.id, "error_report")
-            file_storage.save_bytes(err_key, result.error_report_bytes)
+            await file_storage.save_bytes(err_key, result.error_report_bytes)
         if result.import_summary_text:
-            file_storage.save_bytes(
+            await file_storage.save_bytes(
                 file_storage.build_key(registration.id, "import_summary"),
                 result.import_summary_text.encode("utf-8"),
             )
@@ -781,7 +781,7 @@ async def download_registration_error_report_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier registration not found")
     key = file_storage.build_key(registration.id, "error_report")
     try:
-        data = file_storage.load_bytes(key)
+        data = await file_storage.load_bytes(key)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No error report available") from exc
     return Response(
