@@ -16,6 +16,7 @@ from app.services.procurement_workflow import (
     apply_procurement_transition_workflow,
     auto_create_po_from_requisition,
     evaluate_approval_requirement,
+    preview_requisition_approval_from_context,
     preview_requisition_approval_workflow,
     process_deferred_po_creation,
     publish_procurement_event,
@@ -89,11 +90,13 @@ def test_start_requisition_approval_workflow_starts_instance_when_definition_exi
             priority="high",
             category="IT Hardware",
             requested_by=uuid4(),
+            tenant_id=uuid4(),
         )
         result = await start_requisition_approval_workflow(requisition, db=None, started_by="user-1")
         assert result["started"] is True
         context = result["start_in"].context
         assert context["estimated_value"] == "2500.00"
+        assert context["amount"] == "2500.00"
         assert context["requested_by"] == str(requisition.requested_by)
         assert context["category"] == "IT Hardware"
         assert result["started_by"] == "user-1"
@@ -197,6 +200,42 @@ def test_preview_requisition_approval_workflow_resolves_approvers_when_complete(
         assert len(preview["steps"]) == 1
         assert preview["steps"][0]["approvers"][0]["display_name"] == "Alex Manager"
         assert preview["steps"][0]["unresolved"] is False
+
+    asyncio.run(run_test())
+
+
+def test_preview_requisition_approval_from_context_flags_missing_estimated_value(monkeypatch):
+    async def fake_get_workflow_definitions(*args, **kwargs):
+        return [
+            SimpleNamespace(
+                id="definition-1",
+                name="Requisition approval (role-based)",
+                steps=[
+                    {
+                        "name": "Amount check",
+                        "step_type": "condition",
+                        "field": "estimated_value",
+                        "operator": "gte",
+                        "value": 1000,
+                        "on_true_next_step": 1,
+                        "on_false_next_step": 2,
+                    },
+                    {"name": "Manager approval", "step_type": "approval", "role_code": "MANAGER"},
+                    {"name": "End", "step_type": "notification", "recipients": []},
+                ],
+            )
+        ]
+
+    monkeypatch.setattr(workflow_crud, "get_workflow_definitions", fake_get_workflow_definitions)
+
+    async def run_test() -> None:
+        preview = await preview_requisition_approval_from_context(
+            db=None,
+            context={"priority": "medium", "category": "IT Hardware"},
+        )
+        assert preview["available"] is True
+        assert preview["complete"] is False
+        assert preview["missing_fields"] == ["estimated_value"]
 
     asyncio.run(run_test())
 

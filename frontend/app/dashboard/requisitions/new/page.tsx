@@ -9,12 +9,24 @@ import {
   getRequisition,
   listSuppliers,
   listUserDirectory,
+  previewRequisitionApproval,
 } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth-store";
 import CommodityCodeInput from "@/components/CommodityCodeInput";
 import CategoryInput from "@/components/CategoryInput";
 import CatalogQuickAdd from "@/components/CatalogQuickAdd";
-import type { CatalogItem, Requisition, Supplier } from "@/lib/types";
+import { ApprovalFlowDiagram } from "@/components/ApprovalFlowDiagram";
+import { buildPreviewApprovalSteps } from "@/lib/approvalFlow";
+import type { CatalogItem, Requisition, RequisitionApprovalPreview, Supplier } from "@/lib/types";
+
+const APPROVAL_PREVIEW_FIELD_LABELS: Record<string, string> = {
+  estimated_value: "Estimated value",
+  priority: "Priority",
+  category: "Category",
+  supplier_id: "Supplier",
+  account_code: "GL/account code",
+  commodity: "Commodity",
+};
 
 interface LineItemDraft {
   description: string;
@@ -91,6 +103,8 @@ export default function NewRequisitionPage() {
     user?.is_superuser === true;
   const [requestedBy, setRequestedBy] = useState<string>(user?.id ?? "");
   const [directory, setDirectory] = useState<import("@/lib/api").UserDirectoryEntry[]>([]);
+  const [approvalPreview, setApprovalPreview] = useState<RequisitionApprovalPreview | null>(null);
+  const [approvalPreviewLoading, setApprovalPreviewLoading] = useState(false);
 
   useEffect(() => {
     listSuppliers()
@@ -105,6 +119,45 @@ export default function NewRequisitionPage() {
         .catch(() => setDirectory([]));
     }
   }, [canCreateOnBehalf]);
+
+  // Draft-stage dynamic approval preview on the summary step: refresh from
+  // whatever header fields are filled in so far, and surface missing routing
+  // fields before the user creates/submits the PR.
+  useEffect(() => {
+    if (step !== 3) return;
+    let cancelled = false;
+    setApprovalPreviewLoading(true);
+    previewRequisitionApproval({
+      estimated_value: form.estimated_value || null,
+      priority: form.priority || null,
+      category: form.category || null,
+      commodity: form.commodity || null,
+      supplier_id: form.supplier_id || null,
+      currency: form.currency || null,
+      is_emergency: form.is_emergency,
+    })
+      .then((preview) => {
+        if (!cancelled) setApprovalPreview(preview);
+      })
+      .catch(() => {
+        if (!cancelled) setApprovalPreview(null);
+      })
+      .finally(() => {
+        if (!cancelled) setApprovalPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    step,
+    form.estimated_value,
+    form.priority,
+    form.category,
+    form.commodity,
+    form.supplier_id,
+    form.currency,
+    form.is_emergency,
+  ]);
 
   // Auto-fill (backlog Section 5): default ship-to per requester from their
   // default address.
@@ -897,6 +950,61 @@ export default function NewRequisitionPage() {
                     </div>
                   </dl>
                 </div>
+              </div>
+
+              <div className="card space-y-3">
+                <h2 className="text-lg font-semibold">Approval flow preview</h2>
+                {approvalPreviewLoading ? (
+                  <p className="text-sm text-slate-500">Resolving approval flow from current draft data…</p>
+                ) : !approvalPreview ? (
+                  <p className="text-sm text-slate-500">
+                    Could not load an approval preview. You can still create the draft and check the Approval Flow
+                    tab on the detail page.
+                  </p>
+                ) : !approvalPreview.available ? (
+                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                    {approvalPreview.reason ||
+                      "No active approval workflow is configured for requisitions."}
+                  </p>
+                ) : (
+                  <>
+                    {approvalPreview.definition_name && (
+                      <p className="text-xs text-slate-400">{approvalPreview.definition_name}</p>
+                    )}
+                    {approvalPreview.steps.length > 0 && (
+                      <ApprovalFlowDiagram
+                        title={form.title || "Draft requisition"}
+                        steps={buildPreviewApprovalSteps(approvalPreview.steps)}
+                      />
+                    )}
+                    {!approvalPreview.complete && (
+                      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                        <p className="font-medium">Not enough information to determine the full approval flow.</p>
+                        <p className="mt-1">
+                          Still needed:{" "}
+                          {approvalPreview.missing_fields.length > 0
+                            ? approvalPreview.missing_fields
+                                .map((field) => APPROVAL_PREVIEW_FIELD_LABELS[field] || field)
+                                .join(", ")
+                            : "additional fields used by the workflow conditions"}
+                          . Go back and fill those in before submitting for approval.
+                        </p>
+                      </div>
+                    )}
+                    {approvalPreview.complete && approvalPreview.steps.length === 0 && (
+                      <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                        Based on current data, this requisition would be auto-approved with no approval steps.
+                      </p>
+                    )}
+                    {approvalPreview.complete &&
+                      approvalPreview.steps.some((s) => s.unresolved) && (
+                        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                          One or more steps have no matching approver for this draft&apos;s category / amount /
+                          supplier.
+                        </p>
+                      )}
+                  </>
+                )}
               </div>
 
               <div className="flex justify-between">

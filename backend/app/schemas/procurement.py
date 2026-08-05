@@ -134,6 +134,19 @@ class ProcurementRequisitionTransitionRequest(BaseModel):
     details: Optional[dict | str] = None
 
 
+class RequisitionApprovalPreviewRequest(BaseModel):
+    """Draft / unsaved field snapshot for POST /requisitions/approval-preview."""
+
+    estimated_value: Optional[Decimal] = Field(None, ge=0)
+    priority: Optional[str] = Field(None, max_length=50)
+    category: Optional[str] = Field(None, max_length=100)
+    account_code: Optional[str] = Field(None, max_length=100)
+    commodity: Optional[str] = Field(None, max_length=100)
+    supplier_id: Optional[UUID] = None
+    currency: Optional[str] = Field(None, max_length=10)
+    is_emergency: bool = False
+
+
 class ProcurementRequisitionLineItemCreate(BaseModel):
     description: str = Field(..., min_length=1, max_length=255)
     quantity: Decimal = Field(default=1, ge=0)

@@ -342,7 +342,7 @@ class TestProcurementEndpoints:
                         mock_get_requisition.return_value = requisition
                         # A real WorkflowDefinition matched and a real instance
                         # (with real pending tasks) was created.
-                        mock_start_workflow.return_value = SimpleNamespace(id=uuid4())
+                        mock_start_workflow.return_value = SimpleNamespace(id=uuid4(), status="in_progress")
                         async with AsyncClient(app=app, base_url="http://test") as client:
                             response = await client.post(
                                 f"/api/v1/procurement/requisitions/{requisition_id}/transition",
@@ -356,6 +356,111 @@ class TestProcurementEndpoints:
                     # real workflow instance must win.
                     assert requisition.approval_status == "pending"
                     assert requisition.lifecycle_status == "pending_approval"
+            finally:
+                app.dependency_overrides.pop(procurement.get_current_active_user, None)
+
+        asyncio.run(run_test())
+
+    def test_transition_requisition_submit_stays_pending_when_no_workflow_definition(self, mock_user):
+        """When no WorkflowDefinition matches, the legacy $1000 heuristic must
+        not silently stamp approval_status=approved with no flow."""
+
+        async def run_test():
+            async def override_get_current_active_user():
+                return mock_user
+
+            app.dependency_overrides[procurement.get_current_active_user] = override_get_current_active_user
+            requisition_id = uuid4()
+            try:
+                with patch("app.routers.procurement.transition_requisition", new_callable=AsyncMock) as mock_transition:
+                    requisition = self._build_requisition(requisition_id)
+                    mock_transition.return_value = requisition
+                    with patch("app.routers.procurement.get_requisition", new_callable=AsyncMock) as mock_get_requisition, patch(
+                        "app.routers.procurement.start_requisition_approval_workflow", new_callable=AsyncMock
+                    ) as mock_start_workflow, patch(
+                        "app.routers.procurement.auto_create_po_from_requisition", new_callable=AsyncMock
+                    ):
+                        mock_get_requisition.return_value = requisition
+                        mock_start_workflow.return_value = None
+                        async with AsyncClient(app=app, base_url="http://test") as client:
+                            response = await client.post(
+                                f"/api/v1/procurement/requisitions/{requisition_id}/transition",
+                                json={"new_status": "submitted", "lifecycle_status": "submitted"},
+                                headers={"Authorization": "Bearer valid_token"},
+                            )
+
+                    assert response.status_code == 200
+                    assert requisition.approval_status == "pending"
+            finally:
+                app.dependency_overrides.pop(procurement.get_current_active_user, None)
+
+        asyncio.run(run_test())
+
+    def test_transition_requisition_submit_keeps_approved_when_workflow_auto_completes(self, mock_user):
+        """Under-threshold definition paths can complete with zero approval
+        steps. Do not force pending_approval over that finished instance."""
+
+        async def run_test():
+            async def override_get_current_active_user():
+                return mock_user
+
+            app.dependency_overrides[procurement.get_current_active_user] = override_get_current_active_user
+            requisition_id = uuid4()
+            try:
+                with patch("app.routers.procurement.transition_requisition", new_callable=AsyncMock) as mock_transition:
+                    requisition = self._build_requisition(requisition_id)
+                    requisition.approval_status = "approved"
+                    requisition.lifecycle_status = "approved"
+                    requisition.status = "approved"
+                    mock_transition.return_value = requisition
+                    with patch("app.routers.procurement.get_requisition", new_callable=AsyncMock) as mock_get_requisition, patch(
+                        "app.routers.procurement.start_requisition_approval_workflow", new_callable=AsyncMock
+                    ) as mock_start_workflow, patch(
+                        "app.routers.procurement.auto_create_po_from_requisition", new_callable=AsyncMock
+                    ):
+                        mock_get_requisition.return_value = requisition
+                        mock_start_workflow.return_value = SimpleNamespace(id=uuid4(), status="completed")
+                        async with AsyncClient(app=app, base_url="http://test") as client:
+                            response = await client.post(
+                                f"/api/v1/procurement/requisitions/{requisition_id}/transition",
+                                json={"new_status": "submitted", "lifecycle_status": "submitted"},
+                                headers={"Authorization": "Bearer valid_token"},
+                            )
+
+                    assert response.status_code == 200
+                    assert requisition.approval_status == "approved"
+                    assert requisition.lifecycle_status == "approved"
+            finally:
+                app.dependency_overrides.pop(procurement.get_current_active_user, None)
+
+        asyncio.run(run_test())
+
+    def test_transition_requisition_submit_requires_estimated_value(self, mock_user):
+        async def run_test():
+            async def override_get_current_active_user():
+                return mock_user
+
+            app.dependency_overrides[procurement.get_current_active_user] = override_get_current_active_user
+            requisition_id = uuid4()
+            try:
+                with patch("app.routers.procurement.get_requisition", new_callable=AsyncMock) as mock_get_requisition, patch(
+                    "app.routers.procurement.transition_requisition", new_callable=AsyncMock
+                ) as mock_transition, patch(
+                    "app.routers.procurement.start_requisition_approval_workflow", new_callable=AsyncMock
+                ) as mock_start_workflow:
+                    requisition = self._build_requisition(requisition_id)
+                    requisition.estimated_value = None
+                    mock_get_requisition.return_value = requisition
+                    async with AsyncClient(app=app, base_url="http://test") as client:
+                        response = await client.post(
+                            f"/api/v1/procurement/requisitions/{requisition_id}/transition",
+                            json={"new_status": "submitted", "lifecycle_status": "submitted"},
+                            headers={"Authorization": "Bearer valid_token"},
+                        )
+
+                    assert response.status_code == 400
+                    assert mock_transition.await_count == 0
+                    assert mock_start_workflow.await_count == 0
             finally:
                 app.dependency_overrides.pop(procurement.get_current_active_user, None)
 

@@ -214,6 +214,23 @@ export async function getRequisitionApprovalPreview(
   return data;
 }
 
+export async function previewRequisitionApproval(payload: {
+  estimated_value?: string | null;
+  priority?: string | null;
+  category?: string | null;
+  account_code?: string | null;
+  commodity?: string | null;
+  supplier_id?: string | null;
+  currency?: string | null;
+  is_emergency?: boolean;
+}): Promise<import("@/lib/types").RequisitionApprovalPreview> {
+  const { data } = await api.post<import("@/lib/types").RequisitionApprovalPreview>(
+    `/procurement/requisitions/approval-preview`,
+    payload
+  );
+  return data;
+}
+
 export async function addRequisitionLineItem(
   requisitionId: string,
   payload: {

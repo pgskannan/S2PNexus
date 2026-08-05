@@ -87,6 +87,7 @@ from app.schemas.procurement import (
     PurchaseOrderListResponse,
     PurchaseOrderLineItemResponse,
     PurchaseOrderVersionResponse,
+    RequisitionApprovalPreviewRequest,
 )
 from pydantic import ValidationError
 from app.commands.procurement import (
@@ -103,6 +104,7 @@ from app.services.procurement_workflow import (
     auto_create_draft_receipt_for_po,
     auto_create_po_from_requisition,
     auto_create_receipts_for_ordered_po,
+    preview_requisition_approval_from_context,
     preview_requisition_approval_workflow,
     process_deferred_po_creation,
     start_purchase_order_approval_workflow,
@@ -300,6 +302,23 @@ async def preview_requisition_approval_endpoint(
 
 
 @router.post(
+    "/requisitions/approval-preview",
+    summary="Preview the approval flow for unsaved / in-progress draft data",
+    description="Same dry-run as GET /requisitions/{id}/approval-preview, but "
+    "accepts the draft fields in the request body so the create wizard (and "
+    "any other pre-save UI) can show routing before a requisition row exists.",
+)
+async def preview_requisition_approval_from_payload_endpoint(
+    payload: RequisitionApprovalPreviewRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    context = payload.model_dump(exclude_none=False)
+    context["tenant_id"] = current_user.tenant_id
+    return await preview_requisition_approval_from_context(db, context)
+
+
+@router.post(
     "/requisitions/{requisition_id}/transition",
     response_model=ProcurementRequisitionResponse,
     summary="Transition a requisition",
@@ -343,6 +362,24 @@ async def transition_requisition_endpoint(
                 ),
             )
 
+    if transition_data.lifecycle_status == "submitted":
+        # Require a real estimated value before transitioning / starting the
+        # engine. Without it, amount-tiered definitions treat a missing value
+        # as $0 and complete with zero approval steps (looks like "no flow" +
+        # already approved). Check before mutating the PR so a 400 does not
+        # leave it stuck as submitted.
+        existing = await get_requisition(db, requisition_id, tenant_id=current_user.tenant_id)
+        if existing is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Requisition not found")
+        if getattr(existing, "estimated_value", None) is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Estimated value is required before submitting for approval — "
+                    "the approval flow routes on it."
+                ),
+            )
+
     handler = TransitionRequisitionCommandHandler(transition_requisition_service=transition_requisition)
     command = TransitionRequisitionCommand(
         requisition_id=requisition_id,
@@ -376,23 +413,37 @@ async def transition_requisition_endpoint(
             db,
             started_by=current_user.id,
         )
-        # The submit action is recorded above; once the workflow exists, the
-        # business lifecycle is explicitly waiting for approvers.
+        # apply_procurement_transition_workflow (just above) already set
+        # approval_status from evaluate_approval_requirement's naive
+        # $1000/high-priority threshold -- but that function never knows
+        # whether a real WorkflowDefinition-based instance is about to
+        # exist. The real engine is the source of truth whenever it runs.
         if workflow_instance is not None:
-            requisition.status = "pending_approval"
-            requisition.lifecycle_status = "pending_approval"
-            # apply_procurement_transition_workflow (just above) already set
-            # approval_status from evaluate_approval_requirement's naive
-            # $1000/high-priority threshold -- but that function never knows
-            # whether a real WorkflowDefinition-based instance is about to
-            # exist. Since start_requisition_approval_workflow never touches
-            # approval_status itself, whichever ran last silently won: a PR
-            # under the naive threshold showed approval_status="approved"
-            # immediately on submit even though a real instance (with real
-            # pending approval tasks) had just been created alongside it, so
-            # the approval flow looked like it was never generated at all.
-            # A real instance existing is the source of truth here -- force
-            # it back to pending. Reported 2026-08-04.
+            instance_status = (
+                workflow_instance.get("status")
+                if isinstance(workflow_instance, dict)
+                else getattr(workflow_instance, "status", None)
+            )
+            if instance_status == "completed":
+                # Definition path finished with no pending human approvals
+                # (e.g. under-threshold auto-approve branch). Keep the
+                # approved state _run_from_step already wrote -- do not force
+                # pending_approval over a finished instance.
+                pass
+            else:
+                # in_progress (waiting on approvers) or blocked (needs admin
+                # intervention) -- never leave the naive heuristic's
+                # "approved" stamped on the PR.
+                requisition.status = "pending_approval"
+                requisition.lifecycle_status = "pending_approval"
+                requisition.approval_status = "pending"
+                await db.commit()
+        else:
+            # No active WorkflowDefinition matched. Do not silently mark the
+            # PR approved via the legacy threshold heuristic -- that is the
+            # "approval flow was never generated, PR already approved"
+            # failure mode. Leave it submitted/pending so an admin can
+            # configure a flow and the requester can resubmit.
             requisition.approval_status = "pending"
             await db.commit()
     # Auto-create the PO here too, not just on workflow-instance completion --

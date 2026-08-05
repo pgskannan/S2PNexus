@@ -554,33 +554,81 @@ async def process_deferred_po_creation(db: Any, *, tenant_id: UUID | str | None 
     return created
 
 
+def build_requisition_approval_preview_context(
+    *,
+    estimated_value: Any = None,
+    priority: Any = None,
+    category: Any = None,
+    account_code: Any = None,
+    commodity: Any = None,
+    supplier_id: Any = None,
+    currency: Any = None,
+    is_emergency: Any = False,
+    tenant_id: Any = None,
+) -> dict[str, Any]:
+    """Build the context dict used by draft-stage approval previews.
+
+    Deliberately leaves unset fields as None rather than defaulting them the
+    way `start_requisition_approval_workflow`'s real context does --
+    `preview_workflow_steps` needs to tell "condition evaluated false" apart
+    from "not enough information yet" (see crud/workflow.py:preview_workflow_steps).
+    """
+    return {
+        "estimated_value": str(estimated_value) if estimated_value is not None else None,
+        # Mirror key used by ApproverSeed amount ceilings (see
+        # crud/workflow.py::_create_approval_tasks).
+        "amount": str(estimated_value) if estimated_value is not None else None,
+        "priority": priority,
+        "category": category,
+        "account_code": account_code,
+        "commodity": commodity,
+        "supplier_id": str(supplier_id) if supplier_id is not None else None,
+        "currency": currency,
+        "is_emergency": bool(is_emergency),
+        "tenant_id": str(tenant_id) if tenant_id is not None else None,
+    }
+
+
 async def preview_requisition_approval_workflow(db: Any, requisition: Any) -> dict[str, Any]:
     """Read-only "what would the approval flow look like right now" preview
     for a not-yet-submitted requisition (spec: draft-stage dynamic approval
-    preview, requested 2026-08-04). Deliberately leaves `estimated_value`
-    (and any other field) as None/missing when unset on the requisition,
-    rather than defaulting it the way `start_requisition_approval_workflow`'s
-    real context does -- `preview_workflow_steps` needs to be able to tell
-    the difference between "this condition evaluated false" and "there isn't
-    enough information yet to know", which is the whole point of the
-    feature (see crud/workflow.py:preview_workflow_steps).
+    preview, requested 2026-08-04).
     """
     from app.crud.workflow import preview_workflow_steps
 
-    estimated_value = getattr(requisition, "estimated_value", None)
-    supplier_id = getattr(requisition, "supplier_id", None)
-    context = {
-        "estimated_value": str(estimated_value) if estimated_value is not None else None,
-        "priority": getattr(requisition, "priority", None),
-        "category": getattr(requisition, "category", None),
-        "account_code": getattr(requisition, "account_code", None),
-        "commodity": getattr(requisition, "commodity", None),
-        "supplier_id": str(supplier_id) if supplier_id is not None else None,
-        "currency": getattr(requisition, "currency", None),
-        "is_emergency": bool(getattr(requisition, "is_emergency", False)),
-        "tenant_id": str(getattr(requisition, "tenant_id", None)) if getattr(requisition, "tenant_id", None) else None,
-    }
+    context = build_requisition_approval_preview_context(
+        estimated_value=getattr(requisition, "estimated_value", None),
+        priority=getattr(requisition, "priority", None),
+        category=getattr(requisition, "category", None),
+        account_code=getattr(requisition, "account_code", None),
+        commodity=getattr(requisition, "commodity", None),
+        supplier_id=getattr(requisition, "supplier_id", None),
+        currency=getattr(requisition, "currency", None),
+        is_emergency=getattr(requisition, "is_emergency", False),
+        tenant_id=getattr(requisition, "tenant_id", None),
+    )
     return await preview_workflow_steps(db, entity_type="requisition", context=context)
+
+
+async def preview_requisition_approval_from_context(db: Any, context: dict[str, Any]) -> dict[str, Any]:
+    """Same dry-run as preview_requisition_approval_workflow, but from an
+    arbitrary draft payload (create wizard / unsaved edits) rather than a
+    persisted ProcurementRequisition row.
+    """
+    from app.crud.workflow import preview_workflow_steps
+
+    normalized = build_requisition_approval_preview_context(
+        estimated_value=context.get("estimated_value"),
+        priority=context.get("priority"),
+        category=context.get("category"),
+        account_code=context.get("account_code"),
+        commodity=context.get("commodity"),
+        supplier_id=context.get("supplier_id"),
+        currency=context.get("currency"),
+        is_emergency=context.get("is_emergency", False),
+        tenant_id=context.get("tenant_id"),
+    )
+    return await preview_workflow_steps(db, entity_type="requisition", context=normalized)
 
 
 async def start_requisition_approval_workflow(
@@ -613,8 +661,19 @@ async def start_requisition_approval_workflow(
     need_by_date = getattr(requisition, "need_by_date", None)
     header_tax = getattr(requisition, "header_tax", None)
     shipping_cost = getattr(requisition, "shipping_cost", None)
+    # estimated_value must not silently default to "0": that always takes the
+    # under-threshold false branch of amount-tiered definitions and completes
+    # with zero approval steps (looks like "no flow was generated" + already
+    # approved). Callers should require a real value before submit; if it is
+    # somehow still missing, leave it unset so conditions that need it fail
+    # closed via the engine's blocked / empty-path handling rather than
+    # pretending the PR is $0.
+    estimated_value_str = str(estimated_value) if estimated_value is not None else None
     context = {
-        "estimated_value": str(estimated_value) if estimated_value is not None else "0",
+        "estimated_value": estimated_value_str if estimated_value_str is not None else "0",
+        # ApproverSeed ceilings historically read context["amount"]; keep both
+        # keys in sync so role-based steps resolve against the real value.
+        "amount": estimated_value_str if estimated_value_str is not None else "0",
         "priority": getattr(requisition, "priority", "medium") or "medium",
         "category": getattr(requisition, "category", None),
         "requested_by": str(requested_by) if requested_by is not None else None,
@@ -630,6 +689,7 @@ async def start_requisition_approval_workflow(
         "is_emergency": bool(getattr(requisition, "is_emergency", False)),
         "header_tax": str(header_tax) if header_tax is not None else None,
         "shipping_cost": str(shipping_cost) if shipping_cost is not None else None,
+        "tenant_id": str(getattr(requisition, "tenant_id", None)) if getattr(requisition, "tenant_id", None) else None,
     }
 
     filtered_steps = _filter_requisition_approvers(getattr(definition, "steps", None), getattr(requisition, "requested_by", None))

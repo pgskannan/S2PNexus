@@ -246,3 +246,45 @@ export async function resolveApproverNames(instance: WorkflowInstance): Promise<
     return {};
   }
 }
+
+/** Map a draft-stage approval preview response onto ApprovalFlowDiagram cards
+ * so the draft UI matches the live instance stepper. */
+export function buildPreviewApprovalSteps(
+  steps: Array<{
+    step_index: number;
+    name: string;
+    role_code?: string | null;
+    unresolved: boolean;
+    approvers: Array<{
+      user_id: string;
+      display_name?: string | null;
+      email?: string | null;
+      role_code?: string | null;
+      reason?: string | null;
+    }>;
+  }>
+): ApprovalStep[] {
+  const cards: ApprovalStep[] = [];
+  steps.forEach((step) => {
+    if (step.unresolved || step.approvers.length === 0) {
+      cards.push({
+        step_order: step.step_index,
+        approver_name: step.role_code ? `${step.role_code} (unresolved)` : "No matching approver",
+        approver_role: step.name,
+        status: "BLOCKED",
+        reason: "No approver currently matches this step for the draft data.",
+      });
+      return;
+    }
+    step.approvers.forEach((approver, i) => {
+      cards.push({
+        step_order: step.step_index + i * 0.01,
+        approver_name: approver.display_name || approver.email || approver.user_id,
+        approver_role: step.name,
+        status: "WAITING",
+        reason: approver.reason || undefined,
+      });
+    });
+  });
+  return cards;
+}

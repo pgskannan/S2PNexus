@@ -33,7 +33,7 @@ import type {
   WorkflowTask,
 } from "@/lib/types";
 import { ApprovalFlowDiagram, type ApprovalStep } from "@/components/ApprovalFlowDiagram";
-import { buildApprovalSteps, resolveApproverNames } from "@/lib/approvalFlow";
+import { buildApprovalSteps, buildPreviewApprovalSteps, resolveApproverNames } from "@/lib/approvalFlow";
 import DocumentTabs from "@/components/DocumentTabs";
 import CommentsPanel from "@/components/CommentsPanel";
 import ActionRecommendationStrip from "@/components/ActionRecommendationStrip";
@@ -769,55 +769,58 @@ export default function RequisitionDetailPage() {
               </div>
             ) : requisition.lifecycle_status === "draft" && approvalPreview ? (
               <div className="space-y-3">
-                <p className="text-xs font-medium uppercase text-slate-400">
-                  Preview -- based on current draft data, not yet submitted
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-medium uppercase text-slate-400">
+                    Preview — based on current draft data, not yet submitted
+                  </p>
+                  {approvalPreview.definition_name && (
+                    <p className="text-xs text-slate-400">{approvalPreview.definition_name}</p>
+                  )}
+                </div>
                 {!approvalPreview.available ? (
-                  <p className="text-sm text-slate-500">{approvalPreview.reason}</p>
+                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                    {approvalPreview.reason ||
+                      "No active approval workflow is configured. An administrator needs to publish a requisition approval flow before this PR can be submitted."}
+                  </p>
                 ) : (
                   <>
                     {approvalPreview.steps.length > 0 && (
-                      <ol className="space-y-2">
-                        {approvalPreview.steps.map((step, i) => (
-                          <li
-                            key={step.step_index}
-                            className="flex items-start gap-3 rounded-md border border-slate-200 px-3 py-2"
-                          >
-                            <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-500">
-                              {i + 1}
-                            </span>
-                            <div>
-                              <p className="text-sm font-medium text-slate-800">{step.name}</p>
-                              {step.unresolved ? (
-                                <p className="text-xs text-amber-600">
-                                  No approver currently matches this step -- would need admin attention.
-                                </p>
-                              ) : (
-                                <p className="text-xs text-slate-500">
-                                  {step.approvers
-                                    .map((a) => a.display_name || a.email || a.user_id)
-                                    .join(", ")}
-                                </p>
-                              )}
-                            </div>
-                          </li>
-                        ))}
-                      </ol>
+                      <ApprovalFlowDiagram
+                        docNumber={requisition.requisition_number || undefined}
+                        title={requisition.title}
+                        steps={buildPreviewApprovalSteps(approvalPreview.steps)}
+                      />
                     )}
                     {!approvalPreview.complete && (
-                      <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                        Not enough information yet to determine the full approval flow. Still needed:{" "}
-                        {approvalPreview.missing_fields.map(approvalPreviewFieldLabel).join(", ")}.
-                      </p>
+                      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                        <p className="font-medium">Not enough information to determine the full approval flow.</p>
+                        <p className="mt-1">
+                          Still needed:{" "}
+                          {approvalPreview.missing_fields.length > 0
+                            ? approvalPreview.missing_fields.map(approvalPreviewFieldLabel).join(", ")
+                            : "additional draft fields used by the workflow conditions"}
+                          . Update the requisition and reopen this tab to refresh the preview.
+                        </p>
+                      </div>
                     )}
                     {approvalPreview.complete && approvalPreview.steps.length === 0 && (
-                      <p className="text-sm text-slate-500">
-                        Based on current data, this requisition would be auto-approved with no approval steps.
+                      <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                        Based on current data, this requisition would be auto-approved with no approval steps
+                        (under the active workflow&apos;s routing thresholds).
                       </p>
                     )}
+                    {approvalPreview.complete &&
+                      approvalPreview.steps.some((step) => step.unresolved) && (
+                        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                          One or more steps have no matching approver for this draft&apos;s category / amount /
+                          supplier. Fix the Approver matrix or adjust the draft data before submitting.
+                        </p>
+                      )}
                   </>
                 )}
               </div>
+            ) : requisition.lifecycle_status === "draft" ? (
+              <p className="text-sm text-slate-400">Loading approval flow preview…</p>
             ) : (
               <p className="text-sm text-slate-400">No approval workflow instance for this document.</p>
             ))}

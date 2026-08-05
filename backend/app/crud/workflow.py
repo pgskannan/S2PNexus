@@ -699,10 +699,22 @@ async def _create_approval_tasks(
         # (spec sec 1 + sec 3): role + limits + scope + primary/backup.
         from app.crud.approval import resolve_approvers_for_context
 
+        # Requisition context uses estimated_value; PO context uses
+        # total_amount. Older callers / seed comments also used "amount".
+        # Prefer any of them so ApproverSeed amount ceilings actually apply
+        # instead of silently resolving against 0 (which either matched the
+        # wrong seeds or none at all, making the PR look auto-approved /
+        # flowless on submit).
+        raw_amount = (
+            instance.context.get("amount")
+            or instance.context.get("estimated_value")
+            or instance.context.get("total_amount")
+            or "0"
+        )
         resolved = await resolve_approvers_for_context(
             db,
             role_code=step["role_code"],
-            amount=Decimal(str(instance.context.get("amount") or "0")),
+            amount=Decimal(str(raw_amount)),
             category=instance.context.get("category"),
             supplier_id=(str(instance.context["supplier_id"]) if instance.context.get("supplier_id") else None),
             tenant_id=instance.context.get("tenant_id"),
