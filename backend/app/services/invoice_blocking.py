@@ -118,6 +118,7 @@ async def release_invoice_block(
     from sqlalchemy import select
 
     from app.models.procurement import ProcurementAuditEvent
+    from app.services.invoice_audit import resolve_invoice_requisition_id
 
     exceptions = (
         await db.execute(select(InvoiceMatchException).where(InvoiceMatchException.invoice_id == invoice.id))
@@ -127,15 +128,18 @@ async def release_invoice_block(
     if not allowed:
         raise ValueError(message)
 
+    previous_block = invoice.block_status
     invoice.block_status = NOT_BLOCKED
-    db.add(
-        ProcurementAuditEvent(
-            requisition_id=invoice.purchase_order_id or invoice.goods_receipt_id,
-            actor_id=actor_id,
-            action="invoice:block_released",
-            details={"invoice_id": str(invoice.id), "role": role, "reason": reason, "previous_block": invoice.block_status},
+    audit_requisition_id = await resolve_invoice_requisition_id(db, invoice)
+    if audit_requisition_id is not None:
+        db.add(
+            ProcurementAuditEvent(
+                requisition_id=audit_requisition_id,
+                actor_id=actor_id,
+                action="invoice:block_released",
+                details={"invoice_id": str(invoice.id), "role": role, "reason": reason, "previous_block": previous_block},
+            )
         )
-    )
     await db.commit()
     await db.refresh(invoice)
     return invoice

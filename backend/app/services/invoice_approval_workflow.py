@@ -102,6 +102,7 @@ async def approve_invoice_workflow(
     """APPROVE action (spec sec 5.4): close the active approval instance and
     clear a BLOCKED_FOR_APPROVAL block."""
     from app.models.procurement import ProcurementAuditEvent
+    from app.services.invoice_audit import resolve_invoice_requisition_id
 
     instances = await _active_instances(db, invoice.id)
     for instance in instances:
@@ -110,11 +111,11 @@ async def approve_invoice_workflow(
     if getattr(invoice, "block_status", None) == "BLOCKED_FOR_APPROVAL":
         invoice.block_status = "NOT_BLOCKED"
 
-    audit_requisition = invoice.purchase_order_id or invoice.goods_receipt_id
-    if audit_requisition is not None:
+    audit_requisition_id = await resolve_invoice_requisition_id(db, invoice)
+    if audit_requisition_id is not None:
         db.add(
             ProcurementAuditEvent(
-                requisition_id=audit_requisition,
+                requisition_id=audit_requisition_id,
                 actor_id=actor_id,
                 action="invoice:approved",
                 details={"invoice_id": str(invoice.id), "notes": notes, "instances_closed": len(instances)},
@@ -135,6 +136,7 @@ async def reject_invoice_workflow(
     """REJECT action (spec sec 5.4 / 6.4): reject the active instance, block the
     invoice for exception, and record an APPROVAL_REJECTED exception."""
     from app.models.procurement import InvoiceMatchException, ProcurementAuditEvent
+    from app.services.invoice_audit import resolve_invoice_requisition_id
 
     instances = await _active_instances(db, invoice.id)
     for instance in instances:
@@ -151,11 +153,11 @@ async def reject_invoice_workflow(
             resolution_status="open",
         )
     )
-    audit_requisition = invoice.purchase_order_id or invoice.goods_receipt_id
-    if audit_requisition is not None:
+    audit_requisition_id = await resolve_invoice_requisition_id(db, invoice)
+    if audit_requisition_id is not None:
         db.add(
             ProcurementAuditEvent(
-                requisition_id=audit_requisition,
+                requisition_id=audit_requisition_id,
                 actor_id=actor_id,
                 action="invoice:rejected",
                 details={"invoice_id": str(invoice.id), "notes": notes, "instances_closed": len(instances)},
