@@ -1590,7 +1590,7 @@ async def resolve_invoice_exception_endpoint(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if not exception:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice exception not found")
-    await start_invoice_exception_workflow(exception, db, started_by=current_user.id)
+    await start_invoice_exception_workflow(db, exception, started_by=current_user.id)
     # Same expire-on-commit hazard as above: start_invoice_exception_workflow
     # commits on this session once an "invoice_exception" WorkflowDefinition
     # exists, expiring `exception`. Re-fetch before serializing.
