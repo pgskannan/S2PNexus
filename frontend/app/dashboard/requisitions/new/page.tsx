@@ -860,7 +860,7 @@ export default function NewRequisitionPage() {
               <div className="space-y-4">
                 {lineItems.map((li, index) => (
                   <div key={index} className="grid grid-cols-12 gap-3 border-b border-slate-100 pb-4 last:border-0 last:pb-0">
-                    <div className="col-span-12 sm:col-span-3">
+                    <div className="col-span-12 sm:col-span-5">
                       <label className="label">Description</label>
                       <input
                         className={`input-field ${lineItemValidation[index]?.description ? "border-red-300" : ""}`}
@@ -880,7 +880,7 @@ export default function NewRequisitionPage() {
                         onChange={(e) => updateLineItem(index, { quantity: e.target.value })}
                       />
                     </div>
-                    <div className="col-span-8 sm:col-span-2">
+                    <div className="col-span-8 sm:col-span-3">
                       <label className="label">Unit price</label>
                       <input
                         type="number"
@@ -892,11 +892,26 @@ export default function NewRequisitionPage() {
                       />
                       {lineItemValidation[index]?.unit_price && <p className="mt-1 text-xs text-red-600">{lineItemValidation[index].unit_price}</p>}
                     </div>
-                    <div className="col-span-12 sm:col-span-2">
+                    <div className="col-span-12 sm:col-span-3">
                       <label className="label">Commodity code</label>
                       <CommodityCodeInput value={li.commodity} onChange={(value) => updateLineItem(index, { commodity: value })} />
                     </div>
-                    <div className="col-span-8 sm:col-span-2">
+                    {/* Category and Account code get a full second row (6+6 of
+                        12) instead of squeezing in next to the fields above --
+                        each renders a text input alongside a fixed-width
+                        "Browse" button, and the New Requisition page's card is
+                        capped at max-w-3xl (768px). Splitting Description/Qty/
+                        Unit price/Commodity across row 1 already leaves too
+                        little room per remaining field for that button pattern
+                        to stay usable; six fields never fit one 768px-wide row
+                        at readable widths. Confirmed live 2026-08-05: with
+                        these still packed 2-wide, the input collapsed to ~26px
+                        -- text entered was real (round-tripped correctly) but
+                        visually unreadable, in the browser and in screen
+                        recordings, even after fixing the input's own flex
+                        sizing (that fix was correct but had ~26px of real
+                        remaining space to work with). */}
+                    <div className="col-span-12 sm:col-span-6">
                       <label className="label" title="Classifies this line for spend reporting and GL mapping">Category</label>
                       <CategoryInput
                         id={`line-category-${index}`}
@@ -906,7 +921,7 @@ export default function NewRequisitionPage() {
                       />
                       {lineItemValidation[index]?.category && <p className="mt-1 text-xs text-red-600">{lineItemValidation[index].category}</p>}
                     </div>
-                    <div className="col-span-12 sm:col-span-2">
+                    <div className="col-span-12 sm:col-span-6">
                       <label className="label" title="Required — the PO auto-creation gate blocks approved PRs with no account code">
                         Account code <span className="text-red-500">*</span>
                       </label>
