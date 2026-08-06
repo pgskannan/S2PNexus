@@ -61,7 +61,7 @@ export default function AccountCodeInput({
       <div className="flex gap-1">
         <input
           id={id}
-          className="input-field"
+          className="input-field min-w-0 flex-1"
           value={value}
           placeholder={placeholder}
           autoComplete="off"
