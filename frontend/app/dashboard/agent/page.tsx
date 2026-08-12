@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { queryAgent, extractErrorMessage } from "@/lib/api";
-import type { AgentQueryResponse } from "@/lib/types";
+import { queryAgent, runP2PPipeline, extractErrorMessage } from "@/lib/api";
+import type { AgentQueryResponse, P2PPipelineResponse } from "@/lib/types";
 
 const suggestions = [
   "Show me all open requisitions over $5,000",
@@ -16,6 +16,24 @@ export default function AgentPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AgentQueryResponse | null>(null);
+
+  const [pipelineLoading, setPipelineLoading] = useState(false);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
+  const [pipelineResult, setPipelineResult] = useState<P2PPipelineResponse | null>(null);
+
+  async function handleRunPipeline() {
+    setPipelineLoading(true);
+    setPipelineError(null);
+    setPipelineResult(null);
+    try {
+      const response = await runP2PPipeline();
+      setPipelineResult(response);
+    } catch (err) {
+      setPipelineError(extractErrorMessage(err));
+    } finally {
+      setPipelineLoading(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -125,6 +143,66 @@ export default function AgentPage() {
           )}
         </div>
       )}
+
+      <div className="card space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">P2P Multi-Agent Pipeline (Google ADK)</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Runs a 3-step sequential handoff on Google ADK — requisition intake →
+            supplier/sourcing check → receipt/invoice match — each step grounded
+            in live S2PNexus data and logged individually to Agent Activity below.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleRunPipeline}
+          disabled={pipelineLoading}
+          className="btn-primary"
+        >
+          {pipelineLoading ? "Running pipeline..." : "Run P2P pipeline"}
+        </button>
+
+        {pipelineError && <p className="text-sm text-red-600">{pipelineError}</p>}
+
+        {pipelineResult && (
+          <div className="space-y-3">
+            <span
+              className={`badge ${
+                pipelineResult.success
+                  ? "bg-green-100 text-green-700"
+                  : "bg-amber-100 text-amber-700"
+              }`}
+            >
+              {pipelineResult.success ? "all steps succeeded" : "one or more steps degraded"}
+            </span>
+
+            <ol className="space-y-3">
+              {pipelineResult.steps.map((step, i) => (
+                <li key={step.agent_name} className="rounded-md border border-slate-200 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium uppercase text-slate-400">
+                      Step {i + 1} — {step.agent_name}
+                    </span>
+                    <span
+                      className={`badge ${
+                        step.success
+                          ? "bg-green-100 text-green-700"
+                          : "bg-red-100 text-red-700"
+                      }`}
+                    >
+                      {step.success ? "ok" : "failed"} · {step.latency_ms}ms
+                    </span>
+                  </div>
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-slate-800">
+                    {step.message}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

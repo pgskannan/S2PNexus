@@ -111,8 +111,18 @@ class Settings(BaseSettings):
     GOOGLE_CLOUD_LOCATION: str = Field(default="global", description="Vertex AI location ('global' or a specific region)")
     GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = Field(default=None, description="Path to a GCP service account JSON key; falls back to Application Default Credentials if unset")
     GEMINI_API_KEY: Optional[str] = Field(default=None, description="Gemini Developer API key; used only when GOOGLE_CLOUD_PROJECT is unset (local/dev fallback)")
-    GEMINI_MODEL: str = Field(default="gemini-3.1-flash-lite", min_length=1, description="Gemini model name")
+    GEMINI_MODEL: str = Field(default="gemini-3.5-flash", min_length=1, description="Gemini model name")
     GEMINI_TIMEOUT: int = Field(default=60, ge=10, le=300, description="Gemini request timeout in seconds")
+
+    # ADK P2P pipeline microservice (Fortified Enterprise Fleet hackathon build).
+    # Deliberately a separate Cloud Run service with its own requirements.txt --
+    # google-adk forces fastapi>=0.115/starlette>=0.46/uvicorn>=0.34, all newer
+    # than this backend's pins, so it is not installed here. This backend still
+    # owns the DB/tool-data gathering and Agent Activity logging; the
+    # microservice only runs the ADK Workflow over data handed to it.
+    ADK_PIPELINE_URL: Optional[str] = Field(default=None, description="Base URL of the adk-service Cloud Run service, e.g. https://s2pnexus-adk-pipeline-xxxx.run.app")
+    ADK_PIPELINE_TOKEN: Optional[str] = Field(default=None, description="Shared-secret bearer token for service-to-service calls to adk-service")
+    ADK_PIPELINE_TIMEOUT: int = Field(default=45, ge=5, le=120, description="Timeout (seconds) for calls to adk-service")
 
     # ChromaDB / Vector DB
     CHROMA_HOST: str = Field(default="localhost")

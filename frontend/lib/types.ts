@@ -500,6 +500,20 @@ export interface AgentQueryResponse {
   explanation: string;
 }
 
+export interface P2PPipelineStep {
+  agent_name: string;
+  success: boolean;
+  message: string;
+  llm_used: boolean;
+  latency_ms: number;
+}
+
+export interface P2PPipelineResponse {
+  pipeline_name: string;
+  success: boolean;
+  steps: P2PPipelineStep[];
+}
+
 export interface AgentActivityLogEntry {
   id: string;
   agent_name: string;

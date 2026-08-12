@@ -1,0 +1,18 @@
+# S2PNexus ADK P2P Pipeline -- standalone service requirements.
+#
+# Isolated on purpose from backend/requirements.txt: google-adk requires
+# fastapi>=0.115/starlette>=0.46/uvicorn>=0.34, all newer than the main
+# backend's pins. Keeping this in its own service/container means the main
+# backend never has to take that upgrade. See app/pipeline.py module
+# docstring and docs/AGENTIC_HACKATHON_SUBMISSION_PLAN.md Section 3.
+
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.34,<1.0
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+google-adk==2.6.3
+
+# Testing
+pytest==8.2.0
+pytest-asyncio==0.23.8
+httpx>=0.28

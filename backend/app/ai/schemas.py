@@ -100,3 +100,37 @@ class AgentQueryResponse(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict, description="Structured data gathered/produced while handling the request")
     plan: list[str] = Field(default_factory=list, description="Steps the agent took (or planned) to handle the request")
     explanation: str = Field(default="", description="Explanation of the agent's behavior")
+
+
+class P2PPipelineRequest(BaseModel):
+    """Request model for the ADK-orchestrated Procure-to-Pay pipeline."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    request: str = Field(
+        default="Run the requisition-to-receipt pipeline",
+        min_length=1,
+        description="Natural-language framing passed to the first pipeline step",
+    )
+
+
+class P2PPipelineStepResponse(BaseModel):
+    """One step's result in the ADK P2P pipeline (requisition intake -> sourcing check -> receipt match)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    agent_name: str
+    success: bool
+    message: str
+    llm_used: bool
+    latency_ms: int
+
+
+class P2PPipelineResponse(BaseModel):
+    """Aggregated response for the ADK P2P pipeline, in step order."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    pipeline_name: str
+    success: bool
+    steps: list[P2PPipelineStepResponse]

@@ -1118,6 +1118,19 @@ export async function queryAgent(
   return data;
 }
 
+// Multi-agent P2P pipeline built on Google ADK (adk-service/) -- requisition
+// intake -> supplier/sourcing check -> receipt/invoice match. See
+// docs/AGENTIC_HACKATHON_SUBMISSION_PLAN.md.
+export async function runP2PPipeline(
+  request?: string
+): Promise<import("@/lib/types").P2PPipelineResponse> {
+  const { data } = await api.post<import("@/lib/types").P2PPipelineResponse>(
+    "/ai/agents/pipelines/p2p-intake",
+    { request: request || "Run the requisition-to-receipt pipeline" }
+  );
+  return data;
+}
+
 // ---- Agent Activity (read-only audit trail / dashboard) ----
 
 export async function listAgentActivity(params?: {

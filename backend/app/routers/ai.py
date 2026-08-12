@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.adk_pipeline import run_p2p_pipeline
 from app.ai.schemas import (
     AgentQueryRequest,
     AgentQueryResponse,
@@ -16,6 +17,9 @@ from app.ai.schemas import (
     GenerateRequest,
     GenerationResponse,
     HealthResponse,
+    P2PPipelineRequest,
+    P2PPipelineResponse,
+    P2PPipelineStepResponse,
 )
 from app.ai.service import AIGatewayService
 from app.core.logging import get_logger
@@ -211,6 +215,53 @@ async def query_agents(
         data=result.data,
         plan=result.plan,
         explanation=result.explanation,
+    )
+
+
+@router.post(
+    "/agents/pipelines/p2p-intake",
+    response_model=P2PPipelineResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Run the ADK-orchestrated requisition -> sourcing -> receipt pipeline",
+    description="Multi-agent handoff built on Google ADK (see adk-service/), grounded in the same live "
+    "S2PNexus data as the single-agent orchestrator. Runs three sequential steps -- requisition intake, "
+    "supplier/sourcing check, receipt/invoice match -- each logged individually to Agent Activity so the "
+    "existing dashboard shows the full chain. Degrades to a non-fatal failure per step if the ADK service "
+    "is unreachable; never raises.",
+)
+async def run_p2p_intake_pipeline(
+    payload: P2PPipelineRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: AsyncSession = Depends(get_db),
+) -> P2PPipelineResponse:
+    result = await run_p2p_pipeline(db=db, actor_id=current_user.id, request_text=payload.request)
+
+    for step in result.steps:
+        try:
+            await create_agent_activity_log(
+                db,
+                agent_name=step.agent_name,
+                request_text=payload.request,
+                success=step.success,
+                message=step.message,
+                plan=[f"pipeline={result.pipeline_name}"],
+                explanation="ADK Workflow step -- see adk-service/ for the pipeline definition.",
+                data={"tool_data": step.tool_data, "llm_used": step.llm_used},
+                actor_id=current_user.id,
+                latency_ms=step.latency_ms,
+            )
+        except Exception as exc:  # pragma: no cover - defensive; logging must never break the response
+            logger.warning("adk_pipeline_activity_log_failed", agent=step.agent_name, error=str(exc))
+
+    return P2PPipelineResponse(
+        pipeline_name=result.pipeline_name,
+        success=result.success,
+        steps=[
+            P2PPipelineStepResponse(
+                agent_name=s.agent_name, success=s.success, message=s.message, llm_used=s.llm_used, latency_ms=s.latency_ms
+            )
+            for s in result.steps
+        ],
     )
 
 

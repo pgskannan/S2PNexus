@@ -39,6 +39,8 @@ gcloud run deploy s2pnexus-backend --source . --region=us-central1 --project=s2p
 - First-ever source deploy asks to create an Artifact Registry repo (`cloud-run-source-deploy`) — say `y`, it's a one-time setup.
 - **Don't add `--set-env-vars`** unless you mean to replace the entire env var set — it silently wipes *any* var not listed, not just `CORS_ORIGINS`/`ALLOWED_HOSTS` (it hit `SECRET_KEY` and `DATABASE_URL` too on 2026-07-26, see incident below). To change one var, use `--update-env-vars KEY=value` instead. To leave env vars untouched (the common case), omit env var flags entirely — Cloud Run carries over the previous revision's config.
 - `entrypoint.sh` runs `alembic upgrade head` automatically on container start, so DB migrations ship with the deploy — no separate migration step needed. This also means a bad env var (missing `SECRET_KEY`, wrong `DATABASE_URL` password, etc.) crashes the container *before* `uvicorn` ever starts, which Cloud Run reports as a generic "container failed to start and listen on port 8080" — don't take that message literally as a port/config problem, it almost always means the process crashed on startup for an unrelated reason.
+- **Windows/PowerShell `gcloud` gotcha, confirmed 2026-08-11:** passing multiple comma-separated `KEY=value` pairs in a single `--update-env-vars` (e.g. `--update-env-vars A=1,B=2,C=3`) silently merges them all into the *first* key's value instead of splitting on the commas — reproduced twice, on two different services, deploying from `C:\S2PNexus` directly (not Cloud Shell). Workaround: issue one `gcloud run services update ... --update-env-vars KEY=value` call per variable. Slower, but reliable. Always re-run `gcloud run services describe <service> --format="yaml(spec.template.spec.containers[0].env)"` after any multi-var env change to confirm they actually split correctly before assuming it worked.
+- **`--no-allow-unauthenticated` vs. an app-level bearer token, confirmed 2026-08-11:** these are two independent layers. `--no-allow-unauthenticated` is enforced by Cloud Run's front-end *before* your container ever sees the request — it requires a real Google-signed OIDC identity token, not an arbitrary `Authorization: Bearer <secret>` string. A custom app-level token check only ever runs if Cloud Run's own IAM layer already let the request through. If you deploy with `--no-allow-unauthenticated` and rely on your own bearer-token check, you also need either `gcloud run services add-iam-policy-binding <service> --member=allUsers --role=roles/run.invoker` (open, app-token-only auth) or proper caller-side ID-token fetching (real zero-trust, more setup). IAM policy changes can take up to ~a minute to propagate — a 401 right after applying a binding isn't necessarily wrong, retry once before debugging further.
 
 ### If a deploy fails with "container failed to start and listen on port 8080"
 
@@ -112,10 +114,19 @@ python -m scripts.<whatever_script>
 
 Env vars don't carry across Cloud Shell tabs — re-export in whichever tab you're actually running the script from. If the tunnel test fails with `[4003: 'failed to connect to backend']`, that's the firewall rule missing/reverted; if `asyncpg.exceptions.InvalidAuthorizationSpecificationError: no pg_hba.conf entry...`, that's the `pg_hba.conf` line missing/reverted — both should already be in place per above.
 
+## 7. Deploy the ADK P2P pipeline service (adk-service/)
+
+Separate Cloud Run service, separate `requirements.txt` -- see `adk-service/README.md`
+for why (dependency conflict with this backend's fastapi/starlette/uvicorn pins) and for
+the full deploy + wiring commands. Short version: deploy `adk-service/` first, then set
+`ADK_PIPELINE_URL`/`ADK_PIPELINE_TOKEN` on `s2pnexus-backend` via `--update-env-vars`
+(never `--set-env-vars`, same rule as Section 3 above) pointing at the new service's URL.
+
 ## Service URLs
 
 - Backend: `https://s2pnexus-backend-120737021520.us-central1.run.app`
 - Frontend: `https://s2pnexus-frontend-120737021520.us-central1.run.app`
+- ADK pipeline service: not yet deployed -- see Section 7 above and `adk-service/README.md`
 - Region: `us-central1`, Project: `s2pnexus`
 
 ## Known incidents (for context, not action items)
