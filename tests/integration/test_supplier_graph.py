@@ -350,3 +350,45 @@ def test_certification_endpoints_enforce_roles_and_tenant_isolation():
             await _close(engine, db)
 
     asyncio.run(run())
+
+
+def test_free_text_commodity_codes_are_searchable():
+    """PO lines that carry the UNSPSC code as free text (no commodity_code_id)
+    must still join the commodity node and match a code search -- this is how
+    the live data looked when the graph first shipped (search returned 0)."""
+
+    async def run():
+        engine, db = await _new_session()
+        try:
+            tenant = uuid4()
+            user = await _user(db, tenant_id=tenant)
+            db.add(CommodityCode(code="43211500", segment_code="43", class_title="Computers", commodity_title="Computers"))
+            known = Supplier(name="Known Code Co", created_by=user.id)
+            loose = Supplier(name="Loose Code Co", created_by=user.id)
+            db.add_all([known, loose])
+            await db.commit()
+            for sup, text in ((known, "43211500"), (loose, "14111500")):
+                req = ProcurementRequisition(title="R", requested_by=user.id, tenant_id=tenant)
+                db.add(req)
+                await db.commit()
+                po = PurchaseOrder(requisition_id=req.id, supplier_id=sup.id, order_number=f"PO-{text}", status="ordered", created_by=user.id)
+                db.add(po)
+                await db.commit()
+                db.add(PurchaseOrderLineItem(purchase_order_id=po.id, line_number=1, description="x",
+                                             commodity_code_free_text=text, quantity=Decimal("1"), unit_price=Decimal("5"), line_total=Decimal("5")))
+                await db.commit()
+            db.expire_all()
+
+            r = await find_certified_sources(db, tenant, commodity="43211500", today=TODAY)
+            assert [x["supplier"]["name"] for x in r["sources"]] == ["Known Code Co"]
+            assert r["matched_commodities"][0]["title"] == "Computers"  # resolved via code master
+
+            r = await find_certified_sources(db, tenant, commodity="1411", today=TODAY)
+            assert [x["supplier"]["name"] for x in r["sources"]] == ["Loose Code Co"]  # unresolved but numeric
+
+            g = await build_supplier_graph(db, tenant, today=TODAY)
+            assert {n["id"] for n in g["nodes"] if n["type"] == "commodity"} == {"commodity:43211500", "commodity:14111500"}
+        finally:
+            await _close(engine, db)
+
+    asyncio.run(run())

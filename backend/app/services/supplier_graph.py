@@ -222,11 +222,25 @@ async def _load_supply_base(db: AsyncSession, tenant_id: uuid.UUID | None) -> _S
 
     commodity_ids = {li.commodity_code_id for po in pos for li in (po.line_items or []) if li.commodity_code_id}
     codes = await _load_commodity_codes(db, commodity_ids)
+    # Lines often carry the UNSPSC code as free text (typed rather than picked
+    # from the code picker). Resolve those against the code master so they
+    # join the same commodity node, and so a code search matches them.
+    free_codes = {
+        (li.commodity_code_free_text or "").strip()
+        for po in pos
+        for li in (po.line_items or [])
+        if not li.commodity_code_id and (li.commodity_code_free_text or "").strip()
+    }
+    codes_by_text: dict[str, CommodityCode] = {}
+    if free_codes:
+        rows = (await db.execute(select(CommodityCode).where(CommodityCode.code.in_(free_codes)))).scalars().all()
+        codes_by_text = {c.code: c for c in rows}
 
     for po in pos:
         ordered_at = _as_date(po.created_at)
         for li in po.line_items or []:
-            cc = codes.get(li.commodity_code_id) if li.commodity_code_id else None
+            free = (li.commodity_code_free_text or "").strip()
+            cc = codes.get(li.commodity_code_id) if li.commodity_code_id else codes_by_text.get(free)
             if cc is not None:
                 key = cc.code
                 info = base.commodities.setdefault(
@@ -237,10 +251,12 @@ async def _load_supply_base(db: AsyncSession, tenant_id: uuid.UUID | None) -> _S
                         "titles": [cc.commodity_title, cc.class_title, cc.family_title, cc.segment_title],
                     },
                 )
-            elif li.commodity_code_free_text:
-                key = "text:" + li.commodity_code_free_text.strip().casefold()
+            elif free:
+                # Unresolved free text: a bare numeric value is still treated as
+                # a code so prefix searches (e.g. "4321") find it.
+                key = free if free.isdigit() else "text:" + free.casefold()
                 info = base.commodities.setdefault(
-                    key, {"code": None, "title": li.commodity_code_free_text.strip(), "titles": [li.commodity_code_free_text]}
+                    key, {"code": free if free.isdigit() else None, "title": free, "titles": [free]}
                 )
             else:
                 continue

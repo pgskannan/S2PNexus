@@ -16,6 +16,8 @@ import ReactFlow, {
   Controls,
   Handle,
   Position,
+  ReactFlowProvider,
+  useReactFlow,
   type Edge,
   type Node,
   type NodeProps,
@@ -169,11 +171,17 @@ function layout(
   };
   const sortSide = (list: GraphNode[]) => [...list].sort((a, b) => bary(a.id) - bary(b.id));
 
-  const supplierSpan = Math.max(suppliers.length * ROW_H.supplier, 1);
+  // Each side node sits level with the average row of its suppliers, then
+  // overlapping ones are pushed down just enough to stay readable.
   const place = (list: GraphNode[]) => {
-    const span = list.length * ROW_H.side;
-    const offset = Math.max(0, (supplierSpan - span) / 2);
-    return new Map(list.map((n, i) => [n.id, offset + i * ROW_H.side]));
+    const out = new Map<string, number>();
+    let next = 0;
+    for (const n of list) {
+      const y = Math.max(next, bary(n.id) * ROW_H.supplier + 10);
+      out.set(n.id, y);
+      next = y + ROW_H.side;
+    }
+    return out;
   };
   const certY = place(sortSide(certs));
   const commY = place(sortSide(comms));
@@ -264,6 +272,8 @@ export default function SupplierGraphPage() {
   const [commodityQuery, setCommodityQuery] = useState("");
   const [certQuery, setCertQuery] = useState("");
   const [sources, setSources] = useState<CertifiedSourcesResponse | null>(null);
+  // Certificate-only search (no part given): highlight every current holder.
+  const [certOnly, setCertOnly] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -286,7 +296,13 @@ export default function SupplierGraphPage() {
   }, [load]);
 
   async function runSearch(commodity = commodityQuery, cert = certQuery) {
-    if (!commodity.trim()) return;
+    if (!commodity.trim()) {
+      setSources(null);
+      setSelectedId(null);
+      setCertOnly(cert.trim() || null);
+      return;
+    }
+    setCertOnly(null);
     setSearching(true);
     setError(null);
     setSelectedId(null);
@@ -301,6 +317,7 @@ export default function SupplierGraphPage() {
 
   function clearSearch() {
     setSources(null);
+    setCertOnly(null);
     setCommodityQuery("");
     setCertQuery("");
   }
@@ -315,10 +332,24 @@ export default function SupplierGraphPage() {
     }
   }
 
-  const highlight = useMemo(
-    () => (sources ? new Set(sources.sources.filter((s) => s.eligible).map((s) => `supplier:${s.supplier.id}`)) : null),
-    [sources],
-  );
+  const certHolders = useMemo(() => {
+    if (!graph || !certOnly) return null;
+    const want = normalizeCert(certOnly);
+    return graph.edges
+      .filter((e) => e.type === "HOLDS" && normalizeCert(String(e.data.cert_type ?? "")) === want)
+      .map((e) => ({
+        supplierNodeId: e.source,
+        name: graph.nodes.find((n) => n.id === e.source)?.label ?? "",
+        cert: e.data as unknown as CertificationSummary,
+      }))
+      .sort((a, b) => STATUS_ORDER[a.cert.status] - STATUS_ORDER[b.cert.status] || a.name.localeCompare(b.name));
+  }, [graph, certOnly]);
+
+  const highlight = useMemo(() => {
+    if (sources) return new Set(sources.sources.filter((s) => s.eligible).map((s) => `supplier:${s.supplier.id}`));
+    if (certHolders) return new Set(certHolders.filter((h) => h.cert.status !== "expired").map((h) => h.supplierNodeId));
+    return null;
+  }, [sources, certHolders]);
   const flow = useMemo(() => (graph ? layout(graph, highlight, selectedId) : { nodes: [], edges: [] }), [graph, highlight, selectedId]);
 
   const certTypes = useMemo(
@@ -346,7 +377,7 @@ export default function SupplierGraphPage() {
       } else if (node.type === "certification") {
         const cert = (node.data as { cert_type: string }).cert_type;
         setCertQuery(cert);
-        if (commodityQuery.trim()) runSearch(commodityQuery, cert);
+        runSearch(commodityQuery, cert);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -426,10 +457,10 @@ export default function SupplierGraphPage() {
             ))}
           </datalist>
         </div>
-        <button type="submit" className="btn-primary" disabled={searching || !commodityQuery.trim()}>
-          {searching ? "Searching…" : "Find certified sources"}
+        <button type="submit" className="btn-primary" disabled={searching || (!commodityQuery.trim() && !certQuery.trim())}>
+          {searching ? "Searching…" : commodityQuery.trim() || !certQuery.trim() ? "Find certified sources" : "Show certificate holders"}
         </button>
-        {sources && (
+        {(sources || certOnly) && (
           <button type="button" className="btn-secondary" onClick={clearSearch}>
             Clear
           </button>
@@ -439,29 +470,19 @@ export default function SupplierGraphPage() {
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       <div className="flex flex-col gap-4 xl:flex-row">
-        <div className="card relative h-[640px] flex-1 p-0">
-          {loading ? (
-            <p className="p-6 text-sm text-slate-400">Loading supplier graph…</p>
-          ) : graph && graph.nodes.length === 0 ? (
-            <p className="p-6 text-sm text-slate-400">No suppliers yet.</p>
-          ) : (
-            <ReactFlow
-              nodes={flow.nodes}
-              edges={flow.edges}
-              nodeTypes={nodeTypes}
-              onNodeClick={onNodeClick}
-              nodesDraggable
-              nodesConnectable={false}
-              fitView
-              fitViewOptions={{ padding: 0.15 }}
-              minZoom={0.2}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background gap={24} color="#e2e8f0" />
-              <Controls showInteractive={false} />
-            </ReactFlow>
-          )}
+        <div className="card flex-1 overflow-hidden p-0">
           <Legend />
+          <div className="relative h-[720px] border-t border-slate-100">
+            {loading ? (
+              <p className="p-6 text-sm text-slate-400">Loading supplier graph…</p>
+            ) : graph && graph.nodes.length === 0 ? (
+              <p className="p-6 text-sm text-slate-400">No suppliers yet.</p>
+            ) : (
+              <ReactFlowProvider>
+                <GraphCanvas nodes={flow.nodes} edges={flow.edges} onNodeClick={onNodeClick} focus={highlight} />
+              </ReactFlowProvider>
+            )}
+          </div>
         </div>
 
         <aside className="w-full shrink-0 space-y-4 xl:w-[26rem]">
@@ -471,7 +492,10 @@ export default function SupplierGraphPage() {
           {sources ? (
             <SourcesPanel sources={sources} onSelect={(id) => selectSupplier(`supplier:${id}`)} />
           ) : null}
-          {!selectedId && !sources ? (
+          {certOnly && certHolders ? (
+            <CertHoldersPanel certType={certOnly} holders={certHolders} onSelect={selectSupplier} />
+          ) : null}
+          {!selectedId && !sources && !certOnly ? (
             <div className="card text-sm text-slate-500">
               <p className="font-medium text-slate-700">Try it</p>
               <p className="mt-1">
@@ -483,6 +507,110 @@ export default function SupplierGraphPage() {
           ) : null}
         </aside>
       </div>
+    </div>
+  );
+}
+
+const STATUS_ORDER: Record<string, number> = { valid: 0, expiring: 1, expired: 2 };
+
+function normalizeCert(v: string) {
+  return v.toLowerCase().replace(/[\s\-_:.]+/g, "");
+}
+
+// Readable by default: rather than squeezing every supplier into view (cards
+// become unreadable past ~10 suppliers), open at a legible zoom aligned to the
+// top and let the user scroll; when a search highlights suppliers, zoom to them.
+function GraphCanvas({
+  nodes,
+  edges,
+  onNodeClick,
+  focus,
+}: {
+  nodes: Node[];
+  edges: Edge[];
+  onNodeClick: (e: unknown, n: Node) => void;
+  focus: Set<string> | null;
+}) {
+  const rf = useReactFlow();
+  const [ready, setReady] = useState(false);
+
+  const showTop = useCallback(() => {
+    const el = document.querySelector(".sg-canvas") as HTMLElement | null;
+    const width = el?.clientWidth ?? 900;
+    const height = el?.clientHeight ?? 720;
+    const contentW = COL_X.commodity + 220;
+    const contentH = Math.max(...nodes.map((n) => n.position.y + 90), 1);
+    const zoom = Math.max(0.62, Math.min(1, (width - 40) / contentW, (height - 40) / contentH));
+    rf.setViewport({ x: Math.max(20, (width - contentW * zoom) / 2), y: 20, zoom }, { duration: 300 });
+  }, [nodes, rf]);
+
+  useEffect(() => {
+    if (!ready) return;
+    // Wait a frame so React Flow has measured the re-laid-out nodes.
+    const t = window.setTimeout(() => {
+      if (focus && focus.size > 0) {
+        rf.fitView({ nodes: nodes.filter((n) => focus.has(n.id)).map((n) => ({ id: n.id })), padding: 0.5, maxZoom: 1, duration: 400 });
+      } else {
+        showTop();
+      }
+    }, 80);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, focus]);
+
+  return (
+    <ReactFlow
+      className="sg-canvas"
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={nodeTypes}
+      onNodeClick={onNodeClick}
+      onInit={() => setReady(true)}
+      nodesDraggable
+      nodesConnectable={false}
+      panOnScroll
+      zoomOnScroll={false}
+      zoomActivationKeyCode="Control"
+      minZoom={0.2}
+      maxZoom={1.5}
+      proOptions={{ hideAttribution: true }}
+    >
+      <Background gap={24} color="#e2e8f0" />
+      <Controls position="bottom-right" showInteractive={false} />
+    </ReactFlow>
+  );
+}
+
+function CertHoldersPanel({
+  certType,
+  holders,
+  onSelect,
+}: {
+  certType: string;
+  holders: { supplierNodeId: string; name: string; cert: CertificationSummary }[];
+  onSelect: (supplierNodeId: string) => void;
+}) {
+  const current = holders.filter((h) => h.cert.status !== "expired").length;
+  return (
+    <div className="card space-y-2 p-4">
+      <p className="text-sm font-semibold text-slate-900">
+        {current} supplier{current === 1 ? "" : "s"} currently hold {certType}
+      </p>
+      <p className="text-xs text-slate-500">Add a part to rank them by purchase history, price and what is open now.</p>
+      {holders.length === 0 && <p className="text-sm text-slate-400">Nobody holds this certificate.</p>}
+      <ul className="divide-y divide-slate-100">
+        {holders.map((h) => (
+          <li key={h.cert.id}>
+            <button type="button" onClick={() => onSelect(h.supplierNodeId)} className="flex w-full items-center justify-between gap-2 py-2 text-left text-sm hover:bg-slate-50">
+              <span>{h.name}</span>
+              <span className={`badge ${STANDING_CLASS[h.cert.status]}`}>
+                {h.cert.status}
+                {h.cert.expires_on ? ` ${h.cert.expires_on}` : ""}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -499,13 +627,16 @@ function Stat({ label, value, sub, warn }: { label: string; value: number; sub?:
 
 function Legend() {
   return (
-    <div className="pointer-events-none absolute left-3 top-3 rounded-md border border-slate-200 bg-white/90 px-3 py-2 text-[11px] text-slate-600">
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 px-4 py-2 text-[11px] text-slate-600">
       <div className="flex items-center gap-3">
         <span className="font-semibold text-violet-700">Certificates</span>
+        <span className="text-slate-300">→</span>
         <span className="font-semibold text-slate-700">Suppliers</span>
+        <span className="text-slate-300">→</span>
         <span className="font-semibold text-sky-700">Commodities</span>
+        <span className="text-slate-400">· scroll to pan, Ctrl+scroll to zoom</span>
       </div>
-      <div className="mt-1 flex items-center gap-3">
+      <div className="flex items-center gap-3">
         <LegendLine color={CERT_COLORS.valid} label="valid" />
         <LegendLine color={CERT_COLORS.expiring} label="expiring ≤60d" />
         <LegendLine color={CERT_COLORS.expired} label="expired" dashed />
