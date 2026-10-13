@@ -55,6 +55,7 @@ from app.models.accounting_split import LineItemAccountingSplit, Budget  # noqa:
 from app.models.approval import ApproverSeed, ApprovalEvent, SlaDefinition, SlaMetric  # noqa: F401
 from app.models.act_as import ActAsSession  # noqa: F401
 from app.models.supplier_qualification import SupplierQualification  # noqa: F401
+from app.models.supplier_certification import SupplierCertification  # noqa: F401
 from app.models.preferred_supplier import PreferredSupplierStatus  # noqa: F401
 from app.models.supplier_type import SupplierType  # noqa: F401
 from app.models.supplier_audit import SupplierAuditEvent  # noqa: F401
@@ -117,6 +118,7 @@ __all__ = [
     "Budget",
     "ActAsSession",
     "SupplierQualification",
+    "SupplierCertification",
     "PreferredSupplierStatus",
     "SupplierType",
     "SupplierAuditEvent",

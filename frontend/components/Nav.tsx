@@ -21,6 +21,7 @@ const links = [
   { href: "/dashboard/workflow/definitions", label: "Workflow rules", icon: "workflow" },
   { href: "/dashboard/admin/templates", label: "Templates", icon: "documents" },
   { href: "/dashboard/suppliers", label: "Suppliers", icon: "suppliers" },
+  { href: "/dashboard/supplier-graph", label: "Supplier Graph", icon: "suppliers" },
   { href: "/dashboard/admin", label: "Admin", icon: "settings" },
   { href: "/dashboard/agent", label: "AI Agent", icon: "ai-agent" },
   { href: "/dashboard/agent-activity", label: "Agent Activity", icon: "agent-activity" },
